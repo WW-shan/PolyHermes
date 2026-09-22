@@ -229,7 +229,7 @@ class ApiHealthCheckService(
      * 使用 /api/v3/ping 端点
      */
     private suspend fun checkBinanceApi(): ApiHealthCheckDto = withContext(Dispatchers.IO) {
-        val url = "https://api.binance.com/api/v3/ping"
+        val url = "https://data-api.binance.vision/api/v3/ping"
         checkApi("币安 API", url)
     }
 
@@ -290,7 +290,7 @@ class ApiHealthCheckService(
      * 检查币安 K 线 WebSocket 连接状态（5m / 15m）
      */
     private suspend fun checkBinanceWebSocket(): ApiHealthCheckDto = withContext(Dispatchers.Default) {
-        val binanceWsUrl = "wss://stream.binance.com:9443"
+        val binanceWsUrl = "wss://data-stream.binance.vision"
         try {
             val binanceKlineService = getBinanceKlineService()
             if (binanceKlineService == null) {
@@ -675,4 +675,3 @@ class ApiHealthCheckService(
         checkApi("GitHub API", url)
     }
 }
-

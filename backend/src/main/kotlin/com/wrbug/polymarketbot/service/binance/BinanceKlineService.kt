@@ -30,7 +30,8 @@ class BinanceKlineService(
     private val logger = LoggerFactory.getLogger(BinanceKlineService::class.java)
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    private val wsBase = "wss://stream.binance.com:9443"
+    // 官方公开行情 WebSocket 镜像；主域名在部分地区会返回 451。
+    private val wsBase = "wss://data-stream.binance.vision"
     private val client by lazy {
         createClient().build()
     }

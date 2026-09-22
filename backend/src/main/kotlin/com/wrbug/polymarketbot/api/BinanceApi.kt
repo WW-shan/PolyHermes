@@ -6,7 +6,7 @@ import retrofit2.http.Query
 
 /**
  * 币安现货公开 API（K 线等）
- * Base URL: https://api.binance.com
+ * Base URL: https://data-api.binance.vision
  * 文档: https://developers.binance.com/docs/binance-spot-api-docs/rest-api
  */
 interface BinanceApi {

@@ -312,7 +312,8 @@ class RetrofitFactory(
 
     private val binanceApi: BinanceApi by lazy {
         Retrofit.Builder()
-            .baseUrl("https://api.binance.com/")
+            // 使用 Binance 官方公开行情镜像，避免部分地区访问 api.binance.com 返回 451。
+            .baseUrl("https://data-api.binance.vision/")
             .client(sharedOkHttpClient)
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
