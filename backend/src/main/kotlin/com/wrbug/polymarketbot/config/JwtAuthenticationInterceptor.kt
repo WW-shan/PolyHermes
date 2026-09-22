@@ -27,7 +27,8 @@ class JwtAuthenticationInterceptor(
     private val excludePaths = setOf(
         "/api/auth/login",
         "/api/auth/reset-password",
-        "/api/auth/check-first-use"
+        "/api/auth/check-first-use",
+        "/api/system/health"
     )
     
     override fun preHandle(
@@ -117,4 +118,3 @@ class JwtAuthenticationInterceptor(
         response.writer.flush()
     }
 }
-
