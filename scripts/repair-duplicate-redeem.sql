@@ -97,6 +97,8 @@ DROP PROCEDURE IF EXISTS repair_issue61_duplicate_redeem;
 DELIMITER $$
 CREATE PROCEDURE repair_issue61_duplicate_redeem()
 BEGIN
+    DECLARE backfilled_source_tx_hash_count INT DEFAULT 0;
+
     DROP TEMPORARY TABLE IF EXISTS tmp_issue61_duplicate_records;
     CREATE TEMPORARY TABLE tmp_issue61_duplicate_records (
         id BIGINT NOT NULL PRIMARY KEY
@@ -138,10 +140,19 @@ BEGIN
     IF @confirm_repair = 1 THEN
         -- 备份：只备份本次会修改的行，避免无意义地复制全表。
         CREATE TABLE IF NOT EXISTS sell_match_record_backup_issue61 LIKE sell_match_record;
+        -- 备份重复记录，以及本次要回填 source_tx_hash 的历史记录。
         INSERT IGNORE INTO sell_match_record_backup_issue61
         SELECT s.*
         FROM sell_match_record s
         JOIN tmp_issue61_duplicate_records d ON d.id = s.id;
+
+        INSERT IGNORE INTO sell_match_record_backup_issue61
+        SELECT s.*
+        FROM sell_match_record s
+        WHERE s.sell_order_id LIKE 'AUTO_WS_%'
+          AND s.source_tx_hash IS NULL
+          AND s.leader_sell_trade_id LIKE 'AUTO_WS_0x%'
+          AND CHAR_LENGTH(s.leader_sell_trade_id) > 8;
 
         CREATE TABLE IF NOT EXISTS sell_match_detail_backup_issue61 LIKE sell_match_detail;
         INSERT IGNORE INTO sell_match_detail_backup_issue61
@@ -190,11 +201,22 @@ BEGIN
         DELETE FROM sell_match_record
         WHERE id IN (SELECT id FROM tmp_issue61_duplicate_records);
 
+        -- 历史记录写入时还没有 source_tx_hash，但 leader_sell_trade_id 已经保存了
+        -- AUTO_WS_<txHash>。回填后，重启或链上日志重放时数据库幂等约束才能继续生效。
+        UPDATE sell_match_record
+        SET source_tx_hash = SUBSTRING(leader_sell_trade_id, 9)
+        WHERE sell_order_id LIKE 'AUTO_WS_%'
+          AND source_tx_hash IS NULL
+          AND leader_sell_trade_id LIKE 'AUTO_WS_0x%'
+          AND CHAR_LENGTH(leader_sell_trade_id) > 8;
+        SET backfilled_source_tx_hash_count = ROW_COUNT();
+
         COMMIT;
 
         SELECT
             'APPLIED' AS result,
-            COUNT(*) AS deleted_duplicate_records
+            COUNT(*) AS deleted_duplicate_records,
+            backfilled_source_tx_hash_count AS backfilled_source_tx_hash
         FROM tmp_issue61_duplicate_records;
     ELSE
         SELECT

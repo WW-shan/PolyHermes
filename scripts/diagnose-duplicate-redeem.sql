@@ -77,3 +77,17 @@ WHERE s.sell_order_id LIKE 'AUTO_WS_%'
       ) x
   )
 ORDER BY s.copy_trading_id, s.market_id, s.id;
+
+
+-- 4) 历史 AUTO_WS 记录缺少 source_tx_hash 的数量
+--    修复脚本会从 leader_sell_trade_id 的 AUTO_WS_<txHash> 回填这些记录，
+--    使旧交易重放时也能命中数据库唯一约束。
+SELECT
+    COUNT(*) AS missing_source_tx_hash_rows,
+    MIN(created_at) AS earliest_created_at,
+    MAX(created_at) AS latest_created_at
+FROM sell_match_record
+WHERE sell_order_id LIKE 'AUTO_WS_%'
+  AND source_tx_hash IS NULL
+  AND leader_sell_trade_id LIKE 'AUTO_WS_0x%'
+  AND CHAR_LENGTH(leader_sell_trade_id) > 8;

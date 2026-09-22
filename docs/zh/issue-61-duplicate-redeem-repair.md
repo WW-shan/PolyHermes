@@ -67,7 +67,8 @@ SET @confirm_repair = 1;
    - `copy_order_tracking_backup_issue61`
 2. 回滚重复明细造成的 `matched_quantity` 多算和 `remaining_quantity` 少算。
 3. 保留每组最早的一条卖出记录，删除其余重复记录。
-4. 在事务中提交业务数据修改。
+4. 从历史 `AUTO_WS_<txHash>` 回填保留下来的 `source_tx_hash`，让旧交易重放时也能命中数据库唯一约束。
+5. 在事务中提交业务数据修改。
 
 脚本是幂等的：修复完成后再次执行，应为删除 `0` 条。
 
@@ -89,4 +90,5 @@ SET @confirm_repair = 1;
 - dry-run 能识别 3 条记录中的 2 条重复记录，且不修改数据。
 - 确认执行后数量和状态正确回滚，明细随外键级联删除。
 - 三张局部备份表均成功写入。
-- 再次执行删除 `0` 条，具备幂等性。
+- 再次执行删除 `0` 条、回填 `0` 条，具备幂等性。
+- 历史 `AUTO_WS_0x...` 记录的 `source_tx_hash` 能正确回填为 txHash。
