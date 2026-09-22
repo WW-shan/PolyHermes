@@ -1041,6 +1041,9 @@ class AccountService(
         }
     }
 
+    internal fun exchangeContractForMarket(negRisk: Boolean?): String =
+        orderSigningService.getExchangeContract(negRisk == true)
+
     /**
      * 卖出仓位
      */
@@ -1196,7 +1199,14 @@ class AccountService(
             // 7. 解密私钥
             val decryptedPrivateKey = decryptPrivateKey(account)
 
-            // 11. 创建并签名订单（使用计算后的卖出数量，按账户钱包类型使用对应 signatureType）
+            // 11. 检查市场是否为 Neg Risk 市场，获取正确的 Exchange 合约地址
+            val negRisk = marketService.getNegRiskByConditionId(request.marketId) == true
+            val exchangeContract = exchangeContractForMarket(negRisk)
+            if (negRisk) {
+                logger.debug("市场为 Neg Risk，使用 Neg Risk Exchange 签约: conditionId=${request.marketId}")
+            }
+
+            // 12. 创建并签名订单（使用计算后的卖出数量，按账户钱包类型使用对应 signatureType）
             val signedOrder = try {
                 orderSigningService.createAndSignOrder(
                     privateKey = decryptedPrivateKey,
@@ -1205,7 +1215,8 @@ class AccountService(
                     side = "SELL",
                     price = sellPrice,
                     size = sellQuantity.toPlainString(),  // 使用计算后的卖出数量
-                    signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType)
+                    signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType),
+                    exchangeContract = exchangeContract
                 )
             } catch (e: Exception) {
                 logger.error("创建并签名订单失败", e)
