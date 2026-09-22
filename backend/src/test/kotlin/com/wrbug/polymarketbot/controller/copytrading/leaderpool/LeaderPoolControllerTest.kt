@@ -6,6 +6,9 @@ import com.wrbug.polymarketbot.dto.LeaderPoolCreateTrialConfigRequest
 import com.wrbug.polymarketbot.dto.LeaderPoolItemDto
 import com.wrbug.polymarketbot.dto.LeaderPoolListRequest
 import com.wrbug.polymarketbot.dto.LeaderPoolListResponse
+import com.wrbug.polymarketbot.dto.LeaderPoolOptimizationItemDto
+import com.wrbug.polymarketbot.dto.LeaderPoolOptimizationRequest
+import com.wrbug.polymarketbot.dto.LeaderPoolOptimizationResponse
 import com.wrbug.polymarketbot.dto.LeaderPoolRemoveRequest
 import com.wrbug.polymarketbot.dto.LeaderPoolSummaryDto
 import com.wrbug.polymarketbot.dto.LeaderPoolUpdatePlanRequest
@@ -15,8 +18,10 @@ import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolAlreadyE
 import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolConfirmRequiredException
 import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolDuplicateTrialConfigException
 import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolNotFoundException
+import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolOptimizationService
 import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolService
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.context.support.StaticMessageSource
@@ -82,6 +87,20 @@ class LeaderPoolControllerTest {
     }
 
     @Test
+    fun `optimization returns read-only ranking response`() {
+        val service = StubLeaderPoolService()
+        val optimizationService = Mockito.mock(LeaderPoolOptimizationService::class.java)
+        Mockito.`when`(optimizationService.getOptimization(10)).thenReturn(sampleOptimizationResponse())
+        val controller = controller(service, optimizationService)
+
+        val response = controller.optimization(LeaderPoolOptimizationRequest())
+
+        assertEquals(0, response.body!!.code)
+        assertTrue(response.body!!.data!!.safeMode)
+        assertEquals(1, response.body!!.data!!.top3.size)
+    }
+
+    @Test
     fun `remove returns success response`() {
         val service = StubLeaderPoolService(removeResult = Result.success(Unit))
         val controller = controller(service)
@@ -91,8 +110,12 @@ class LeaderPoolControllerTest {
         assertEquals(0, response.body!!.code)
     }
 
-    private fun controller(service: LeaderPoolService) = LeaderPoolController(
+    private fun controller(
+        service: LeaderPoolService,
+        optimizationService: LeaderPoolOptimizationService = Mockito.mock(LeaderPoolOptimizationService::class.java)
+    ) = LeaderPoolController(
         leaderPoolService = service,
+        optimizationService = optimizationService,
         messageSource = StaticMessageSource()
     )
 
@@ -124,6 +147,37 @@ class LeaderPoolControllerTest {
 
     companion object {
         private inline fun <reified T> mock(): T = Mockito.mock(T::class.java)
+
+        private fun sampleOptimizationResponse() = LeaderPoolOptimizationResponse(
+            generatedAt = 1,
+            staleReason = null,
+            candidateCount = 1,
+            eligibleCount = 1,
+            items = listOf(sampleOptimizationItem()),
+            top3 = listOf(sampleOptimizationItem()),
+            safeMode = true
+        )
+
+        private fun sampleOptimizationItem() = LeaderPoolOptimizationItemDto(
+            candidateId = 1,
+            leaderId = 2,
+            poolId = null,
+            rank = 1,
+            recommendationTier = "AUTO_READY",
+            optimizationScore = "80",
+            researchScore = "90",
+            paperTradeCount = 40,
+            paperCopyablePnl = "5",
+            paperFilteredRatio = "0.1",
+            paperMaxDrawdown = "-5",
+            paperUnknownRatio = "0.05",
+            sourceFresh = "1",
+            leaderName = "Leader",
+            leaderAddress = "0xleader",
+            researchState = "TRIAL_READY",
+            canRecommend = true,
+            reasonCode = "AUTO_READY"
+        )
 
         private fun sampleListResponse() = LeaderPoolListResponse(
             summary = LeaderPoolSummaryDto(

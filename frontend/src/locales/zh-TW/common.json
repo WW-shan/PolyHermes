@@ -635,7 +635,53 @@
     "removeConfirm": "只移除池子項，不會刪除 Leader 地址或已有跟單配置。確定繼續？",
     "removeSuccess": "池子項已移除",
     "removeFailed": "移除池子項失敗",
-    "viewResearch": "查看研究"
+    "viewResearch": "查看研究",
+    "optimization": {
+      "title": "三日優化推薦（唯讀）",
+      "subtitle": "按研究評分、紙跟收益、成交樣本、過濾率、回撤和來源新鮮度排名 Top 10；前 3 名僅作建議。",
+      "safeTitle": "只產生推薦，不會自動啟用真錢跟單",
+      "safeDesc": "本頁不會建立、修改或啟用跟單配置。需要試跟時仍走現有「建立試跟配置」入口並手動確認。",
+      "refresh": "重新計算",
+      "fetchFailed": "取得優化推薦失敗",
+      "eligible": "可推薦",
+      "candidates": "候選總數",
+      "top3Count": "Top 3",
+      "rank": "排名",
+      "tier": "分層",
+      "score": "優化分",
+      "filteredRatio": "過濾率",
+      "maxDrawdown": "最大回撤",
+      "reason": "原因",
+      "empty": "暫無可排名候選，先運行 Leader 研究或加入候選。",
+      "tiers": {
+        "AUTO_READY": "可推薦",
+        "HIGH_RISK_PILOT": "高風險觀察",
+        "PAPER_WATCH": "紙跟觀察",
+        "BLOCKED": "已阻斷"
+      },
+      "reasons": {
+        "AUTO_READY": "滿足紙跟樣本、收益、過濾率和回撤門檻",
+        "HIGH_RISK_PILOT": "收益與樣本達標，但尚未達到 TRIAL_READY",
+        "PAPER_WATCH": "仍在紙跟或早期觀察階段",
+        "BLOCKED": "目前不可推薦",
+        "MISSING_LEADER": "候選缺少 Leader 記錄",
+        "LOCKED": "候選已鎖定",
+        "RETIRED": "候選已淘汰",
+        "COOLDOWN": "候選仍在冷卻",
+        "BLACKLISTED": "候選在黑名單中",
+        "NOT_TRIAL_READY": "尚未達到 TRIAL_READY",
+        "MISSING_PAPER_SESSION": "缺少紙跟會話",
+        "UNKNOWN_RATIO_HIGH": "UNKNOWN 估值比例過高",
+        "FILTERED_RATIO_HIGH": "過濾比例過高",
+        "INSUFFICIENT_TRADES": "紙跟樣本不足",
+        "NON_POSITIVE_PNL": "紙跟可歸因收益非正",
+        "MAX_DRAWDOWN_HIGH": "最大回撤過大"
+      },
+      "staleReasons": {
+        "NO_SUCCESSFUL_RESEARCH_RUN": "還沒有成功的 Leader Research 運行，目前排名僅供預覽。",
+        "RESEARCH_RUN_STALE": "最近一次成功的 Leader Research 已超過 24 小時，建議先重新運行研究。"
+      }
+    }
   },
   "leaderResearch": {
     "title": "Leader 研究",

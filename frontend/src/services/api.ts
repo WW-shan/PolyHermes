@@ -23,7 +23,8 @@ import type {
   NotificationConfigUpdateRequest,
   NotificationTemplate,
   TemplateTypeInfo,
-  TemplateVariablesResponse
+  TemplateVariablesResponse,
+  LeaderPoolOptimizationResponse
 } from '../types'
 import { getToken, setToken, removeToken } from '../utils'
 import { wsManager } from './websocket'
@@ -390,6 +391,9 @@ export const apiService = {
   leaderPool: {
     list: (data: LeaderPoolListRequest = {}) =>
       apiClient.post<ApiResponse<LeaderPoolListResponse>>('/copy-trading/leader-pool/list', data),
+
+    optimization: (data: { limit?: number } = {}) =>
+      apiClient.post<ApiResponse<LeaderPoolOptimizationResponse>>('/copy-trading/leader-pool/optimization', data),
 
     add: (data: LeaderPoolAddRequest) =>
       apiClient.post<ApiResponse<LeaderPoolItem>>('/copy-trading/leader-pool/add', data),

@@ -27,7 +27,7 @@ import { EyeOutlined, LinkOutlined, PlusOutlined, ReloadOutlined, SafetyCertific
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
-import type { Account, Leader, LeaderPoolItem, LeaderPoolListResponse, LeaderPoolStatus } from '../types'
+import type { Account, Leader, LeaderPoolItem, LeaderPoolListResponse, LeaderPoolOptimizationItem, LeaderPoolOptimizationResponse, LeaderPoolStatus } from '../types'
 
 const { Text, Title, Paragraph } = Typography
 
@@ -63,6 +63,8 @@ const LeaderPool: React.FC = () => {
     list: [],
     total: 0
   })
+  const [optimization, setOptimization] = useState<LeaderPoolOptimizationResponse | null>(null)
+  const [optimizationLoading, setOptimizationLoading] = useState(false)
   const [leaders, setLeaders] = useState<Leader[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [statusFilter, setStatusFilter] = useState<LeaderPoolStatus | undefined>()
@@ -96,6 +98,22 @@ const LeaderPool: React.FC = () => {
     }
   }
 
+  const fetchOptimization = async () => {
+    setOptimizationLoading(true)
+    try {
+      const response = await apiService.leaderPool.optimization({ limit: 10 })
+      if (response.data.code === 0 && response.data.data) {
+        setOptimization(response.data.data)
+      } else {
+        message.error(response.data.msg || t('leaderPool.optimization.fetchFailed'))
+      }
+    } catch (error: any) {
+      message.error(error.message || t('leaderPool.optimization.fetchFailed'))
+    } finally {
+      setOptimizationLoading(false)
+    }
+  }
+
   const fetchLeaders = async () => {
     try {
       const response = await apiService.leaders.list()
@@ -120,6 +138,7 @@ const LeaderPool: React.FC = () => {
 
   useEffect(() => {
     fetchPool()
+    fetchOptimization()
     fetchLeaders()
     fetchAccounts()
   }, [])
@@ -261,6 +280,76 @@ const LeaderPool: React.FC = () => {
       message.error(response.data.msg || t('leaderPool.removeFailed'))
     }
   }
+
+  const optimizationColumns = [
+    {
+      title: t('leaderPool.optimization.rank'),
+      dataIndex: 'rank',
+      width: 60,
+      render: (rank: number) => <Tag color={rank <= 3 ? 'gold' : 'default'}>#{rank}</Tag>
+    },
+    {
+      title: t('leaderPool.leader'),
+      key: 'leader',
+      width: 250,
+      render: (_: unknown, item: LeaderPoolOptimizationItem) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{item.leaderName || `Leader ${item.leaderId ?? item.candidateId}`}</Text>
+          <Text copyable style={{ fontSize: 12, fontFamily: 'monospace' }} type="secondary">
+            {item.leaderAddress}
+          </Text>
+          <Tag>{t(`leaderResearch.states.${item.researchState}`, { defaultValue: item.researchState })}</Tag>
+        </Space>
+      )
+    },
+    {
+      title: t('leaderPool.optimization.tier'),
+      dataIndex: 'recommendationTier',
+      width: 150,
+      render: (tier: string) => {
+        const color: Record<string, string> = {
+          AUTO_READY: 'green',
+          HIGH_RISK_PILOT: 'orange',
+          PAPER_WATCH: 'blue',
+          BLOCKED: 'red'
+        }
+        return <Tag color={color[tier] || 'default'}>{t(`leaderPool.optimization.tiers.${tier}`, { defaultValue: tier })}</Tag>
+      }
+    },
+    {
+      title: t('leaderPool.optimization.score'),
+      dataIndex: 'optimizationScore',
+      width: 100,
+      render: (value: string) => <Text strong>{value}</Text>
+    },
+    {
+      title: t('leaderResearch.trades'),
+      dataIndex: 'paperTradeCount',
+      width: 90
+    },
+    {
+      title: t('leaderResearch.copyablePnl'),
+      dataIndex: 'paperCopyablePnl',
+      width: 120,
+      render: (value: string) => <Text type={Number(value) >= 0 ? 'success' : 'danger'}>{value}</Text>
+    },
+    {
+      title: t('leaderPool.optimization.filteredRatio'),
+      dataIndex: 'paperFilteredRatio',
+      width: 110
+    },
+    {
+      title: t('leaderPool.optimization.maxDrawdown'),
+      dataIndex: 'paperMaxDrawdown',
+      width: 110
+    },
+    {
+      title: t('leaderPool.optimization.reason'),
+      dataIndex: 'reasonCode',
+      width: 220,
+      render: (reasonCode: string) => t(`leaderPool.optimization.reasons.${reasonCode}`, { defaultValue: reasonCode })
+    }
+  ]
 
   const columns = [
     {
@@ -422,6 +511,52 @@ const LeaderPool: React.FC = () => {
                 {t('leaderPool.goLeaders')}
               </Button>
             </Space>
+          </Space>
+        </Card>
+
+        <Card>
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Space align="start" style={{ justifyContent: 'space-between', width: '100%' }}>
+              <div>
+                <Title level={4} style={{ marginBottom: 4 }}>{t('leaderPool.optimization.title')}</Title>
+                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                  {t('leaderPool.optimization.subtitle')}
+                </Paragraph>
+              </div>
+              <Button icon={<ReloadOutlined />} loading={optimizationLoading} onClick={fetchOptimization}>
+                {t('leaderPool.optimization.refresh')}
+              </Button>
+            </Space>
+            <Alert
+              type={optimization?.staleReason ? 'warning' : 'info'}
+              showIcon
+              message={t('leaderPool.optimization.safeTitle')}
+              description={optimization?.staleReason
+                ? t(`leaderPool.optimization.staleReasons.${optimization.staleReason}`, { defaultValue: optimization.staleReason })
+                : t('leaderPool.optimization.safeDesc')}
+            />
+            <Row gutter={[16, 16]}>
+              <Col xs={24} sm={8}>
+                <Statistic title={t('leaderPool.optimization.eligible')} value={optimization?.eligibleCount ?? 0} />
+              </Col>
+              <Col xs={24} sm={8}>
+                <Statistic title={t('leaderPool.optimization.candidates')} value={optimization?.candidateCount ?? 0} />
+              </Col>
+              <Col xs={24} sm={8}>
+                <Statistic title={t('leaderPool.optimization.top3Count')} value={optimization?.top3.length ?? 0} />
+              </Col>
+            </Row>
+            <Table
+              rowKey="candidateId"
+              loading={optimizationLoading}
+              columns={optimizationColumns}
+              dataSource={optimization?.items || []}
+              pagination={false}
+              scroll={{ x: 1200 }}
+              locale={{
+                emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('leaderPool.optimization.empty')} />
+              }}
+            />
           </Space>
         </Card>
 

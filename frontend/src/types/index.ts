@@ -366,6 +366,39 @@ export interface LeaderPoolListRequest {
   status?: LeaderPoolStatus
 }
 
+export type LeaderPoolRecommendationTier = 'AUTO_READY' | 'HIGH_RISK_PILOT' | 'PAPER_WATCH' | 'BLOCKED'
+
+export interface LeaderPoolOptimizationItem {
+  candidateId: number
+  leaderId?: number
+  poolId?: number
+  rank: number
+  recommendationTier: LeaderPoolRecommendationTier
+  optimizationScore: string
+  researchScore?: string
+  paperTradeCount: number
+  paperCopyablePnl: string
+  paperFilteredRatio: string
+  paperMaxDrawdown: string
+  paperUnknownRatio: string
+  sourceFresh: string
+  leaderName?: string
+  leaderAddress: string
+  researchState: LeaderResearchState
+  canRecommend: boolean
+  reasonCode: string
+}
+
+export interface LeaderPoolOptimizationResponse {
+  generatedAt: number
+  staleReason?: string
+  candidateCount: number
+  eligibleCount: number
+  items: LeaderPoolOptimizationItem[]
+  top3: LeaderPoolOptimizationItem[]
+  safeMode: boolean
+}
+
 export interface LeaderPoolAddRequest {
   leaderId: number
   source?: string

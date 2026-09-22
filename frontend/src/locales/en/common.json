@@ -635,7 +635,53 @@
     "removeConfirm": "This only removes the pool item. It will not delete the Leader address or existing copy trading configs. Continue?",
     "removeSuccess": "Pool item removed",
     "removeFailed": "Failed to remove pool item",
-    "viewResearch": "View Research"
+    "viewResearch": "View Research",
+    "optimization": {
+      "title": "Three-day optimization ranking (read-only)",
+      "subtitle": "Ranks the top 10 by research score, paper PnL, trade sample, filtered ratio, drawdown, and source freshness. The top 3 are recommendations only.",
+      "safeTitle": "Recommendations only; no real-money config is enabled automatically",
+      "safeDesc": "This section never creates, updates, or enables copy-trading configs. Use the existing trial-config flow and explicit confirmation when you want to trial a leader.",
+      "refresh": "Recalculate",
+      "fetchFailed": "Failed to fetch optimization ranking",
+      "eligible": "Recommendable",
+      "candidates": "Candidates",
+      "top3Count": "Top 3",
+      "rank": "Rank",
+      "tier": "Tier",
+      "score": "Optimization Score",
+      "filteredRatio": "Filtered Ratio",
+      "maxDrawdown": "Max Drawdown",
+      "reason": "Reason",
+      "empty": "No rankable candidates yet. Run Leader Research or add candidates first.",
+      "tiers": {
+        "AUTO_READY": "Recommendable",
+        "HIGH_RISK_PILOT": "High-risk watch",
+        "PAPER_WATCH": "Paper watch",
+        "BLOCKED": "Blocked"
+      },
+      "reasons": {
+        "AUTO_READY": "Meets paper sample, PnL, filtered-ratio, and drawdown gates",
+        "HIGH_RISK_PILOT": "PnL and sample size pass, but TRIAL_READY has not been reached",
+        "PAPER_WATCH": "Still in paper trading or early observation",
+        "BLOCKED": "Not recommendable now",
+        "MISSING_LEADER": "Candidate has no Leader record",
+        "LOCKED": "Candidate is locked",
+        "RETIRED": "Candidate is retired",
+        "COOLDOWN": "Candidate is still cooling down",
+        "BLACKLISTED": "Candidate is blacklisted",
+        "NOT_TRIAL_READY": "Candidate has not reached TRIAL_READY",
+        "MISSING_PAPER_SESSION": "Paper session is missing",
+        "UNKNOWN_RATIO_HIGH": "UNKNOWN valuation ratio is too high",
+        "FILTERED_RATIO_HIGH": "Filtered ratio is too high",
+        "INSUFFICIENT_TRADES": "Paper trade sample is too small",
+        "NON_POSITIVE_PNL": "Paper copyable PnL is not positive",
+        "MAX_DRAWDOWN_HIGH": "Maximum drawdown is too large"
+      },
+      "staleReasons": {
+        "NO_SUCCESSFUL_RESEARCH_RUN": "No successful Leader Research run yet; this ranking is preview-only.",
+        "RESEARCH_RUN_STALE": "The latest successful Leader Research run is over 24 hours old. Run research again before relying on the ranking."
+      }
+    }
   },
   "leaderResearch": {
     "title": "Leader Research",

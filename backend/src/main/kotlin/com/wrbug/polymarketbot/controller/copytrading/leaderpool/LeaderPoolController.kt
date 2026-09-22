@@ -7,6 +7,7 @@ import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolConfirmR
 import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolDuplicateTrialConfigException
 import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolNotFoundException
 import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolResearchCandidateNotReadyException
+import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolOptimizationService
 import com.wrbug.polymarketbot.service.copytrading.leaderpool.LeaderPoolService
 import org.slf4j.LoggerFactory
 import org.springframework.context.MessageSource
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/copy-trading/leader-pool")
 class LeaderPoolController(
     private val leaderPoolService: LeaderPoolService,
+    private val optimizationService: LeaderPoolOptimizationService,
     private val messageSource: MessageSource
 ) {
     private val logger = LoggerFactory.getLogger(LeaderPoolController::class.java)
@@ -36,6 +38,17 @@ class LeaderPoolController(
             )
         } catch (e: Exception) {
             logger.error("查询 Leader 池异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_LEADER_POOL_LIST_FETCH_FAILED, e.message, messageSource))
+        }
+    }
+
+    @PostMapping("/optimization")
+    fun optimization(@RequestBody(required = false) request: LeaderPoolOptimizationRequest?): ResponseEntity<ApiResponse<LeaderPoolOptimizationResponse>> {
+        return try {
+            val limit = request?.limit ?: LeaderPoolOptimizationService.DEFAULT_LIMIT
+            ResponseEntity.ok(ApiResponse.success(optimizationService.getOptimization(limit)))
+        } catch (e: Exception) {
+            logger.error("查询 Leader 池优化排名异常: ${e.message}", e)
             ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_LEADER_POOL_LIST_FETCH_FAILED, e.message, messageSource))
         }
     }
