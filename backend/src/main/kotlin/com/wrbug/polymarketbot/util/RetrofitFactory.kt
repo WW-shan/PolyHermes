@@ -24,6 +24,8 @@ import org.springframework.stereotype.Component
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.io.IOException
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import jakarta.annotation.PreDestroy
 
@@ -125,7 +127,13 @@ class RetrofitFactory(
     private val rpcApiCache = ConcurrentHashMap<String, EthereumRpcApi>()
     
     // 缓存 Builder Relayer API 客户端：relayerUrl -> BuilderRelayerApi
-    private val builderRelayerApiCache = ConcurrentHashMap<String, BuilderRelayerApi>()
+    private data class CachedBuilderRelayerApi(
+        val credentialsFingerprint: String,
+        val api: BuilderRelayerApi
+    )
+
+    // key 为 baseUrl；value 绑定当前凭证指纹，配置更新后自动替换旧客户端，避免继续使用已失效凭证
+    private val builderRelayerApiCache = ConcurrentHashMap<String, CachedBuilderRelayerApi>()
     
     /**
      * 创建带认证的 Polymarket CLOB API 客户端
@@ -334,21 +342,38 @@ class RetrofitFactory(
             relayerUrl
         }
         
-        // 使用 baseUrl 作为缓存键（注意：如果 API Key 变化，需要清理缓存）
-        return builderRelayerApiCache.computeIfAbsent(baseUrl) {
+        val credentialsFingerprint = builderCredentialsFingerprint(apiKey, secret, passphrase)
+
+        return builderRelayerApiCache.compute(baseUrl) { _, cached ->
+            if (cached?.credentialsFingerprint == credentialsFingerprint) {
+                return@compute cached
+            }
+
             // 添加 Builder 认证拦截器
             val builderAuthInterceptor = BuilderAuthInterceptor(apiKey, secret, passphrase)
             val okHttpClient = createClient()
                 .addInterceptor(builderAuthInterceptor)
                 .build()
-            
-            Retrofit.Builder()
+
+            val api = Retrofit.Builder()
                 .baseUrl("$baseUrl/")
                 .client(okHttpClient)
                 .addConverterFactory(GsonConverterFactory.create(gson))
                 .build()
                 .create(BuilderRelayerApi::class.java)
-        }
+
+            CachedBuilderRelayerApi(credentialsFingerprint, api)
+        }?.api ?: error("Builder Relayer 客户端缓存初始化失败")
+    }
+
+    private fun builderCredentialsFingerprint(
+        apiKey: String,
+        secret: String,
+        passphrase: String
+    ): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("$apiKey\u0000$secret\u0000$passphrase".toByteArray(Charsets.UTF_8))
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
     }
     
     /**

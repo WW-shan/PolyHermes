@@ -193,7 +193,8 @@ function buildBuilderSignature(signString, secret) {
 }
 
 function getBuilderHeaders(method, path, body, apiKey, secret, passphrase) {
-  const timestamp = Date.now().toString();
+  // Builder signing SDK 使用秒级 Unix 时间戳
+  const timestamp = Math.floor(Date.now() / 1000).toString();
   const bodyStr = body ?? "";
   const signString = timestamp + method + path + bodyStr;
   const signature = buildBuilderSignature(signString, secret);

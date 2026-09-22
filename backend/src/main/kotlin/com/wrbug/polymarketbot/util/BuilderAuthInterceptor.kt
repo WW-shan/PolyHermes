@@ -19,14 +19,15 @@ import javax.crypto.spec.SecretKeySpec
  * 1. 使用 HMAC-SHA256 对请求进行签名
  * 2. 在请求头中添加：
  *    - POLY_BUILDER_SIGNATURE: HMAC 签名（URL-safe base64）
- *    - POLY_BUILDER_TIMESTAMP: 时间戳（毫秒，字符串）
+ *    - POLY_BUILDER_TIMESTAMP: 时间戳（秒，字符串）
  *    - POLY_BUILDER_API_KEY: API Key
  *    - POLY_BUILDER_PASSPHRASE: Passphrase
  */
 class BuilderAuthInterceptor(
     private val apiKey: String,
     private val secret: String,
-    private val passphrase: String
+    private val passphrase: String,
+    private val currentTimeMillis: () -> Long = System::currentTimeMillis
 ) : Interceptor {
     
     private val logger = LoggerFactory.getLogger(BuilderAuthInterceptor::class.java)
@@ -45,8 +46,8 @@ class BuilderAuthInterceptor(
             ""
         }
         
-        // 获取时间戳（毫秒）
-        val timestamp = System.currentTimeMillis().toString()
+        // Builder signing SDK 使用秒级 Unix 时间戳，毫秒时间戳会导致 401 invalid authorization
+        val timestamp = (currentTimeMillis() / 1000L).toString()
         
         // 构建签名字符串: timestamp + method + path + body
         val method = originalRequest.method
