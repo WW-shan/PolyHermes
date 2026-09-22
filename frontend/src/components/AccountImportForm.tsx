@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Form, Input, Button, Radio, Space, Card, Spin, message, Alert, Steps, Tag } from 'antd'
 import { KeyOutlined, WalletOutlined, UserOutlined, CheckCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -46,6 +46,30 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
   const [setupModalVisible, setSetupModalVisible] = useState<boolean>(false)
   const [setupStatus, setSetupStatus] = useState<any>(null)
   const [importedAccountId, setImportedAccountId] = useState<number | undefined>(undefined)
+  const proxyFetchSequence = useRef(0)
+  const proxyFetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const cancelPendingProxyFetch = () => {
+    proxyFetchSequence.current += 1
+    if (proxyFetchTimer.current) {
+      clearTimeout(proxyFetchTimer.current)
+      proxyFetchTimer.current = null
+    }
+    setLoadingProxyOptions(false)
+  }
+
+  const scheduleProxyOptionsFetch = (
+    walletAddress: string,
+    privateKey: string | null,
+    mnemonic: string | null
+  ) => {
+    cancelPendingProxyFetch()
+    const requestId = proxyFetchSequence.current
+    proxyFetchTimer.current = setTimeout(() => {
+      proxyFetchTimer.current = null
+      fetchProxyOptions(walletAddress, privateKey, mnemonic, requestId)
+    }, 500)
+  }
   
   // 当私钥输入时，自动推导地址（不支持换行，自动去除换行符）
   const handlePrivateKeyChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -56,6 +80,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
     }
     const privateKey = normalized.trim()
     if (!privateKey) {
+      cancelPendingProxyFetch()
       setDerivedAddress('')
       setAddressError('')
       setProxyOptions([])
@@ -66,6 +91,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
     
     // 验证私钥格式
     if (!isValidPrivateKey(privateKey)) {
+      cancelPendingProxyFetch()
       setAddressError(t('accountImport.privateKeyInvalid'))
       setDerivedAddress('')
       setProxyOptions([])
@@ -83,10 +109,9 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
       form.setFieldsValue({ walletAddress: address })
       
       // 延迟获取代理选项（避免频繁请求）
-      setTimeout(() => {
-        fetchProxyOptions(address, privateKey, null)
-      }, 500)
+      scheduleProxyOptionsFetch(address, privateKey, null)
     } catch (error: any) {
+      cancelPendingProxyFetch()
       setAddressError(error.message || t('accountImport.addressError'))
       setDerivedAddress('')
       setProxyOptions([])
@@ -104,6 +129,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
     }
     const mnemonic = normalized.trim()
     if (!mnemonic) {
+      cancelPendingProxyFetch()
       setDerivedAddress('')
       setAddressError('')
       setProxyOptions([])
@@ -114,6 +140,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
     
     // 验证助记词格式
     if (!isValidMnemonic(mnemonic)) {
+      cancelPendingProxyFetch()
       setAddressError(t('accountImport.mnemonicInvalid'))
       setDerivedAddress('')
       setProxyOptions([])
@@ -131,10 +158,9 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
       form.setFieldsValue({ walletAddress: address })
       
       // 延迟获取代理选项（避免频繁请求）
-      setTimeout(() => {
-        fetchProxyOptions(address, null, mnemonic)
-      }, 500)
+      scheduleProxyOptionsFetch(address, null, mnemonic)
     } catch (error: any) {
+      cancelPendingProxyFetch()
       setAddressError(error.message || t('accountImport.addressErrorMnemonic'))
       setDerivedAddress('')
       setProxyOptions([])
@@ -144,8 +170,17 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
   }
   
   // 获取代理地址选项
-  const fetchProxyOptions = async (walletAddress: string, privateKey: string | null, mnemonic: string | null) => {
+  const fetchProxyOptions = async (
+    walletAddress: string,
+    privateKey: string | null,
+    mnemonic: string | null,
+    requestId: number
+  ) => {
     if (!walletAddress || (!privateKey && !mnemonic)) {
+      return
+    }
+
+    if (requestId !== proxyFetchSequence.current) {
       return
     }
     
@@ -156,6 +191,10 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
         privateKey: privateKey || undefined,
         mnemonic: mnemonic || undefined
       })
+
+      if (requestId !== proxyFetchSequence.current) {
+        return
+      }
       
       if (response.data.code === 0 && response.data.data) {
         const options = response.data.data.options || []
@@ -164,15 +203,18 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
         // 如果有选项，进入选择步骤
         if (options.length > 0) {
           setStep('select')
-          // 优先选择与 Polymarket 档案一致的推荐项，其次选择第一个有资产的选项，否则选第一个
-          const recommendedOption = options.find((opt: ProxyOption) => opt.recommended)
-          const hasAssetsOption = options.find((opt: ProxyOption) => opt.hasAssets)
+          // 失败项不允许选择；优先推荐项，其次第一个有资产的可用项，否则第一个可用项
+          const selectableOptions = options.filter((opt: ProxyOption) => !opt.error)
+          const recommendedOption = selectableOptions.find((opt: ProxyOption) => opt.recommended)
+          const hasAssetsOption = selectableOptions.find((opt: ProxyOption) => opt.hasAssets)
           if (recommendedOption) {
             setSelectedProxyType(recommendedOption.walletType)
           } else if (hasAssetsOption) {
             setSelectedProxyType(hasAssetsOption.walletType)
+          } else if (selectableOptions.length > 0) {
+            setSelectedProxyType(selectableOptions[0].walletType)
           } else {
-            setSelectedProxyType(options[0].walletType)
+            setSelectedProxyType('')
           }
         } else {
           setStep('input')
@@ -184,16 +226,22 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
         message.error(response.data.msg || '获取代理地址选项失败')
       }
     } catch (error: any) {
+      if (requestId !== proxyFetchSequence.current) {
+        return
+      }
       setProxyOptions([])
       setStep('input')
       message.error(error.message || '获取代理地址选项失败')
     } finally {
-      setLoadingProxyOptions(false)
+      if (requestId === proxyFetchSequence.current) {
+        setLoadingProxyOptions(false)
+      }
     }
   }
   
   // 切换导入方式时重置状态
   useEffect(() => {
+    cancelPendingProxyFetch()
     setDerivedAddress('')
     setAddressError('')
     setProxyOptions([])
@@ -201,12 +249,23 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
     setStep('input')
     form.setFieldsValue({ walletAddress: '', privateKey: '', mnemonic: '' })
   }, [importType])
+
+  useEffect(() => () => {
+    proxyFetchSequence.current += 1
+    if (proxyFetchTimer.current) {
+      clearTimeout(proxyFetchTimer.current)
+    }
+  }, [])
   
   const handleSubmit = async (values: any) => {
     try {
       // 如果还在输入步骤，需要先选择代理地址
       if (step === 'input' || !selectedProxyType) {
         return Promise.reject(new Error(t('accountImport.proxyOptionRequired')))
+      }
+      const selectedOption = proxyOptions.find((option) => option.walletType === selectedProxyType)
+      if (!selectedOption || selectedOption.error) {
+        return Promise.reject(new Error(t('accountImport.proxyOption.error')))
       }
       
       let privateKey: string
@@ -499,15 +558,19 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
                 />
                 {proxyOptions.map((option) => {
                   const isSelected = selectedProxyType === option.walletType
+                  const isDisabled = Boolean(option.error)
                   const typeLabel = walletTypeLabel(option.walletType)
                   return (
                     <Card
                       key={option.walletType}
-                      hoverable
-                      onClick={() => setSelectedProxyType(option.walletType)}
+                      hoverable={!isDisabled}
+                      onClick={() => {
+                        if (!isDisabled) setSelectedProxyType(option.walletType)
+                      }}
                       size="small"
                       style={{
-                        cursor: 'pointer',
+                        cursor: isDisabled ? 'not-allowed' : 'pointer',
+                        opacity: isDisabled ? 0.72 : 1,
                         borderColor: isSelected ? 'var(--ant-color-primary)' : undefined,
                         borderWidth: isSelected ? 2 : 1,
                         backgroundColor: isSelected ? 'var(--ant-color-primary-bg)' : undefined,
@@ -516,7 +579,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                         <Space size="middle">
-                          <Radio checked={isSelected} />
+                          <Radio checked={isSelected} disabled={isDisabled} />
                           <Tag color={walletTypeColor(option.walletType)}>
                             {typeLabel}
                           </Tag>

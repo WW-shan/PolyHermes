@@ -611,6 +611,9 @@ class RelayClientService(
         val privateKeyBigInt = BigInteger(cleanPrivateKey, 16)
         val ecKeyPair = org.web3j.crypto.ECKeyPair.create(privateKeyBigInt)
         val fromAddress = org.web3j.crypto.Credentials.create(ecKeyPair).address
+        if (!PolymarketWalletDerivation.isDepositWalletForSigner(fromAddress, depositWallet)) {
+            return Result.failure(IllegalArgumentException("Deposit Wallet 地址与签名 EOA 不匹配，拒绝签名"))
+        }
 
         val calls = txs.map { tx ->
             Eip712Encoder.DepositWalletCall(
@@ -662,7 +665,9 @@ class RelayClientService(
             val errorBody = response.errorBody()?.string() ?: "未知错误"
             updateQuotaBlockedFromErrorBody(errorBody)
             val onChainNonce = extractOnChainNonceFromError(errorBody)
-            if (attempt == 0 && response.code() == 400 && onChainNonce != null && onChainNonce != nonce) {
+            // 只处理“提交的 nonce 已落后于链上 nonce”的官方可重试场景。
+            // 反向差异可能意味着提交状态不明，继续重签有重复执行风险。
+            if (attempt == 0 && response.code() == 400 && onChainNonce != null && onChainNonce > nonce) {
                 logger.warn("Deposit Wallet nonce 不匹配（提交 $nonce，链上 $onChainNonce），按链上 nonce 重签")
                 nonce = onChainNonce
             } else {
@@ -1682,4 +1687,3 @@ class RelayClientService(
         )
     }
 }
-

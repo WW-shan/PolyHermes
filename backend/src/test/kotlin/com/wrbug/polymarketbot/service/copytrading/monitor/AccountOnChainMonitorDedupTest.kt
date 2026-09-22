@@ -1,5 +1,6 @@
 package com.wrbug.polymarketbot.service.copytrading.monitor
 
+import com.google.gson.JsonParser
 import com.wrbug.polymarketbot.api.EthereumRpcApi
 import com.wrbug.polymarketbot.api.JsonRpcRequest
 import com.wrbug.polymarketbot.api.JsonRpcResponse
@@ -58,12 +59,16 @@ class AccountOnChainMonitorDedupTest {
         return JsonRpcRequest(method = "eth_getTransactionReceipt", params = emptyList())
     }
 
-    private suspend fun stubRpc(): EthereumRpcApi {
+    private suspend fun stubRpc(
+        responseProvider: () -> JsonRpcResponse = {
+            // 没有可识别成交的空 receipt：处理成功后应进入幂等缓存。
+            JsonRpcResponse(result = JsonParser.parseString("""{"logs":[]}"""))
+        }
+    ): EthereumRpcApi {
         val rpcApi = Mockito.mock(EthereumRpcApi::class.java)
-        // 返回一个没有 result 的响应，使 handleAccountTransaction 干净地提前 return（不抛异常）
         Mockito.`when`(rpcApi.call(anyRequest())).thenAnswer {
             rpcCalls.incrementAndGet()
-            Response.success(JsonRpcResponse())
+            Response.success(responseProvider())
         }
         return rpcApi
     }
@@ -104,5 +109,25 @@ class AccountOnChainMonitorDedupTest {
         service.handleAccountTransaction(account.id!!, "0xabcd000000000000000000000000000000000000000000000000000000000001", client, rpcApi)
 
         assertEquals(1, rpcCalls.get(), "txHash 大小写不同应视为同一笔交易")
+    }
+
+    @Test
+    fun `temporary receipt failure does not poison dedup cache`() = runBlocking {
+        service.start(listOf(account))
+        val responses = ArrayDeque(
+            listOf(
+                JsonRpcResponse(),
+                JsonRpcResponse(result = JsonParser.parseString("""{"logs":[]}"""))
+            )
+        )
+        val rpcApi = stubRpc { responses.removeFirst() }
+        val client = OkHttpClient()
+        val txHash = "0xcccc000000000000000000000000000000000000000000000000000000000003"
+
+        service.handleAccountTransaction(account.id!!, txHash, client, rpcApi)
+        service.handleAccountTransaction(account.id!!, txHash, client, rpcApi)
+        service.handleAccountTransaction(account.id!!, txHash, client, rpcApi)
+
+        assertEquals(2, rpcCalls.get(), "receipt 暂时失败不能缓存失败结果，后续通知应允许重试")
     }
 }

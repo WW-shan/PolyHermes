@@ -465,6 +465,7 @@ class OrderStatusUpdateService(
                             copyTradingId = record.copyTradingId,
                             sellOrderId = record.sellOrderId,
                             leaderSellTradeId = record.leaderSellTradeId,
+                            sourceTxHash = record.sourceTxHash,
                             marketId = record.marketId,
                             side = record.side,
                             outcomeIndex = record.outcomeIndex,
@@ -491,6 +492,7 @@ class OrderStatusUpdateService(
                             copyTradingId = record.copyTradingId,
                             sellOrderId = record.sellOrderId,
                             leaderSellTradeId = record.leaderSellTradeId,
+                            sourceTxHash = record.sourceTxHash,
                             marketId = record.marketId,
                             side = record.side,
                             outcomeIndex = record.outcomeIndex,
@@ -551,6 +553,7 @@ class OrderStatusUpdateService(
                             copyTradingId = record.copyTradingId,
                             sellOrderId = record.sellOrderId,
                             leaderSellTradeId = record.leaderSellTradeId,
+                            sourceTxHash = record.sourceTxHash,
                             marketId = record.marketId,
                             side = record.side,
                             outcomeIndex = record.outcomeIndex,
@@ -586,6 +589,7 @@ class OrderStatusUpdateService(
                             copyTradingId = record.copyTradingId,
                             sellOrderId = record.sellOrderId,
                             leaderSellTradeId = record.leaderSellTradeId,
+                            sourceTxHash = record.sourceTxHash,
                             marketId = record.marketId,
                             side = record.side,
                             outcomeIndex = record.outcomeIndex,
@@ -1105,4 +1109,3 @@ class OrderStatusUpdateService(
         }
     }
 }
-

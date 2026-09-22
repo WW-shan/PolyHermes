@@ -70,6 +70,30 @@ class ChainlinkTwapServiceTest {
     }
 
     @Test
+    fun `open price uses nearest observation instead of always preferring floor`() {
+        val service = ChainlinkTwapService { 1_790_102_200_000L }
+        service.ingestMessage(
+            """
+            {
+              "topic": "crypto_prices_twap_sixty",
+              "type": "subscribe",
+              "payload": {
+                "symbol": "btc/usd",
+                "data": [
+                  {"timestamp": 1790102185000, "full_accuracy_value": "65000000000000000000000"},
+                  {"timestamp": 1790102199000, "full_accuracy_value": "65100000000000000000000"},
+                  {"timestamp": 1790102200000, "full_accuracy_value": "65200000000000000000000"}
+                ]
+              }
+            }
+            """.trimIndent()
+        )
+
+        val (open, _) = service.getOpenClose("btc-updown-5m", 1_790_102_200L)!!
+        assertEquals(0, BigDecimal("65200").compareTo(open))
+    }
+
+    @Test
     fun `maps supported market slugs to Chainlink symbols`() {
         val service = ChainlinkTwapService()
         assertEquals("btc/usd", service.marketToSymbol("btc-updown-5m"))

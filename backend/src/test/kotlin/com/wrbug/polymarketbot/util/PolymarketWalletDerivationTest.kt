@@ -66,6 +66,19 @@ class PolymarketWalletDerivationTest {
     }
 
     @Test
+    fun `isDepositWalletForSigner only accepts wallet derived from signer`() {
+        val beacon = PolymarketWalletDerivation.deriveBeaconDepositWalletAddress(userEoa)
+        val uups = PolymarketWalletDerivation.deriveUupsDepositWalletAddress(userEoa)
+        assertEquals(true, PolymarketWalletDerivation.isDepositWalletForSigner(userEoa, beacon))
+        val upperSigner = "0x" + userEoa.removePrefix("0x").uppercase()
+        val upperBeacon = "0x" + beacon.removePrefix("0x").uppercase()
+        assertEquals(true, PolymarketWalletDerivation.isDepositWalletForSigner(upperSigner, upperBeacon))
+        assertEquals(false, PolymarketWalletDerivation.isDepositWalletForSigner(DepositWalletVectors.signer, beacon))
+        assertEquals(false, PolymarketWalletDerivation.isDepositWalletForSigner(userEoa, userEoa))
+        assertEquals(false, PolymarketWalletDerivation.isDepositWalletForSigner(userEoa, uups.dropLast(1) + "0"))
+    }
+
+    @Test
     fun `computeCreate2Address validates inputs`() {
         assertThrows(IllegalArgumentException::class.java) {
             PolymarketWalletDerivation.computeCreate2Address(PolymarketWalletDerivation.DEPOSIT_WALLET_FACTORY, ByteArray(31), ByteArray(32))

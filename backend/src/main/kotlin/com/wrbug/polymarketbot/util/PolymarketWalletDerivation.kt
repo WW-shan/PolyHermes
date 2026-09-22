@@ -143,6 +143,17 @@ object PolymarketWalletDerivation {
         }
     }
 
+    /**
+     * 校验 wallet 是否确实是 signer 可控制的 Deposit Wallet（当前 beacon 或旧版 UUPS）。
+     * 用于签名/提交链上操作前防止把 owner EOA 的签名用于任意钱包地址。
+     */
+    fun isDepositWalletForSigner(signer: String, wallet: String): Boolean {
+        if (!isValidAddress(signer) || !isValidAddress(wallet)) return false
+        val target = wallet.lowercase()
+        return target == deriveBeaconDepositWalletAddress(signer) ||
+                target == deriveUupsDepositWalletAddress(signer)
+    }
+
     fun isValidAddress(address: String?): Boolean {
         return address != null && Regex("^0x[0-9a-fA-F]{40}$").matches(address)
     }

@@ -110,7 +110,10 @@ class ChainlinkTwapService(
         val symbol = marketToSymbol(marketSlugPrefix) ?: return null
         val points = history[symbol] ?: return null
         val periodStartMs = periodStartUnix * 1000L
-        val openEntry = points.floorEntry(periodStartMs) ?: points.ceilingEntry(periodStartMs)
+        // 周期起点前 1 秒的点和起点后 1 秒的点，应选择距离起点更近的观察值；
+        // 直接优先 floorEntry 会在刚好跨过周期边界时错误使用最多 15 秒前的数据。
+        val openEntry = listOfNotNull(points.floorEntry(periodStartMs), points.ceilingEntry(periodStartMs))
+            .minByOrNull { abs(it.key - periodStartMs) }
         if (openEntry == null || abs(openEntry.key - periodStartMs) > OPEN_PRICE_TOLERANCE_MS) return null
 
         val latest = points.lastEntry() ?: return null
