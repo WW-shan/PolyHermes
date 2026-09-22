@@ -30,7 +30,7 @@ import { ethers } from "ethers";
 import crypto from "crypto";
 
 const CHAIN_ID = 137;
-const RPC_URL = process.env.RPC_URL || "https://polygon-rpc.com";
+const RPC_URL = process.env.RPC_URL || "https://polygon.publicnode.com";
 const RELAYER_URL = (process.env.RELAYER_URL || "https://relayer-v2.polymarket.com").replace(/\/$/, "");
 const WCOL_ADDRESS = "0x3A3BD7bb9528E159577F7C2e685CC81A765002E2";
 
