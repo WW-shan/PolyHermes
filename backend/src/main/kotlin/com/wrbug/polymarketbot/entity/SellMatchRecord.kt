@@ -22,6 +22,9 @@ data class SellMatchRecord(
     
     @Column(name = "leader_sell_trade_id", nullable = false, length = 100)
     val leaderSellTradeId: String,  // Leader 卖出交易ID
+
+    @Column(name = "source_tx_hash", nullable = true, length = 100)
+    val sourceTxHash: String? = null,  // 链上交易哈希：账户链上自动卖出/赎回的幂等键（历史数据/Leader 跟单卖出为 null）
     
     @Column(name = "market_id", nullable = false, length = 100)
     val marketId: String,

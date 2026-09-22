@@ -1,5 +1,7 @@
 package com.wrbug.polymarketbot.service.copytrading.monitor
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.wrbug.polymarketbot.api.*
 import com.wrbug.polymarketbot.entity.Account
 import com.wrbug.polymarketbot.entity.CopyOrderTracking
@@ -20,6 +22,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 /**
  * 跟单账户链上 WebSocket 监听服务
@@ -41,6 +44,16 @@ class AccountOnChainMonitorService(
     
     // 存储需要监听的账户：accountId -> Account
     private val monitoredAccounts = ConcurrentHashMap<Long, Account>()
+
+    /**
+     * 已处理的链上交易哈希（幂等去重）：key = "accountId:txHash"。
+     * UnifiedOnChainWsService 对同一笔交易的每一条 log 都会触发一次回调（并发），
+     * 不去重会导致同一笔卖出/赎回被重复记账（issue #61）。
+     */
+    private val processedTxHashes: Cache<String, Long> = Caffeine.newBuilder()
+        .maximumSize(10_000)
+        .expireAfterWrite(30, TimeUnit.MINUTES)
+        .build()
     
     /**
      * 启动链上 WebSocket 监听
@@ -98,8 +111,16 @@ class AccountOnChainMonitorService(
     /**
      * 处理账户的交易
      */
-    private suspend fun handleAccountTransaction(accountId: Long, txHash: String, httpClient: OkHttpClient, rpcApi: EthereumRpcApi) {
+    internal suspend fun handleAccountTransaction(accountId: Long, txHash: String, httpClient: OkHttpClient, rpcApi: EthereumRpcApi) {
         val account = monitoredAccounts[accountId] ?: return
+
+        // 幂等去重：同一笔链上交易会产生多条 log 通知（每条通知在独立协程中并发处理），
+        // 只允许处理一次，否则 sell_match_record 与 matchedQuantity 会被重复累加（issue #61）。
+        val dedupKey = "$accountId:${txHash.lowercase()}"
+        if (processedTxHashes.asMap().putIfAbsent(dedupKey, System.currentTimeMillis()) != null) {
+            logger.debug("链上交易已处理过，跳过重复通知: accountId=$accountId, txHash=$txHash")
+            return
+        }
         
         try {
             // 获取交易 receipt
@@ -145,9 +166,11 @@ class AccountOnChainMonitorService(
             
             if (trade != null && trade.side == "SELL") {
                 // 检测到卖出或赎回事件，更新订单状态
-                handleAccountSellOrRedeem(account, trade)
+                handleAccountSellOrRedeem(account, trade, txHash)
             }
         } catch (e: Exception) {
+            // 处理失败时释放幂等标记，允许链上重连补发时重试
+            processedTxHashes.invalidate(dedupKey)
             logger.error("处理账户交易失败: accountId=$accountId, txHash=$txHash, ${e.message}", e)
         }
     }
@@ -156,7 +179,7 @@ class AccountOnChainMonitorService(
      * 处理账户的卖出或赎回事件
      * 更新对应的订单状态
      */
-    private suspend fun handleAccountSellOrRedeem(account: Account, trade: TradeResponse) {
+    private suspend fun handleAccountSellOrRedeem(account: Account, trade: TradeResponse, txHash: String) {
         try {
             // 获取该账户的所有启用的跟单配置
             val copyTradings = copyTradingRepository.findByAccountId(account.id!!)
@@ -187,10 +210,20 @@ class AccountOnChainMonitorService(
                 if (unmatchedOrders.isEmpty()) {
                     continue
                 }
-                
+
+                // 数据库幂等兜底：同一跟单关系 + 同一笔链上交易 + 同一市场已记账则跳过
+                // （内存去重只在单进程有效，这里保证重启/多实例下也不会重复计入盈亏）
+                if (sellMatchRecordRepository.existsByCopyTradingIdAndSourceTxHashAndMarketId(
+                        copyTrading.id!!, txHash, marketId
+                    )
+                ) {
+                    logger.debug("链上交易已记账，跳过重复处理: copyTradingId=${copyTrading.id}, txHash=$txHash, marketId=$marketId")
+                    continue
+                }
+
                 // 卖出数量就是交易的 size
                 val soldQuantity = trade.size.toSafeBigDecimal()
-                
+
                 // 更新订单状态为已卖出
                 updateOrdersAsSoldByFIFO(
                     unmatchedOrders,
@@ -198,7 +231,8 @@ class AccountOnChainMonitorService(
                     sellPrice,
                     copyTrading.id!!,
                     marketId,
-                    outcomeIndex
+                    outcomeIndex,
+                    txHash
                 )
                 
                 logger.info("跟单账户卖出/赎回事件处理完成: accountId=${account.id}, copyTradingId=${copyTrading.id}, txHash=${trade.id}, soldQuantity=$soldQuantity, sellPrice=$sellPrice")
@@ -217,7 +251,8 @@ class AccountOnChainMonitorService(
         sellPrice: BigDecimal,
         copyTradingId: Long,
         marketId: String,
-        outcomeIndex: Int
+        outcomeIndex: Int,
+        txHash: String
     ) {
         var remainingSoldQuantity = soldQuantity
         val matchDetails = mutableListOf<SellMatchDetail>()
@@ -269,12 +304,13 @@ class AccountOnChainMonitorService(
         if (totalMatchedQuantity > BigDecimal.ZERO && matchDetails.isNotEmpty()) {
             val timestamp = System.currentTimeMillis()
             val sellOrderId = "AUTO_WS_${timestamp}_${copyTradingId}" // 区分 WS 自动卖出
-            val leaderSellTradeId = "AUTO_WS_${timestamp}"
+            val leaderSellTradeId = "AUTO_WS_${txHash}"
             
             val matchRecord = SellMatchRecord(
                 copyTradingId = copyTradingId,
                 sellOrderId = sellOrderId,
                 leaderSellTradeId = leaderSellTradeId,
+                sourceTxHash = txHash,
                 marketId = marketId,
                 side = outcomeIndex.toString(),
                 outcomeIndex = outcomeIndex,

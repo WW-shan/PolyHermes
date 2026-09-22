@@ -26,6 +26,16 @@ interface SellMatchRecordRepository : JpaRepository<SellMatchRecord, Long> {
     fun findByLeaderSellTradeId(leaderSellTradeId: String): SellMatchRecord?
     
     /**
+     * 幂等判断：同一跟单关系 + 同一笔链上交易 + 同一市场是否已存在卖出记录。
+     * 用于账户链上卖出/赎回回调的去重，避免同一笔交易被重复计入盈亏。
+     */
+    fun existsByCopyTradingIdAndSourceTxHashAndMarketId(
+        copyTradingId: Long,
+        sourceTxHash: String,
+        marketId: String
+    ): Boolean
+
+    /**
      * 查询所有价格未更新的卖出记录
      * 注意：priceUpdated 现在同时表示价格已更新和通知已发送（共用字段）
      */
