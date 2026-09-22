@@ -98,6 +98,16 @@ data class EventResponse(
 )
 
 /**
+ * 市场手续费配置（Gamma feeSchedule）
+ */
+data class GammaFeeScheduleResponse(
+    val rate: java.math.BigDecimal? = null,
+    val exponent: Int? = null,
+    val takerOnly: Boolean? = null,
+    val rebateRate: java.math.BigDecimal? = null
+)
+
+/**
  * 市场响应（根据 Gamma API 文档）
  */
 data class MarketResponse(
@@ -128,6 +138,9 @@ data class MarketResponse(
     val clobTokenIds: String? = null,  // CLOB token IDs（可能是 JSON 字符串或数组）
     val clob_token_ids: String? = null,  // 下划线格式（兼容不同 API 版本）
     val negRisk: Boolean? = null,       // 事件级 neg risk（部分 API 直接返回在 market）
-    val negRiskOther: Boolean? = null  // Market 级 neg risk 标记
+    val negRiskOther: Boolean? = null,  // Market 级 neg risk 标记
+    val feesEnabled: Boolean? = null,   // 该市场是否收取手续费
+    val feeType: String? = null,        // 手续费类型（如 crypto_fees_v2、sports_fees_v3）
+    val feeSchedule: GammaFeeScheduleResponse? = null  // 手续费曲线参数（rate 为基准费率）
 )
 

@@ -277,7 +277,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
         walletAddress = values.walletAddress
         
         // 验证推导的地址和输入的地址是否一致
-        if (derivedAddress && walletAddress !== derivedAddress) {
+        if (derivedAddress && walletAddress.toLowerCase() !== derivedAddress.toLowerCase()) {
           return Promise.reject(new Error(t('accountImport.walletAddressMismatch')))
         }
       } else {
@@ -292,7 +292,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
         
         // 如果用户手动输入了地址，验证是否与推导的地址一致
         if (values.walletAddress) {
-          if (values.walletAddress !== derivedAddressFromMnemonic) {
+          if (values.walletAddress.toLowerCase() !== derivedAddressFromMnemonic.toLowerCase()) {
             walletAddress = derivedAddressFromMnemonic
           } else {
             walletAddress = values.walletAddress
@@ -322,7 +322,8 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
       let accountId: number | undefined = undefined
       if (accountsResponse.data.code === 0 && accountsResponse.data.data) {
         const newAccounts = accountsResponse.data.data.list || []
-        const newAccount = newAccounts.find((acc: any) => acc.walletAddress === walletAddress)
+        const newAccount = newAccounts.find((acc: any) =>
+          typeof acc.walletAddress === 'string' && acc.walletAddress.toLowerCase() === walletAddress.toLowerCase())
         if (newAccount) {
           accountId = newAccount.id
           setImportedAccountId(accountId)
@@ -438,7 +439,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
                     if (!isValidWalletAddress(value)) {
                       return Promise.reject(new Error(t('accountImport.walletAddressInvalid')))
                     }
-                    if (derivedAddress && value !== derivedAddress) {
+                    if (derivedAddress && value.toLowerCase() !== derivedAddress.toLowerCase()) {
                       return Promise.reject(new Error(t('accountImport.walletAddressMismatch')))
                     }
                     return Promise.resolve()

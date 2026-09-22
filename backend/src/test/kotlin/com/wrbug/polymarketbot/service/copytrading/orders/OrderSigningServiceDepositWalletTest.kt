@@ -3,6 +3,8 @@ package com.wrbug.polymarketbot.service.copytrading.orders
 import com.wrbug.polymarketbot.util.DepositWalletVectors
 import com.wrbug.polymarketbot.util.Eip712Encoder
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Test
 import org.web3j.crypto.ECKeyPair
@@ -121,5 +123,42 @@ class OrderSigningServiceDepositWalletTest {
         assertEquals(eoa, order.signer)
         assertNotEquals(order.maker, order.signer)
         assertEquals(65 * 2 + 2, order.signature.length)
+    }
+
+    @Test
+    fun `createAndSignOrder with signatureType 3 rejects maker that is not derived from the private key`() {
+        val v = DepositWalletVectors.order("standard")
+        // 另一个 EOA 的 Deposit Wallet，不是当前私钥推导出来的地址
+        val foreignWallet = DepositWalletVectors.derivation("0xec61677883418ab16ecc0ce35113635cf5a753f9")["beaconDepositWallet"].asString
+        val ex = assertThrows(RuntimeException::class.java) {
+            service.createAndSignOrder(
+                privateKey = privateKey,
+                makerAddress = foreignWallet,
+                tokenId = v["order"].asJsonObject["tokenId"].asString,
+                side = "BUY",
+                price = "0.5",
+                size = "10",
+                signatureType = 3,
+                exchangeContract = v["exchange"].asString
+            )
+        }
+        assertTrue(ex.message?.contains("Deposit Wallet") == true, "应明确拒绝非本人 Deposit Wallet，实际: ${ex.message}")
+    }
+
+    @Test
+    fun `createAndSignOrder with signatureType 3 accepts checksummed own deposit wallet`() {
+        val v = DepositWalletVectors.order("standard")
+        val own = DepositWalletVectors.derivation(eoa)["beaconDepositWallet"].asString
+        val order = service.createAndSignOrder(
+            privateKey = privateKey,
+            makerAddress = Keys.toChecksumAddress(own),
+            tokenId = v["order"].asJsonObject["tokenId"].asString,
+            side = "BUY",
+            price = "0.5",
+            size = "10",
+            signatureType = 3,
+            exchangeContract = v["exchange"].asString
+        )
+        assertEquals(own, order.maker)
     }
 }

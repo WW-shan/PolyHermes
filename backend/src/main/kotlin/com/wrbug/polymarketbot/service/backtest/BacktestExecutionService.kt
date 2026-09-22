@@ -285,7 +285,9 @@ class BacktestExecutionService(
                                 }
                                 val price = leaderTrade.price.toSafeBigDecimal()
                                 val market = marketService.getMarket(leaderTrade.marketId)
-                                val buyFee = PolymarketTradingFee.takerFee(quantity, price, market?.category)
+                                val buyFee = PolymarketTradingFee.takerFee(
+                                    quantity, price, marketService.getTakerFeeRate(leaderTrade.marketId)
+                                )
                                 val totalCost = actualBuyAmount.add(buyFee)
 
                                 // 5.6.3 检查最大仓位限制（如果配置了）
@@ -410,7 +412,9 @@ class BacktestExecutionService(
 
                                 val sellPrice = leaderTrade.price.toSafeBigDecimal()
                                 val sellMarket = marketService.getMarket(leaderTrade.marketId)
-                                val sellFee = PolymarketTradingFee.takerFee(actualSellQuantity, sellPrice, sellMarket?.category)
+                                val sellFee = PolymarketTradingFee.takerFee(
+                                    actualSellQuantity, sellPrice, marketService.getTakerFeeRate(leaderTrade.marketId)
+                                )
                                 val netAmount = finalSellAmount.subtract(sellFee)
 
                                 // 买入手续费按卖出数量比例结转，避免盈利被低估。

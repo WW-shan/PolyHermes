@@ -71,12 +71,21 @@ class AccountService(
                 return Result.failure(IllegalArgumentException("无效的钱包地址格式"))
             }
 
-            // 3. 验证私钥和地址的对应关系
-            // 注意：前端已经验证了私钥和地址的对应关系，这里只做格式验证
-            // 如果需要更严格的验证，可以使用以太坊库（如 web3j）进行验证
+            // 3. 验证私钥和地址的对应关系（后端必须自行校验，不能只依赖前端）
             if (!isValidPrivateKey(request.privateKey)) {
                 return Result.failure(IllegalArgumentException("无效的私钥格式"))
             }
+            val privateKeyAddress = deriveAddressFromPrivateKey(request.privateKey)
+                ?: return Result.failure(IllegalArgumentException("无效的私钥：无法推导地址"))
+            if (!privateKeyAddress.equals(request.walletAddress, ignoreCase = true)) {
+                logger.warn("私钥与钱包地址不匹配，拒绝导入")
+                return Result.failure(
+                    IllegalArgumentException("私钥与钱包地址不匹配：私钥对应地址为 $privateKeyAddress")
+                )
+            }
+
+            // 钱包类型统一规范化后使用（非法值回退 magic，与历史行为一致）
+            val walletTypeEnum = WalletType.fromStringOrDefault(request.walletType, WalletType.MAGIC)
 
             // 4. 自动获取或创建 API Key（必须成功，否则导入失败）
             val apiKeyCreds = runBlocking {
@@ -104,7 +113,6 @@ class AccountService(
             // 5. 获取代理地址（必须成功，否则导入失败）
             // 根据用户选择的钱包类型计算代理地址
             val proxyAddress = runBlocking {
-                val walletTypeEnum = WalletType.fromStringOrDefault(request.walletType, WalletType.MAGIC)
                 val proxyResult = blockchainService.getProxyAddress(request.walletAddress, walletTypeEnum)
                 if (proxyResult.isSuccess) {
                     val address = proxyResult.getOrNull()
@@ -127,7 +135,7 @@ class AccountService(
             }
 
             // 6.1 Deposit Wallet 已部署时校验 owner 与 EOA 一致，避免导入错误的钱包
-            if (WalletType.fromStringOrDefault(request.walletType, WalletType.MAGIC) == WalletType.DEPOSIT) {
+            if (walletTypeEnum == WalletType.DEPOSIT) {
                 val mismatch = runBlocking { checkDepositWalletOwnerMismatch(request.walletAddress, proxyAddress) }
                 if (mismatch != null) {
                     return Result.failure(IllegalStateException(mismatch))
@@ -141,7 +149,6 @@ class AccountService(
 
             // 8. 生成账户名称（如果未提供，使用 SAFE/MAGIC-代理地址后4位）
             val accountName = if (request.accountName.isNullOrBlank()) {
-                val walletTypeEnum = WalletType.fromStringOrDefault(request.walletType, WalletType.MAGIC)
                 val typeLabel = walletTypeEnum.name.uppercase()
                 val proxyWithoutPrefix = if (proxyAddress.startsWith("0x") || proxyAddress.startsWith("0X")) {
                     proxyAddress.substring(2)
@@ -169,7 +176,7 @@ class AccountService(
                 accountName = accountName,
                 isDefault = false,  // 不再支持默认账户
                 isEnabled = request.isEnabled,
-                walletType = request.walletType,  // 保存钱包类型
+                walletType = walletTypeEnum.value,  // 保存规范化后的钱包类型
                 createdAt = System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis()
             )
@@ -298,7 +305,9 @@ class AccountService(
      */
     private suspend fun checkDepositWalletOwnerMismatch(walletAddress: String, depositWallet: String): String? {
         if (!blockchainService.isProxyDeployed(depositWallet)) return null
-        val owner = blockchainService.getDepositWalletOwner(depositWallet) ?: return null
+        // 已部署但读不到 owner 时 fail-closed：不能把 RPC 失败当成 owner 匹配
+        val owner = blockchainService.getDepositWalletOwner(depositWallet)
+            ?: return "无法读取 Deposit Wallet $depositWallet 的 owner，请确认 RPC 节点可用后重试"
         return if (owner.equals(walletAddress, ignoreCase = true)) {
             null
         } else {
@@ -875,6 +884,20 @@ class AccountService(
         // 私钥格式：64 位十六进制字符（可选 0x 前缀）
         val cleanKey = if (privateKey.startsWith("0x")) privateKey.substring(2) else privateKey
         return cleanKey.length == 64 && cleanKey.matches(Regex("^[0-9a-fA-F]{64}$"))
+    }
+
+    /**
+     * 从私钥推导 EOA 地址（小写）；私钥非法时返回 null
+     */
+    private fun deriveAddressFromPrivateKey(privateKey: String): String? {
+        return try {
+            val cleanKey = privateKey.removePrefix("0x").removePrefix("0X")
+            val keyPair = org.web3j.crypto.ECKeyPair.create(java.math.BigInteger(cleanKey, 16))
+            "0x" + org.web3j.crypto.Keys.getAddress(keyPair)
+        } catch (e: Exception) {
+            logger.warn("私钥推导地址失败: ${e.message}")
+            null
+        }
     }
 
     /**

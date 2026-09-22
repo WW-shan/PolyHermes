@@ -951,7 +951,7 @@ open class CopyOrderTrackingService(
         var totalMatched = BigDecimal.ZERO
         var remaining = finalNeedMatch
         val matchDetails = mutableListOf<SellMatchDetail>()
-        val marketCategory = marketService.getMarket(leaderSellTrade.market)?.category
+        val marketFeeRate = marketService.getTakerFeeRate(leaderSellTrade.market)
 
         for (order in unmatchedOrders) {
             if (remaining.lte(BigDecimal.ZERO)) break
@@ -969,7 +969,7 @@ open class CopyOrderTrackingService(
                 buyPrice = buyPrice,
                 sellPrice = sellPrice,
                 shares = matchQty,
-                category = marketCategory
+                feeRate = marketFeeRate
             )
 
             // 创建匹配明细（使用实际卖出价格）
@@ -1110,7 +1110,7 @@ open class CopyOrderTrackingService(
                 buyPrice = detail.buyPrice,
                 sellPrice = actualSellPrice,
                 shares = detail.matchedQuantity,
-                category = marketCategory
+                feeRate = marketFeeRate
             )
             detail.copy(
                 sellPrice = actualSellPrice,

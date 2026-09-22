@@ -28,7 +28,10 @@ data class Market(
     val eventSlug: String? = null,  // 跳转用的 slug（从 events[0].slug 获取）
     
     @Column(name = "category", length = 50)
-    val category: String? = null,  // 市场分类
+    val category: String? = null,  // 市场分类（Gamma 新市场可能为空）
+
+    @Column(name = "taker_fee_rate", precision = 12, scale = 8)
+    val takerFeeRate: java.math.BigDecimal? = null,  // taker 手续费率（Gamma feeSchedule.rate；null=未获取）
     
     @Column(name = "icon", length = 500)
     val icon: String? = null,  // 市场图标URL

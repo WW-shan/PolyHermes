@@ -517,7 +517,7 @@ class OrderStatusUpdateService(
                     if (actualSellPrice != record.sellPrice) {
                         // 重新计算盈亏
                         val details = sellMatchDetailRepository.findByMatchRecordId(record.id!!)
-                        val marketCategory = marketService.getMarket(record.marketId)?.category
+                        val marketFeeRate = marketService.getTakerFeeRate(record.marketId)
                         var totalRealizedPnl = BigDecimal.ZERO
 
                         for (detail in details) {
@@ -525,7 +525,7 @@ class OrderStatusUpdateService(
                                 buyPrice = detail.buyPrice,
                                 sellPrice = actualSellPrice,
                                 shares = detail.matchedQuantity,
-                                category = marketCategory
+                                feeRate = marketFeeRate
                             )
 
                             // 更新明细的卖出价格和盈亏

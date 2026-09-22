@@ -198,6 +198,16 @@ class OrderSigningService {
             val privateKeyBigInt = BigInteger(cleanPrivateKey, 16)
             val credentials = Credentials.create(privateKeyBigInt.toString(16))
             val signerAddress = if (signatureType == SIGNATURE_TYPE_POLY_1271) {
+                // 安全校验：只允许对当前私钥 EOA 推导出的 Deposit Wallet 签 ERC-7739 嵌套签名，
+                // 否则 EOA 的签名会被用于任意钱包地址（owner 校验不通过的钱包）
+                if (!com.wrbug.polymarketbot.util.PolymarketWalletDerivation.isDepositWalletForSigner(
+                        credentials.address, makerAddress
+                    )
+                ) {
+                    throw IllegalArgumentException(
+                        "maker 地址 $makerAddress 不是当前私钥（${credentials.address}）对应的 Deposit Wallet"
+                    )
+                }
                 makerAddress.lowercase()
             } else {
                 credentials.address.lowercase()

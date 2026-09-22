@@ -137,7 +137,7 @@ class CryptoTailSettlementService(
 
         val won = trigger.outcomeIndex == winnerIndex
         val pnl = if (fill != null && fill.price.gt(BigDecimal.ZERO) && fill.size.gt(BigDecimal.ZERO)) {
-            CryptoTailPnlCalculator.pnlFromFill(fill.price, fill.size, newAmountUsdc, won)
+            CryptoTailPnlCalculator.pnlFromFill(fill.price, fill.size, fill.usdcSize, won)
         } else {
             CryptoTailPnlCalculator.pnlFallback(trigger.amountUsdc, won)
         }
@@ -182,15 +182,6 @@ class CryptoTailSettlementService(
     }
 
     /**
-     * Activity 匹配到的一条 TRADE 的成交数据：价格、数量、实际投入 USDC（接口 usdcSize）。
-     */
-    private data class ActivityFill(
-        val price: BigDecimal,
-        val size: BigDecimal,
-        val usdcSize: BigDecimal?
-    )
-
-    /**
      * 通过 Data API activity 接口获取该触发对应的实际成交价、成交量与投入金额（比 CLOB getOrder 更准确）。
      * 只有此接口返回匹配的 TRADE 且 price/size 有效时，结算才会更新 triggerPrice、amountUsdc（表现）；投入金额优先用 activity 的 usdcSize。
      */
@@ -211,43 +202,78 @@ class CryptoTailSettlementService(
             val dataApi = retrofitFactory.createDataApi()
             val response = dataApi.getUserActivity(
                 user = user,
+                market = listOf(conditionId),
                 type = listOf("TRADE"),
+                side = "BUY",
                 start = start,
                 end = end,
-                limit = 50,
+                limit = ACTIVITY_LIMIT,
                 sortBy = "TIMESTAMP",
-                sortDirection = "DESC"
+                sortDirection = "ASC"
             )
             if (!response.isSuccessful || response.body() == null) {
                 logger.warn("加密价差策略结算拉取 activity 失败: triggerId=${trigger.id}, code=${response.code()}")
                 return null
             }
             val activities = response.body()!!
-            // 只匹配 TRADE：返回里可能混有 REDEEM（outcomeIndex=999、price=0）等，需排除
-            val match = activities.firstOrNull { a ->
-                a.type == "TRADE" &&
-                    a.conditionId == conditionId &&
-                    a.outcomeIndex != null && a.outcomeIndex in 0..1 &&
-                    a.outcomeIndex == trigger.outcomeIndex &&
-                    a.side?.uppercase() == "BUY" &&
-                    a.price != null && a.price > 0 &&
-                    a.size != null && a.size > 0
-            } ?: run {
+            val fill = aggregateActivityFills(activities, conditionId, trigger.outcomeIndex)
+            if (fill == null) {
                 logger.debug("加密价差策略结算 activity 无匹配成交: triggerId=${trigger.id}, conditionId=$conditionId, outcomeIndex=${trigger.outcomeIndex}, 条数=${activities.size}")
-                return null
             }
-            val price = match.price!!.toSafeBigDecimal()
-            val size = match.size!!.toSafeBigDecimal()
-            val usdcSize = match.usdcSize?.toSafeBigDecimal()?.takeIf { it.gt(BigDecimal.ZERO) }
-            if (price.gt(BigDecimal.ZERO) && size.gt(BigDecimal.ZERO)) {
-                ActivityFill(price = price, size = size, usdcSize = usdcSize)
-            } else {
-                logger.debug("加密价差策略结算 activity 成交数据无效: triggerId=${trigger.id}, price=$price, size=$size")
-                null
-            }
+            fill
         } catch (e: Exception) {
             logger.warn("加密价差策略结算拉取 activity 异常，触发价/投入金额不会更新: triggerId=${trigger.id}, error=${e.message}")
             null
+        }
+    }
+
+    companion object {
+        /** 单次 activity 查询上限（接口最大 500），保证扫到同一笔 FAK 订单的全部成交 */
+        private const val ACTIVITY_LIMIT = 500
+
+        /**
+         * 聚合同一笔订单的全部成交：FAK 订单可能扫过多档挂单，产生多条 TRADE，
+         * 只取其中一条会低估成交量与成本。价格取成交量加权均价。
+         */
+        internal fun aggregateActivityFills(
+            activities: List<com.wrbug.polymarketbot.api.UserActivityResponse>,
+            conditionId: String,
+            outcomeIndex: Int?
+        ): ActivityFill? {
+            val matches = activities.filter { a ->
+                a.type == "TRADE" &&
+                    a.conditionId == conditionId &&
+                    a.outcomeIndex != null && a.outcomeIndex in 0..1 &&
+                    a.outcomeIndex == outcomeIndex &&
+                    a.side?.uppercase() == "BUY" &&
+                    a.price != null && a.price > 0 &&
+                    a.size != null && a.size > 0
+            }
+            if (matches.isEmpty()) return null
+            var totalSize = BigDecimal.ZERO
+            var notional = BigDecimal.ZERO
+            var totalUsdc = BigDecimal.ZERO
+            var usdcComplete = true
+            for (m in matches) {
+                val size = m.size!!.toSafeBigDecimal()
+                val price = m.price!!.toSafeBigDecimal()
+                if (size <= BigDecimal.ZERO || price <= BigDecimal.ZERO) continue
+                totalSize = totalSize.add(size)
+                notional = notional.add(price.multiply(size))
+                val usdc = m.usdcSize?.toSafeBigDecimal()
+                if (usdc != null && usdc.gt(BigDecimal.ZERO)) {
+                    totalUsdc = totalUsdc.add(usdc)
+                } else {
+                    usdcComplete = false
+                }
+            }
+            if (totalSize <= BigDecimal.ZERO) return null
+            val averagePrice = notional.divide(totalSize, 8, RoundingMode.DOWN)
+            return ActivityFill(
+                price = averagePrice,
+                size = totalSize,
+                usdcSize = if (usdcComplete && totalUsdc.gt(BigDecimal.ZERO)) totalUsdc else null
+            )
         }
     }
 
@@ -258,3 +284,12 @@ class CryptoTailSettlementService(
         settlementScopeJob.cancel()
     }
 }
+
+/**
+ * Activity 匹配到的一笔成交聚合结果：成交量加权均价、总成交量、实际投入 USDC（含 taker 手续费）。
+ */
+internal data class ActivityFill(
+    val price: BigDecimal,
+    val size: BigDecimal,
+    val usdcSize: BigDecimal?
+)

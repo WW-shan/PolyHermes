@@ -1567,7 +1567,9 @@
     "winRate": "胜率",
     "averagePnl": "平均盈亏",
     "maxPnl": "最大盈亏",
-    "minPnl": "最小盈亏"
+    "minPnl": "最小盈亏",
+    "currentPositionCost": "当前持仓成本",
+    "currentPositionValue": "当前持仓市值"
   },
   "rpcNodeSettings": {
     "title": "Polygon RPC 节点配置",
@@ -1738,7 +1740,6 @@
     "starting": "启动中...",
     "stopping": "停止中...",
     "errorOccurred": "发生错误",
-    "retry": "重试",
     "taskNameRequired": "请输入任务名称",
     "leaderRequired": "请选择 Leader",
     "initialBalanceRequired": "请输入初始资金",

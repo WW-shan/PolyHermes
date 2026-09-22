@@ -6,6 +6,7 @@ import com.wrbug.polymarketbot.api.MarketResponse
 import com.wrbug.polymarketbot.api.PolymarketGammaApi
 import com.wrbug.polymarketbot.entity.Market
 import com.wrbug.polymarketbot.repository.MarketRepository
+import com.wrbug.polymarketbot.util.PolymarketTradingFee
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.getEventSlug
 import com.wrbug.polymarketbot.util.parseStringArray
@@ -31,6 +32,9 @@ class MarketService(
     private val marketCache: Cache<String, Market> = Caffeine.newBuilder()
         .maximumSize(200)  // 最多缓存 200 条记录
         .build()
+
+    /** 已尝试刷新手续费率的 marketId（避免老数据反复请求 Gamma） */
+    private val feeRateRefreshAttempted: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     
     /**
      * 根据市场ID获取市场信息
@@ -170,6 +174,7 @@ class MarketService(
                     slug = slug ?: existingMarket.slug,
                     eventSlug = eventSlug ?: existingMarket.eventSlug,
                     category = marketResponse.category ?: existingMarket.category,
+                    takerFeeRate = resolveTakerFeeRate(marketResponse) ?: existingMarket.takerFeeRate,
                     icon = marketResponse.icon ?: existingMarket.icon,
                     image = marketResponse.image ?: existingMarket.image,
                     description = marketResponse.description ?: existingMarket.description,
@@ -187,6 +192,7 @@ class MarketService(
                     slug = slug,
                     eventSlug = eventSlug,
                     category = marketResponse.category,
+                    takerFeeRate = resolveTakerFeeRate(marketResponse),
                     icon = marketResponse.icon,
                     image = marketResponse.image,
                     description = marketResponse.description,
@@ -208,6 +214,50 @@ class MarketService(
         }
     }
     
+    /**
+     * 解析市场 taker 费率：优先 feeSchedule.rate；明确关闭手续费时为 0；否则按 feeType/category 兜底
+     */
+    private fun resolveTakerFeeRate(marketResponse: MarketResponse): java.math.BigDecimal? {
+        if (marketResponse.feesEnabled == false) return java.math.BigDecimal.ZERO
+        marketResponse.feeSchedule?.rate?.let { return it }
+        val fallback = PolymarketTradingFee.fallbackRate(marketResponse.feeType, marketResponse.category)
+        if (fallback > java.math.BigDecimal.ZERO) return fallback
+        if (marketResponse.feesEnabled == true) {
+            logger.warn(
+                "市场开启了手续费但未返回 feeSchedule/feeType，费率暂按未知处理: marketId={}, feeType={}",
+                marketResponse.conditionId, marketResponse.feeType
+            )
+        }
+        // 未知：保留数据库已有费率，避免把已知费率覆盖成 0
+        return null
+    }
+
+    /**
+     * 获取市场 taker 费率（用于盈亏中的手续费计算）。
+     * 历史数据没有费率时会尝试刷新一次市场信息；仍拿不到时按分类兜底，最终为 0。
+     */
+    fun getTakerFeeRate(marketId: String): java.math.BigDecimal {
+        val cached = getMarket(marketId)
+        cached?.takerFeeRate?.let { return it }
+
+        // 老数据（迁移前入库）没有费率：拉取一次并回填（每个市场每进程最多尝试一次，避免反复请求）
+        val refreshed = if (cached != null && feeRateRefreshAttempted.add(marketId)) {
+            runBlocking {
+                try {
+                    fetchAndSaveMarket(marketId)
+                } catch (e: Exception) {
+                    logger.warn("刷新市场费率失败: marketId=$marketId, error=${e.message}")
+                    null
+                }
+            }
+        } else {
+            null
+        }
+        val market = refreshed ?: cached
+        return market?.takerFeeRate
+            ?: PolymarketTradingFee.fallbackRate(null, market?.category)
+    }
+
     /**
      * 按 tokenId 从 Gamma 解析市场信息（conditionId、outcomeIndex）
      * 用于链上解析时 Gamma 失败、仅带 tokenId 的交易在 processBuyTrade 中补查市场
