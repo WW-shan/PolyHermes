@@ -213,6 +213,7 @@ class CryptoTailStrategyExecutionService(
     ) {
         if (outcomeIndex < 0 || outcomeIndex >= tokenIds.size) return
         if (bestBid < strategy.minPrice || bestBid > strategy.maxPrice) return
+        if (!CryptoTailTiming.isWithinExecutionWindow(strategy, periodStartUnix, System.currentTimeMillis())) return
 
         val mutex = getTriggerMutex(strategy.id!!, periodStartUnix)
         mutex.withLock {

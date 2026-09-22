@@ -1725,8 +1725,8 @@
   },
   "cryptoTailStrategy": {
     "binanceApiAlert": {
-      "title": "无法连接币安 API，策略暂时不能运行",
-      "description": "加密价差策略需要从币安获取行情数据才能工作。当前连接失败，可能是网络问题或币安服务异常，请稍后点击下方按钮重新检测。",
+      "title": "无法连接 Chainlink TWAP 和币安行情，策略暂时不能运行",
+      "description": "加密价差策略优先使用 Chainlink 60 秒 TWAP，币安 K 线仅作回退。当前两个行情源都不可用，可能是网络问题或服务异常，请稍后重新检测。",
       "recheck": "重新检测"
     },
     "list": {

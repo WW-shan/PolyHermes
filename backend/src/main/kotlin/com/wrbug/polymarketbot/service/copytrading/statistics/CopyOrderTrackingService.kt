@@ -951,6 +951,7 @@ open class CopyOrderTrackingService(
         var totalMatched = BigDecimal.ZERO
         var remaining = finalNeedMatch
         val matchDetails = mutableListOf<SellMatchDetail>()
+        val marketCategory = marketService.getMarket(leaderSellTrade.market)?.category
 
         for (order in unmatchedOrders) {
             if (remaining.lte(BigDecimal.ZERO)) break
@@ -964,7 +965,12 @@ open class CopyOrderTrackingService(
 
             // 计算盈亏（使用实际卖出价格）
             val buyPrice = order.price.toSafeBigDecimal()
-            val realizedPnl = sellPrice.subtract(buyPrice).multi(matchQty)
+            val realizedPnl = PolymarketTradingFee.netRealizedPnl(
+                buyPrice = buyPrice,
+                sellPrice = sellPrice,
+                shares = matchQty,
+                category = marketCategory
+            )
 
             // 创建匹配明细（使用实际卖出价格）
             val detail = SellMatchDetail(
@@ -1098,9 +1104,14 @@ open class CopyOrderTrackingService(
             }
         }
 
-        // 14. 重新计算盈亏（使用实际成交价）
+        // 14. 重新计算盈亏（使用实际成交价，并扣除买卖两次 taker 手续费）
         val updatedMatchDetails = matchDetails.map { detail ->
-            val updatedRealizedPnl = actualSellPrice.subtract(detail.buyPrice).multi(detail.matchedQuantity)
+            val updatedRealizedPnl = PolymarketTradingFee.netRealizedPnl(
+                buyPrice = detail.buyPrice,
+                sellPrice = actualSellPrice,
+                shares = detail.matchedQuantity,
+                category = marketCategory
+            )
             detail.copy(
                 sellPrice = actualSellPrice,
                 realizedPnl = updatedRealizedPnl

@@ -1725,7 +1725,7 @@
   },
   "cryptoTailStrategy": {
     "binanceApiAlert": {
-      "title": "無法連接幣安 API，策略暫時不能運行",
+      "title": "無法連接 Chainlink TWAP 和幣安行情，策略暫時不能運行",
       "description": "加密價差策略需要從幣安取得行情資料才能運作。目前連線失敗，可能是網路問題或幣安服務異常，請稍後點擊下方按鈕重新檢測。",
       "recheck": "重新檢測"
     },

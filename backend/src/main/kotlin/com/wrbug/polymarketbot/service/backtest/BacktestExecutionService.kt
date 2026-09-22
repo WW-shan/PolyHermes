@@ -10,6 +10,7 @@ import com.wrbug.polymarketbot.repository.BacktestTaskRepository
 import com.wrbug.polymarketbot.service.common.MarketPriceService
 import com.wrbug.polymarketbot.service.common.MarketService
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingFilterService
+import com.wrbug.polymarketbot.util.PolymarketTradingFee
 import com.wrbug.polymarketbot.util.gt
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
@@ -43,7 +44,9 @@ class BacktestExecutionService(
         var quantity: BigDecimal,
         val avgPrice: BigDecimal,
         val leaderBuyQuantity: BigDecimal?,
-        val marketEndDate: Long? = null
+        val marketEndDate: Long? = null,
+        /** 已支付但尚未通过卖出/结算结转的买入手续费 */
+        var feesPaid: BigDecimal = BigDecimal.ZERO
     )
 
     /**
@@ -280,7 +283,10 @@ class BacktestExecutionService(
                                     logger.debug("计算数量为0跳过: actualBuyAmount=$actualBuyAmount, price=${leaderTrade.price}")
                                     continue
                                 }
-                                val totalCost = actualBuyAmount
+                                val price = leaderTrade.price.toSafeBigDecimal()
+                                val market = marketService.getMarket(leaderTrade.marketId)
+                                val buyFee = PolymarketTradingFee.takerFee(quantity, price, market?.category)
+                                val totalCost = actualBuyAmount.add(buyFee)
 
                                 // 5.6.3 检查最大仓位限制（如果配置了）
                                 if (task.maxPositionValue != null) {
@@ -305,7 +311,6 @@ class BacktestExecutionService(
                                 // 更新余额和持仓（同市场同 outcome 多次买入合并：数量相加、加权均价、leaderBuyQuantity 相加）
                                 currentBalance -= totalCost
                                 val positionKey = "${leaderTrade.marketId}:${leaderTrade.outcomeIndex ?: 0}"
-                                val price = leaderTrade.price.toSafeBigDecimal()
                                 val leaderSize = leaderTrade.size.toSafeBigDecimal()
                                 val existing = positions[positionKey]
                                 positions[positionKey] = if (existing != null) {
@@ -324,10 +329,10 @@ class BacktestExecutionService(
                                         quantity = newQuantity,
                                         avgPrice = newAvgPrice,
                                         leaderBuyQuantity = newLeaderBuyQuantity,
-                                        marketEndDate = existing.marketEndDate
+                                        marketEndDate = existing.marketEndDate,
+                                        feesPaid = existing.feesPaid.add(buyFee)
                                     )
                                 } else {
-                                    val market = marketService.getMarket(leaderTrade.marketId)
                                     Position(
                                         marketId = leaderTrade.marketId,
                                         outcome = leaderTrade.outcome ?: "",
@@ -335,7 +340,8 @@ class BacktestExecutionService(
                                         quantity = quantity,
                                         avgPrice = price,
                                         leaderBuyQuantity = leaderSize,
-                                        marketEndDate = market?.endDate
+                                        marketEndDate = market?.endDate,
+                                        feesPaid = buyFee
                                     )
                                 }
 
@@ -349,9 +355,9 @@ class BacktestExecutionService(
                                     outcome = leaderTrade.outcome ?: leaderTrade.outcomeIndex.toString(),
                                     outcomeIndex = leaderTrade.outcomeIndex,
                                     quantity = quantity,
-                                    price = leaderTrade.price.toSafeBigDecimal(),
+                                    price = price,
                                     amount = actualBuyAmount,
-                                    fee = BigDecimal.ZERO,
+                                    fee = buyFee,
                                     profitLoss = null,
                                     balanceAfter = currentBalance,
                                     leaderTradeId = leaderTrade.tradeId
@@ -402,10 +408,19 @@ class BacktestExecutionService(
                                     sellAmount
                                 }
 
-                                val netAmount = finalSellAmount
+                                val sellPrice = leaderTrade.price.toSafeBigDecimal()
+                                val sellMarket = marketService.getMarket(leaderTrade.marketId)
+                                val sellFee = PolymarketTradingFee.takerFee(actualSellQuantity, sellPrice, sellMarket?.category)
+                                val netAmount = finalSellAmount.subtract(sellFee)
 
-                                // 计算盈亏
-                                val cost = actualSellQuantity.multiply(position.avgPrice)
+                                // 买入手续费按卖出数量比例结转，避免盈利被低估。
+                                val allocatedBuyFee = if (position.quantity > BigDecimal.ZERO) {
+                                    position.feesPaid.multiply(actualSellQuantity)
+                                        .divide(position.quantity, 8, java.math.RoundingMode.HALF_UP)
+                                } else {
+                                    BigDecimal.ZERO
+                                }
+                                val cost = actualSellQuantity.multiply(position.avgPrice).add(allocatedBuyFee)
                                 val profitLoss = netAmount.subtract(cost)
 
                                 // Bug #39 Fix: correctly reduce position quantity after sell
@@ -425,7 +440,8 @@ class BacktestExecutionService(
                                 } else {
                                     positions[positionKey] = position.copy(
                                         quantity = remainingQuantity,
-                                        leaderBuyQuantity = remainingLeaderBuyQuantity
+                                        leaderBuyQuantity = remainingLeaderBuyQuantity,
+                                        feesPaid = position.feesPaid.subtract(allocatedBuyFee).coerceAtLeast(BigDecimal.ZERO)
                                     )
                                 }
 
@@ -439,9 +455,9 @@ class BacktestExecutionService(
                                     outcome = leaderTrade.outcome ?: leaderTrade.outcomeIndex.toString(),
                                     outcomeIndex = leaderTrade.outcomeIndex,
                                     quantity = actualSellQuantity,
-                                    price = leaderTrade.price.toSafeBigDecimal(),
+                                    price = sellPrice,
                                     amount = finalSellAmount,
-                                    fee = BigDecimal.ZERO,
+                                    fee = sellFee,
                                     profitLoss = profitLoss,
                                     balanceAfter = currentBalance,
                                     leaderTradeId = leaderTrade.tradeId
@@ -589,7 +605,9 @@ class BacktestExecutionService(
                 }
 
                 val settlementValue = position.quantity.multiply(settlementPrice)
-                val profitLoss = settlementValue.subtract(position.quantity.multiply(position.avgPrice))
+                val profitLoss = settlementValue
+                    .subtract(position.quantity.multiply(position.avgPrice))
+                    .subtract(position.feesPaid)
 
                 balance += settlementValue
 
@@ -647,8 +665,8 @@ class BacktestExecutionService(
             val settlementPrice = avgPrice
 
             val settlementValue = quantity.multiply(settlementPrice)
-            // Bug #39 Fix: profitLoss for closed settlement at avgPrice should be ~0
-            val profitLoss = settlementValue.subtract(quantity.multiply(avgPrice))
+            // 按均价平仓时价格盈亏为 0，但仍需结转已支付的买入手续费。
+            val profitLoss = settlementValue.subtract(quantity.multiply(avgPrice)).subtract(position.feesPaid)
 
             balance += settlementValue
 

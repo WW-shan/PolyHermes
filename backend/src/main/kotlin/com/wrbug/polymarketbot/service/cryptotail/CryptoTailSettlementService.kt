@@ -137,10 +137,9 @@ class CryptoTailSettlementService(
 
         val won = trigger.outcomeIndex == winnerIndex
         val pnl = if (fill != null && fill.price.gt(BigDecimal.ZERO) && fill.size.gt(BigDecimal.ZERO)) {
-            if (won) newAmountUsdc.let { fill.size.subtract(it).setScale(pnlScale, RoundingMode.HALF_UP) }
-            else newAmountUsdc.negate().setScale(pnlScale, RoundingMode.HALF_UP)
+            CryptoTailPnlCalculator.pnlFromFill(fill.price, fill.size, newAmountUsdc, won)
         } else {
-            computePnlFallback(trigger.amountUsdc, won)
+            CryptoTailPnlCalculator.pnlFallback(trigger.amountUsdc, won)
         }
         val now = System.currentTimeMillis()
 
@@ -249,30 +248,6 @@ class CryptoTailSettlementService(
         } catch (e: Exception) {
             logger.warn("加密价差策略结算拉取 activity 异常，触发价/投入金额不会更新: triggerId=${trigger.id}, error=${e.message}")
             null
-        }
-    }
-
-    /**
-     * 按实际成交价与成交量计算收益：成本 = sizeMatched * price；赢则赎回 sizeMatched * 1，输则 0。
-     */
-    private fun computePnlFromFill(price: BigDecimal, sizeMatched: BigDecimal, won: Boolean): BigDecimal {
-        val cost = sizeMatched.multi(price).setScale(pnlScale, RoundingMode.HALF_UP)
-        return if (won) {
-            sizeMatched.subtract(cost).setScale(pnlScale, RoundingMode.HALF_UP)
-        } else {
-            cost.negate()
-        }
-    }
-
-    /**
-     * 回退收益计算：无 API 数据时用触发时的 amountUsdc 与固定价 0.99。
-     * 赢: pnl = amountUsdc/0.99 - amountUsdc；输: pnl = -amountUsdc
-     */
-    private fun computePnlFallback(amountUsdc: BigDecimal, won: Boolean): BigDecimal {
-        return if (won) {
-            amountUsdc.divide(triggerFixedPrice, pnlScale, RoundingMode.HALF_UP).subtract(amountUsdc)
-        } else {
-            amountUsdc.negate()
         }
     }
 

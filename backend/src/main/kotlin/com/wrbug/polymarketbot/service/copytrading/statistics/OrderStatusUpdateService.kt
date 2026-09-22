@@ -7,6 +7,7 @@ import com.wrbug.polymarketbot.service.common.MarketService
 import com.wrbug.polymarketbot.service.system.TelegramNotificationService
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.CryptoUtils
+import com.wrbug.polymarketbot.util.PolymarketTradingFee
 import com.wrbug.polymarketbot.util.div
 import com.wrbug.polymarketbot.util.gt
 import com.wrbug.polymarketbot.util.multi
@@ -514,11 +515,16 @@ class OrderStatusUpdateService(
                     if (actualSellPrice != record.sellPrice) {
                         // 重新计算盈亏
                         val details = sellMatchDetailRepository.findByMatchRecordId(record.id!!)
+                        val marketCategory = marketService.getMarket(record.marketId)?.category
                         var totalRealizedPnl = BigDecimal.ZERO
 
                         for (detail in details) {
-                            val updatedRealizedPnl =
-                                actualSellPrice.subtract(detail.buyPrice).multi(detail.matchedQuantity)
+                            val updatedRealizedPnl = PolymarketTradingFee.netRealizedPnl(
+                                buyPrice = detail.buyPrice,
+                                sellPrice = actualSellPrice,
+                                shares = detail.matchedQuantity,
+                                category = marketCategory
+                            )
 
                             // 更新明细的卖出价格和盈亏
                             // 注意：SellMatchDetail 的字段都是 val，需要创建新对象

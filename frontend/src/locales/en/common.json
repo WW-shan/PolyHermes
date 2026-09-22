@@ -1725,8 +1725,8 @@
   },
   "cryptoTailStrategy": {
     "binanceApiAlert": {
-      "title": "Cannot connect to Binance API — strategy cannot run for now",
-      "description": "Crypto spread strategy needs Binance market data to work. The connection failed; this may be a network issue or Binance outage. Try again later by clicking the button below.",
+      "title": "Cannot connect to Chainlink TWAP or Binance — strategy cannot run for now",
+      "description": "Crypto spread strategy uses Chainlink 60-second TWAP first and Binance K-line only as fallback. Both market data sources are currently unavailable; check your network or try again later.",
       "recheck": "Re-check"
     },
     "list": {

@@ -19,11 +19,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * 币安 K 线 WebSocket：按需订阅加密价差策略使用的币种 5m/15m，维护当前周期 (open, close)，供价差校验使用。
+ * 加密价差策略行情服务：优先使用官方 Chainlink 60 秒 TWAP，未就绪时回退到币安 K 线。
  * 仅当存在启用策略且策略使用到某市场时才订阅对应币种，无策略时不建立连接。
  */
 @Service
-class BinanceKlineService {
+class BinanceKlineService(
+    private val chainlinkTwapService: ChainlinkTwapService
+) {
 
     private val logger = LoggerFactory.getLogger(BinanceKlineService::class.java)
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -69,6 +71,8 @@ class BinanceKlineService {
     }
 
     fun getCurrentOpenClose(marketSlugPrefix: String, intervalSeconds: Int, periodStartUnix: Long): Pair<BigDecimal, BigDecimal>? {
+        // 5/15 分钟加密市场以 Chainlink 60 秒 TWAP 结算；RTDS 未就绪时再回退到币安 K 线。
+        chainlinkTwapService.getOpenClose(marketSlugPrefix, periodStartUnix)?.let { return it }
         return openCloseByPeriod[key(marketSlugPrefix, intervalSeconds, periodStartUnix)]
     }
 
@@ -84,6 +88,7 @@ class BinanceKlineService {
      */
     fun updateSubscriptions(marketPrefixes: Set<String>) {
         val normalized = marketPrefixes.map { it.lowercase() }.toSet()
+        chainlinkTwapService.updateSubscriptions(normalized)
 
         val parsed = normalized.mapNotNull { full ->
             parseMarketSlug(full)?.let { (base, interval) ->

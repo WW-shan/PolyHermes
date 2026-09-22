@@ -16,6 +16,7 @@ import com.wrbug.polymarketbot.service.copytrading.orders.OrderPushService
 import com.wrbug.polymarketbot.service.copytrading.monitor.PolymarketActivityWsService
 import com.wrbug.polymarketbot.service.copytrading.monitor.UnifiedOnChainWsService
 import com.wrbug.polymarketbot.service.binance.BinanceKlineService
+import com.wrbug.polymarketbot.service.binance.ChainlinkTwapService
 import org.springframework.stereotype.Service
 import java.util.concurrent.TimeUnit
 
@@ -78,6 +79,17 @@ class ApiHealthCheckService(
     }
 
     /**
+     * 获取 ChainlinkTwapService（通过 ApplicationContext 避免循环依赖）
+     */
+    private fun getChainlinkTwapService(): ChainlinkTwapService? {
+        return try {
+            applicationContext?.getBean(ChainlinkTwapService::class.java)
+        } catch (e: BeansException) {
+            null
+        }
+    }
+
+    /**
      * 获取 BinanceKlineService（通过 ApplicationContext 避免循环依赖）
      */
     private fun getBinanceKlineService(): BinanceKlineService? {
@@ -105,6 +117,7 @@ class ApiHealthCheckService(
                 async { checkPolygonRpc() },
                 async { checkBinanceApi() },
                 async { checkBinanceWebSocket() },
+                async { checkChainlinkTwapWebSocket() },
                 async { checkPolymarketRtdsWebSocket() },
                 async { checkPolymarketActivityWebSocket() },
                 async { checkUnifiedOnChainWebSocket() },
@@ -218,6 +231,59 @@ class ApiHealthCheckService(
     private suspend fun checkBinanceApi(): ApiHealthCheckDto = withContext(Dispatchers.IO) {
         val url = "https://api.binance.com/api/v3/ping"
         checkApi("币安 API", url)
+    }
+
+    /**
+     * 检查 Chainlink 60 秒 TWAP RTDS 连接状态。
+     */
+    private suspend fun checkChainlinkTwapWebSocket(): ApiHealthCheckDto = withContext(Dispatchers.Default) {
+        try {
+            val service = getChainlinkTwapService()
+            if (service == null) {
+                return@withContext ApiHealthCheckDto(
+                    name = "Chainlink TWAP",
+                    url = ChainlinkTwapService.RTDS_WS_URL,
+                    status = "error",
+                    message = "服务未初始化"
+                )
+            }
+            val statuses = service.getConnectionStatuses()
+            val connected = statuses.values.count { it }
+            when {
+                statuses.isEmpty() -> ApiHealthCheckDto(
+                    name = "Chainlink TWAP",
+                    url = ChainlinkTwapService.RTDS_WS_URL,
+                    status = "success",
+                    message = "无加密价差策略，未订阅"
+                )
+                connected == statuses.size -> ApiHealthCheckDto(
+                    name = "Chainlink TWAP",
+                    url = ChainlinkTwapService.RTDS_WS_URL,
+                    status = "success",
+                    message = "连接正常 (按策略订阅)"
+                )
+                connected > 0 -> ApiHealthCheckDto(
+                    name = "Chainlink TWAP",
+                    url = ChainlinkTwapService.RTDS_WS_URL,
+                    status = "error",
+                    message = "部分连接正常 (${statuses.filter { it.value }.keys.joinToString("、")})"
+                )
+                else -> ApiHealthCheckDto(
+                    name = "Chainlink TWAP",
+                    url = ChainlinkTwapService.RTDS_WS_URL,
+                    status = "error",
+                    message = "连接断开"
+                )
+            }
+        } catch (e: Exception) {
+            logger.warn("检查 Chainlink TWAP WebSocket 状态失败", e)
+            ApiHealthCheckDto(
+                name = "Chainlink TWAP",
+                url = ChainlinkTwapService.RTDS_WS_URL,
+                status = "error",
+                message = "检查失败：${e.message}"
+            )
+        }
     }
 
     /**

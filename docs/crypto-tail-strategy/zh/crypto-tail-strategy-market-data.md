@@ -2,8 +2,17 @@
 
 > 前端 UI 与交互详见 `crypto-tail-strategy-ui-spec.md`。
 
+## 0. 2026-09 结算规则更新（重要）
+
+- **60 秒 Chainlink TWAP**：5/15 分钟加密 Up/Down 市场按 60 秒 Chainlink TWAP 结算，不再使用 Binance 单点快照。
+- **数据源优先级**：后端优先订阅 Polymarket RTDS `crypto_prices_twap_sixty`（`wss://ws-live-data.polymarket.com`），缓存周期开盘与最新 TWAP；RTDS 尚未就绪时回退 Binance K 线。
+- **Taker delay**：2026-09-04 起加密市场 taker delay 为 150ms。策略在时间窗口结束前预留 150ms，避免市价单进入延迟窗口后越过可交易边界。
+- **Taker fee**：Crypto 分类费率为 `0.07`，Sports 为 `0.05`，公式为 `fee = shares × feeRate × price × (1 - price)`，按 5 位小数舍入。Crypto Tail、回测和跟单已实现盈亏会扣除相应 taker 手续费。
+
 ## 1. 数据源
 
+- **Polymarket RTDS / Chainlink TWAP**：实时结算参考价，无需鉴权。
+- **Binance K 线**：作为 RTDS 未就绪时的回退行情，并继续用于历史价差估算。
 - **Gamma API**：`https://gamma-api.polymarket.com`
 - 用于获取市场元数据：conditionId、开始/结束时间、标题、clobTokenIds 等。
 - 无需鉴权。

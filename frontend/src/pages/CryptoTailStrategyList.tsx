@@ -67,28 +67,29 @@ const CryptoTailStrategyList: React.FC = () => {
   const [pnlCurveData, setPnlCurveData] = useState<CryptoTailPnlCurveResponse | null>(null)
   const [pnlCurveLoading, setPnlCurveLoading] = useState(false)
 
-  /** 币安 API 健康状态：仅保留「不可用」的项，用于强提醒 */
-  const [binanceUnhealthy, setBinanceUnhealthy] = useState<Array<{ name: string; message: string }>>([])
-  const [binanceCheckLoading, setBinanceCheckLoading] = useState(false)
+  /** 加密行情健康状态：只有 Chainlink TWAP 与币安均不可用时才强提醒。 */
+  const [cryptoDataUnhealthy, setCryptoDataUnhealthy] = useState<Array<{ name: string; message: string }>>([])
+  const [cryptoDataCheckLoading, setCryptoDataCheckLoading] = useState(false)
 
-  const BINANCE_API_NAMES = ['币安 API', '币安 WebSocket']
+  const CRYPTO_DATA_API_NAMES = ['Chainlink TWAP', '币安 API', '币安 WebSocket']
 
-  const fetchBinanceApiStatus = async () => {
-    setBinanceCheckLoading(true)
+  const fetchCryptoDataApiStatus = async () => {
+    setCryptoDataCheckLoading(true)
     try {
       const res = await apiService.proxyConfig.checkApiHealth()
       if (res.data.code === 0 && res.data.data?.apis) {
-        const unhealthy = res.data.data.apis.filter(
-          (api) => BINANCE_API_NAMES.includes(api.name) && api.status !== 'success'
+        const relevant = res.data.data.apis.filter((api) => CRYPTO_DATA_API_NAMES.includes(api.name))
+        const hasHealthySource = relevant.some((api) => api.status === 'success')
+        setCryptoDataUnhealthy(
+          hasHealthySource ? [] : relevant.map((api) => ({ name: api.name, message: api.message }))
         )
-        setBinanceUnhealthy(unhealthy.map((api) => ({ name: api.name, message: api.message })))
       } else {
-        setBinanceUnhealthy([])
+        setCryptoDataUnhealthy([])
       }
     } catch {
-      setBinanceUnhealthy([{ name: '币安 API', message: '' }, { name: '币安 WebSocket', message: '' }])
+      setCryptoDataUnhealthy(CRYPTO_DATA_API_NAMES.map((name) => ({ name, message: '' })))
     } finally {
-      setBinanceCheckLoading(false)
+      setCryptoDataCheckLoading(false)
     }
   }
 
@@ -99,7 +100,7 @@ const CryptoTailStrategyList: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    fetchBinanceApiStatus()
+    fetchCryptoDataApiStatus()
   }, [])
 
   useEffect(() => {
@@ -681,7 +682,7 @@ const CryptoTailStrategyList: React.FC = () => {
           />
         </Tooltip>
       </div>
-      {binanceUnhealthy.length > 0 && list.some((s) => s.enabled) && (
+      {cryptoDataUnhealthy.length > 0 && list.some((s) => s.enabled) && (
         <Alert
           type="error"
           showIcon
@@ -691,7 +692,7 @@ const CryptoTailStrategyList: React.FC = () => {
             <div>
               <p style={{ marginBottom: 8 }}>{t('cryptoTailStrategy.binanceApiAlert.description')}</p>
               <ul style={{ marginBottom: 8, paddingLeft: 20 }}>
-                {binanceUnhealthy.map((item, i) => (
+                {cryptoDataUnhealthy.map((item, i) => (
                   <li key={i}>
                     <strong>{item.name}</strong>
                     {item.message ? `: ${item.message}` : ''}
@@ -702,8 +703,8 @@ const CryptoTailStrategyList: React.FC = () => {
                 type="primary"
                 danger
                 size="small"
-                loading={binanceCheckLoading}
-                onClick={fetchBinanceApiStatus}
+                loading={cryptoDataCheckLoading}
+                onClick={fetchCryptoDataApiStatus}
               >
                 {t('cryptoTailStrategy.binanceApiAlert.recheck')}
               </Button>

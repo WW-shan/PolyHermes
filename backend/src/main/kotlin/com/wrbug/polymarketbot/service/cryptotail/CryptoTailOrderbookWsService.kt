@@ -194,11 +194,13 @@ class CryptoTailOrderbookWsService(
         if (closedForNoStrategies.get()) return
         val entries = tokenToEntries.get()[tokenId]
         if (entries == null) return
-        val nowSeconds = System.currentTimeMillis() / 1000
         for (e in entries) {
-            val windowStart = e.periodStartUnix + e.strategy.windowStartSeconds
-            val windowEnd = e.periodStartUnix + e.strategy.windowEndSeconds
-            if (nowSeconds < windowStart || nowSeconds >= windowEnd) continue
+            if (!CryptoTailTiming.isWithinExecutionWindow(
+                    e.strategy,
+                    e.periodStartUnix,
+                    System.currentTimeMillis()
+                )
+            ) continue
             scope.launch {
                 try {
                     executionService.tryTriggerWithPriceFromWs(
