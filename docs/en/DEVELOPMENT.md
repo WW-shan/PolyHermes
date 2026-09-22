@@ -103,8 +103,8 @@ server.port=${SERVER_PORT:8000}
 # JWT secret
 jwt.secret=${JWT_SECRET:change-me-in-production}
 
-# Encryption key (for encrypting stored private keys and API Keys)
-crypto.secret.key=${CRYPTO_SECRET_KEY:change-me-in-production}
+# Encryption key (legacy CRYPTO_SECRET_KEY is also supported)
+encryption.key=${ENCRYPTION_KEY:${CRYPTO_SECRET_KEY:${jwt.secret}}}
 ```
 
 4. **Start Backend Service**
@@ -514,4 +514,3 @@ Contributions are welcome! Please follow these steps:
 ---
 
 **Happy Coding! 🚀**
-

@@ -49,7 +49,7 @@ backend/
 - `DB_USERNAME`: 数据库用户名（默认: root）
 - `DB_PASSWORD`: 数据库密码（默认: password）
 - `SERVER_PORT`: 服务器端口（默认: 8000）
-- `CRYPTO_SECRET_KEY`: 加密密钥（用于加密存储私钥和 API Key，建议设置）
+- `ENCRYPTION_KEY`: 加密密钥（用于加密存储私钥和 API Key，建议设置）；兼容旧变量 `CRYPTO_SECRET_KEY`，同时存在时优先使用 `ENCRYPTION_KEY`
 
 ### application.properties
 
@@ -113,4 +113,3 @@ backend/
 2. 仅支持 `sports` 和 `crypto` 两个分类
 3. WebSocket 转发需要配置正确的 Polymarket RTDS 地址
 4. 生产环境需要配置正确的 CORS 策略
-

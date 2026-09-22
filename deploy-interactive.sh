@@ -203,7 +203,7 @@ collect_configuration() {
     echo -e "${YELLOW}$(bilingual "💡 提示：留空将自动生成高强度随机密钥（推荐）" "💡 Leave empty to auto-generate strong keys (recommended)")${NC}"
     JWT_SECRET=$(read_input "$(bilingual "➤ JWT 密钥" "➤ JWT secret")" "" "secret")
     ADMIN_RESET_PASSWORD_KEY=$(read_input "$(bilingual "➤ 管理员密码重置密钥" "➤ Admin password reset key")" "" "secret")
-    CRYPTO_SECRET_KEY=$(read_input "$(bilingual "➤ 加密密钥（用于加密 API Key）" "➤ Encryption key (for API Key)")" "" "secret")
+    ENCRYPTION_KEY=$(read_input "$(bilingual "➤ 加密密钥（用于加密 API Key）" "➤ Encryption key (for API Key)")" "" "secret")
     echo ""
     
     title "$(bilingual "【日志配置】" "【Logging】")"
@@ -284,7 +284,7 @@ DB_PASSWORD=${DB_PASSWORD}
 # ============================================
 JWT_SECRET=${JWT_SECRET}
 ADMIN_RESET_PASSWORD_KEY=${ADMIN_RESET_PASSWORD_KEY}
-CRYPTO_SECRET_KEY=${CRYPTO_SECRET_KEY}
+ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
 # ============================================
 # Logging / 日志配置
@@ -310,7 +310,7 @@ EOF
     echo "  $(bilingual "数据库密码" "DB password"): ${DB_PASSWORD:0:8}... $(bilingual "(已隐藏)" "(hidden)")"
     echo "  $(bilingual "JWT 密钥" "JWT secret"): ${JWT_SECRET:0:16}... $(bilingual "(已隐藏)" "(hidden)")"
     echo "  $(bilingual "管理员重置密钥" "Admin reset key"): ${ADMIN_RESET_PASSWORD_KEY:0:16}... $(bilingual "(已隐藏)" "(hidden)")"
-    echo "  $(bilingual "加密密钥" "Encryption key"): ${CRYPTO_SECRET_KEY:0:16}... $(bilingual "(已隐藏)" "(hidden)")"
+    echo "  $(bilingual "加密密钥" "Encryption key"): ${ENCRYPTION_KEY:0:16}... $(bilingual "(已隐藏)" "(hidden)")"
     echo "  $(bilingual "日志级别" "Log level"): Root=${LOG_LEVEL_ROOT}, App=${LOG_LEVEL_APP}"
     echo ""
 }

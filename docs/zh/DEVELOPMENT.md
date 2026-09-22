@@ -96,8 +96,8 @@ server.port=${SERVER_PORT:8000}
 # JWT 密钥
 jwt.secret=${JWT_SECRET:change-me-in-production}
 
-# 加密密钥（用于加密存储私钥和 API Key）
-crypto.secret.key=${CRYPTO_SECRET_KEY:change-me-in-production}
+# 加密密钥（用于加密存储私钥和 API Key；兼容旧变量 CRYPTO_SECRET_KEY）
+encryption.key=${ENCRYPTION_KEY:${CRYPTO_SECRET_KEY:${jwt.secret}}}
 ```
 
 4. **启动后端服务**
@@ -508,4 +508,3 @@ val decrypted = cryptoUtils.decrypt(encrypted)
 ---
 
 **Happy Coding! 🚀**
-

@@ -362,7 +362,9 @@ cd frontend
 | `SERVER_PORT` | Backend service port | `8000` |
 | `JWT_SECRET` | JWT secret key | - |
 | `ADMIN_RESET_PASSWORD_KEY` | Admin password reset key | - |
-| `CRYPTO_SECRET_KEY` | Encryption key (for encrypting stored private keys and API Keys) | - |
+| `ENCRYPTION_KEY` | Encryption key (for encrypting stored private keys and API Keys) | - |
+
+> Existing deployments may continue to use `CRYPTO_SECRET_KEY`. When both are set, `ENCRYPTION_KEY` takes precedence. Keep this key permanently; changing or losing it makes stored encrypted private keys unrecoverable.
 
 #### Proxy Configuration
 

@@ -363,7 +363,9 @@ cd frontend
 | `SERVER_PORT` | 后端服务端口 | `8000` |
 | `JWT_SECRET` | JWT 密钥 | - |
 | `ADMIN_RESET_PASSWORD_KEY` | 管理员密码重置密钥 | - |
-| `CRYPTO_SECRET_KEY` | 加密密钥（用于加密存储私钥和 API Key） | - |
+| `ENCRYPTION_KEY` | 加密密钥（用于加密存储私钥和 API Key） | - |
+
+> 旧部署可继续使用 `CRYPTO_SECRET_KEY`；两者同时存在时优先使用 `ENCRYPTION_KEY`。该密钥必须长期保存，修改或丢失后已加密的私钥将无法解密。
 
 #### 代理配置
 
