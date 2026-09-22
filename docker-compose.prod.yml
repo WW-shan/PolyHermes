@@ -1,5 +1,12 @@
 version: '3.8'
 
+# ⚠️ 重要（WW-shan fork）：
+# 本文件默认拉取 wrbug/polyhermes:latest，不包含本 fork/本地分支的修复。
+# 如果要运行本地代码，请使用仓库根目录的 docker-compose.yml 并执行：
+#   docker compose -f docker-compose.yml up -d --build
+# 详见 docs/zh/local-build-deployment.md
+# ============================================================
+
 # PolyHermes 生产环境部署配置
 # 使用 Docker Hub 官方镜像，无需本地构建
 # 
