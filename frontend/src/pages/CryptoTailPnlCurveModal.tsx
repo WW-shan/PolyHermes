@@ -101,7 +101,7 @@ const CryptoTailPnlCurveModal: React.FC<CryptoTailPnlCurveModalProps> = (props) 
       onCancel={onClose}
       footer={null}
       width={Math.min(800, window.innerWidth - 48)}
-      destroyOnClose
+      destroyOnHidden
     >
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={12} sm={6}>

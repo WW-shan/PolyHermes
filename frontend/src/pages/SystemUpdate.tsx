@@ -156,11 +156,21 @@ const SystemUpdate: React.FC = () => {
                         setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000)
                     } else if (data.code === 403) {
                         message.error(t('systemUpdate.needAdmin'))
+                    } else if (data.code === 409) {
+                        message.warning(data.message || t('systemUpdate.updateInProgress'))
                     } else {
                         message.error(data.message || t('systemUpdate.startFailed'))
                     }
                 } catch (error: any) {
-                    message.error(error.message || t('systemUpdate.startFailed'))
+                    const status = error?.response?.status
+                    const serverMessage = error?.response?.data?.message
+                    if (status === 403) {
+                        message.error(t('systemUpdate.needAdmin'))
+                    } else if (status === 409) {
+                        message.warning(serverMessage || t('systemUpdate.updateInProgress'))
+                    } else {
+                        message.error(serverMessage || error.message || t('systemUpdate.startFailed'))
+                    }
                 }
             }
         })

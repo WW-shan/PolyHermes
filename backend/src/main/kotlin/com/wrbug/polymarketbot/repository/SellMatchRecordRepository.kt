@@ -26,13 +26,15 @@ interface SellMatchRecordRepository : JpaRepository<SellMatchRecord, Long> {
     fun findByLeaderSellTradeId(leaderSellTradeId: String): SellMatchRecord?
     
     /**
-     * 幂等判断：同一跟单关系 + 同一笔链上交易 + 同一市场是否已存在卖出记录。
-     * 用于账户链上卖出/赎回回调的去重，避免同一笔交易被重复计入盈亏。
+     * 幂等判断：同一跟单关系 + 同一笔链上交易 + 同一市场 + 同一 outcome 是否已存在卖出记录。
+     * 用于账户链上卖出/赎回回调的去重，避免同一笔交易被重复计入盈亏；
+     * outcomeIndex 必须参与判断，否则同一交易的多个 outcome 会被误判为重复。
      */
-    fun existsByCopyTradingIdAndSourceTxHashAndMarketId(
+    fun existsByCopyTradingIdAndSourceTxHashAndMarketIdAndOutcomeIndex(
         copyTradingId: Long,
         sourceTxHash: String,
-        marketId: String
+        marketId: String,
+        outcomeIndex: Int
     ): Boolean
 
     /**
@@ -41,4 +43,3 @@ interface SellMatchRecordRepository : JpaRepository<SellMatchRecord, Long> {
      */
     fun findByPriceUpdatedFalse(): List<SellMatchRecord>
 }
-

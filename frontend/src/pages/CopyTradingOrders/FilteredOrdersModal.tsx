@@ -161,7 +161,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
       footer={null}
       width="90%"
       style={{ top: 20 }}
-      bodyStyle={{ padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' }}
+      styles={{ body: { padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' } }}
     >
       <div style={{ marginBottom: 16 }}>
         <Select
@@ -213,7 +213,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
                       boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                       border: '1px solid #e8e8e8'
                     }}
-                    bodyStyle={{ padding: '16px' }}
+                    styles={{ body: { padding: '16px' } }}
                   >
                     <div style={{ marginBottom: '12px' }}>
                       <div style={{ 

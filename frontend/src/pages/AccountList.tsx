@@ -564,7 +564,7 @@ const AccountList: React.FC = () => {
                       border: '1px solid #e8e8e8',
                       overflow: 'hidden'
                     }}
-                    bodyStyle={{ padding: '0' }}
+                    styles={{ body: { padding: '0' } }}
                   >
                     {/* 头部区域 */}
                     <div style={{
@@ -762,7 +762,7 @@ const AccountList: React.FC = () => {
         ]}
         width={isMobile ? '95%' : 800}
         style={{ top: isMobile ? 20 : 50 }}
-        destroyOnClose
+        destroyOnHidden
         maskClosable
         closable
       >
@@ -943,7 +943,7 @@ const AccountList: React.FC = () => {
         footer={null}
         width={isMobile ? '95%' : 600}
         style={{ top: isMobile ? 20 : 50 }}
-        destroyOnClose
+        destroyOnHidden
         maskClosable
         closable
       >
@@ -1013,8 +1013,8 @@ const AccountList: React.FC = () => {
         footer={null}
         width={isMobile ? '95%' : 640}
         style={{ top: isMobile ? 20 : 50 }}
-        bodyStyle={{ padding: isMobile ? '16px 20px' : '24px 28px', maxHeight: 'calc(100vh - 140px)', overflow: 'auto' }}
-        destroyOnClose
+        styles={{ body: { padding: isMobile ? '16px 20px' : '24px 28px', maxHeight: 'calc(100vh - 140px)', overflow: 'auto' } }}
+        destroyOnHidden
         maskClosable
         closable
       >

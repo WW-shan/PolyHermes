@@ -82,7 +82,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       keys.push('/crypto-tail-management')
     }
     if (path.startsWith('/system-settings')) {
-      keys.push('/system-settings')
+      keys.push('/system-management')
     }
     return keys
   }
@@ -100,7 +100,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       keys.push('/crypto-tail-management')
     }
     if (path.startsWith('/system-settings')) {
-      keys.push('/system-settings')
+      keys.push('/system-management')
     }
     setOpenKeys(keys)
   }, [location.pathname])
@@ -209,7 +209,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       label: t('menu.users')
     },
     {
-      key: '/system-settings',
+      key: '/system-management',
       icon: <SettingOutlined />,
       label: t('menu.systemSettings') || '系统管理',
       children: [
@@ -266,7 +266,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   
   const handleMenuClick = ({ key }: { key: string }) => {
     // 如果是父菜单，不导航（但 /system-settings 作为子菜单项时可以导航）
-    if (key === '/copy-trading-management' || key === '/crypto-tail-management') {
+    if (key === '/copy-trading-management' || key === '/crypto-tail-management' || key === '/system-management') {
       return
     }
     
@@ -377,7 +377,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           placement="left"
           onClose={() => setMobileMenuOpen(false)}
           open={mobileMenuOpen}
-          bodyStyle={{ padding: 0 }}
+          styles={{ body: { padding: 0 } }}
         >
           <Menu
             mode="inline"

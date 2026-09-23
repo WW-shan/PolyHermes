@@ -123,8 +123,12 @@ npm install
 创建 `.env` 文件：
 
 ```env
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000
+# 通常不需要设置 VITE_API_URL/VITE_WS_URL：默认使用相对路径并经 Vite 代理，
+# 可避免浏览器直连后端产生 CORS 问题。
+# 仅当前后端确实分离部署且已配置 CORS 时才填写完整地址。
+
+# 可选：系统更新服务（仅本地需要测试更新页时启动，默认 http://localhost:9090）
+VITE_UPDATE_URL=http://localhost:9090
 ```
 
 3. **启动开发服务器**

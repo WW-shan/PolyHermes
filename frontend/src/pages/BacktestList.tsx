@@ -735,7 +735,7 @@ const BacktestList: React.FC = () => {
         </Space>
       </div>
 
-      <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} bodyStyle={{ padding: isMobile ? '12px' : '24px' }}>
+      <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} styles={{ body: { padding: isMobile ? '12px' : '24px' } }}>
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
           {/* 筛选栏 */}
           <Row gutter={[16, 16]} style={{ marginBottom: isMobile ? 12 : 0 }}>
@@ -801,7 +801,7 @@ const BacktestList: React.FC = () => {
                         border: '1px solid #e8e8e8',
                         overflow: 'hidden'
                       }}
-                      bodyStyle={{ padding: 0 }}
+                      styles={{ body: { padding: 0 } }}
                     >
                       <div style={{
                         padding: '10px 12px',
@@ -931,7 +931,7 @@ const BacktestList: React.FC = () => {
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
         confirmLoading={rerunLoading}
-        destroyOnClose
+        destroyOnHidden
       >
         <p style={{ marginBottom: 8 }}>{t('backtest.rerunConfirm')}</p>
         <Input
@@ -955,9 +955,10 @@ const BacktestList: React.FC = () => {
         cancelText={t('common.cancel')}
         width={isMobile ? '95%' : 800}
         confirmLoading={createLoading}
-        destroyOnClose
+        destroyOnHidden
+        forceRender
         style={{ top: isMobile ? 10 : 20 }}
-        bodyStyle={{ maxHeight: isMobile ? 'calc(100vh - 150px)' : 'calc(100vh - 200px)', overflowY: 'auto' }}
+        styles={{ body: { maxHeight: isMobile ? 'calc(100vh - 150px)' : 'calc(100vh - 200px)', overflowY: 'auto' } }}
       >
         <Form
           form={createForm}
@@ -1062,7 +1063,7 @@ const BacktestList: React.FC = () => {
                   step={0.01}
                   precision={2}
                   style={{ width: '100%' }}
-                  addonAfter="%"
+                  suffix="%"
                   placeholder={t('backtest.copyRatioPlaceholder') || '例如：100 表示 100%（1:1 跟单），默认 100%'}
                   parser={(value) => {
                     const parsed = parseFloat(value || '0')
@@ -1200,9 +1201,9 @@ const BacktestList: React.FC = () => {
               label={t('backtest.supportSell')}
               name="supportSell"
               valuePropName="checked"
+              extra={t('backtest.supportSellHint') || '是否跟随 Leader 卖出'}
             >
               <Switch />
-              <span style={{ fontSize: 12, color: '#888', marginLeft: 8 }}>{t('backtest.supportSellHint') || '是否跟随 Leader 卖出'}</span>
             </Form.Item>
 
             <Form.Item
@@ -1304,7 +1305,7 @@ const BacktestList: React.FC = () => {
             padding: '24px'
           }
         }}
-        destroyOnClose
+        destroyOnHidden
       >
         {detailTask && (
           <Space direction="vertical" size="large" style={{ width: '100%' }}>

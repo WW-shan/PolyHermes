@@ -134,7 +134,7 @@ const TemplateAdd: React.FC = () => {
                 step={0.01}
                 precision={2}
                 style={{ width: '100%' }}
-                addonAfter="%"
+                suffix="%"
                 placeholder={t('templateAdd.copyRatioPlaceholder') || '例如：100 表示 100%（1:1 跟单），默认 100%'}
                 parser={(value) => {
                   const parsed = parseFloat(value || '0')
@@ -328,7 +328,7 @@ const TemplateAdd: React.FC = () => {
             name="priceRange"
             tooltip={t('templateAdd.priceRangeTooltip') || '配置价格区间，仅在指定价格区间内的订单才会下单。例如：0.11-0.89 表示区间在0.11和0.89之间；-0.89 表示0.89以下都可以；0.11- 表示0.11以上都可以'}
           >
-            <Input.Group compact style={{ display: 'flex' }}>
+            <Space.Compact style={{ display: 'flex' }}>
               <Form.Item name="minPrice" noStyle>
                 <InputNumber
                   min={0.01}
@@ -362,7 +362,7 @@ const TemplateAdd: React.FC = () => {
                   }}
                 />
               </Form.Item>
-            </Input.Group>
+            </Space.Compact>
           </Form.Item>
           
           {/* 跟单卖出 - 表单最底部 */}

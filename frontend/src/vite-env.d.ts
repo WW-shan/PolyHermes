@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string
   readonly VITE_WS_URL?: string
+  readonly VITE_UPDATE_URL?: string
   readonly VITE_APP_VERSION?: string
   readonly VITE_APP_GIT_TAG?: string
   readonly VITE_APP_GITHUB_REPO_URL?: string
@@ -20,4 +21,3 @@ interface Window {
     githubRepoUrl: string
   }
 }
-

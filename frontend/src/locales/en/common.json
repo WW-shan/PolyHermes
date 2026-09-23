@@ -282,7 +282,6 @@
       "CTF_CONTRACT": "CTF Contract",
       "CTF_EXCHANGE": "CTF Exchange",
       "NEG_RISK_EXCHANGE": "Neg Risk Exchange",
-      "NEG_RISK_ADAPTER": "Neg Risk Adapter",
       "notApproved": "Not Approved",
       "unlimited": "Unlimited"
     },
@@ -450,6 +449,7 @@
     "updateFailedWithMessage": "Update failed: {{message}}",
     "updateSuccessRefresh": "Update successful! Page will refresh in 3 seconds...",
     "needAdmin": "Admin permission required to perform update",
+    "updateInProgress": "The system is updating, please try again later",
     "startFailed": "Failed to start update",
     "updating": "System is updating",
     "updateFailedTitle": "Update Failed",

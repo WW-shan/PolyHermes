@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Space, Tag, Popconfirm, message, Input, Modal, Form, Radio, InputNumber, Switch, Divider, Spin, Empty, List, Tooltip } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
 import type { CopyTradingTemplate } from '../types'
 import { useMediaQuery } from 'react-responsive'
 import { formatUSDC } from '../utils'
-
-const { Search } = Input
 
 const TemplateList: React.FC = () => {
   const { t, i18n } = useTranslation()
@@ -292,12 +290,13 @@ const TemplateList: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <h2 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>{t('templateList.title') || '跟单模板管理'}</h2>
         <Space size={8}>
-          <Search
+          <Input
             placeholder={t('templateList.searchPlaceholder') || '搜索模板名称'}
             allowClear
             style={{ width: isMobile ? 120 : 200 }}
-            onSearch={setSearchText}
+            value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
+            suffix={<SearchOutlined />}
           />
           <Tooltip title={t('templateList.addTemplate') || '新增模板'}>
             <Button
@@ -311,7 +310,7 @@ const TemplateList: React.FC = () => {
         </Space>
       </div>
 
-      <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} bodyStyle={{ padding: isMobile ? '12px' : '24px' }}>
+      <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} styles={{ body: { padding: isMobile ? '12px' : '24px' } }}>
         
         {isMobile ? (
           // 移动端卡片布局
@@ -336,7 +335,7 @@ const TemplateList: React.FC = () => {
                         border: '1px solid #e8e8e8',
                         overflow: 'hidden'
                       }}
-                      bodyStyle={{ padding: '0' }}
+                      styles={{ body: { padding: '0' } }}
                     >
                       {/* 头部区域 - 模板名称 */}
                       <div style={{
@@ -491,7 +490,7 @@ const TemplateList: React.FC = () => {
         onCancel={handleCopyCancel}
         footer={null}
         width={isMobile ? '90%' : 800}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form
           form={copyForm}
@@ -531,7 +530,7 @@ const TemplateList: React.FC = () => {
                 step={0.01}
                 precision={2}
                 style={{ width: '100%' }}
-                addonAfter="%"
+                suffix="%"
                 placeholder="例如：100 表示 100%（1:1 跟单），默认 100%"
                 parser={(value) => {
                   const parsed = parseFloat(value || '0')
@@ -744,7 +743,7 @@ const TemplateList: React.FC = () => {
             name="priceRange"
             tooltip="仅跟单 Leader 交易价格在指定区间内的订单。不填写表示不限制。示例：填写 0.11 和 0.89 表示仅跟单价格在 0.11 到 0.89 之间的订单；只填写最高价 0.89 表示仅跟单价格在 0.89 以下的订单；只填写最低价 0.11 表示仅跟单价格在 0.11 以上的订单。"
           >
-            <Input.Group compact style={{ display: 'flex' }}>
+            <Space.Compact style={{ display: 'flex' }}>
               <Form.Item name="minPrice" noStyle>
                 <InputNumber
                   min={0.01}
@@ -778,7 +777,7 @@ const TemplateList: React.FC = () => {
                   }}
                 />
               </Form.Item>
-            </Input.Group>
+            </Space.Compact>
           </Form.Item>
           
           <Form.Item shouldUpdate>
@@ -809,4 +808,3 @@ const TemplateList: React.FC = () => {
 }
 
 export default TemplateList
-

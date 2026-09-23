@@ -58,7 +58,7 @@ const AccountSetupGuideModal: React.FC<AccountSetupGuideModalProps> = ({
       }
       width={isMobile ? '95%' : 680}
       style={{ top: isMobile ? 20 : 50 }}
-      destroyOnClose
+      destroyOnHidden
       maskClosable={allCompleted}
       closable
     >

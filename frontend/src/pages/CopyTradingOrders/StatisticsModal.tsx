@@ -69,7 +69,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
       footer={null}
       width="90%"
       style={{ top: 20 }}
-      bodyStyle={{ padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' }}
+      styles={{ body: { padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' } }}
     >
       {loading ? (
         <div style={{ textAlign: 'center', padding: '50px' }}>

@@ -21,7 +21,7 @@ data class AccountSetupStatusDto(
     
     /**
      * 代币批准详情（各合约的授权额度）
-     * Key: 合约名称（CTF_CONTRACT, CTF_EXCHANGE, NEG_RISK_EXCHANGE, NEG_RISK_ADAPTER）
+     * Key: 合约名称（CTF_CONTRACT, CTF_EXCHANGE, NEG_RISK_EXCHANGE）
      * Value: 授权额度（USDC，6位小数）
      */
     val approvalDetails: Map<String, String>? = null,

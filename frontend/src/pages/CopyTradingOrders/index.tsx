@@ -37,8 +37,8 @@ const CopyTradingOrdersModal: React.FC<CopyTradingOrdersModalProps> = ({
       footer={null}
       width="90%"
       style={{ top: 20 }}
-      bodyStyle={{ padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' }}
-      destroyOnClose
+      styles={{ body: { padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' } }}
+      destroyOnHidden
     >
       <Tabs
         activeKey={activeTab}

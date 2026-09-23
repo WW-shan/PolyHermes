@@ -25,7 +25,8 @@ import {
   ExperimentOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
-  SafetyCertificateOutlined
+  SafetyCertificateOutlined,
+  SearchOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
@@ -394,13 +395,14 @@ const LeaderResearch: React.FC = () => {
                 label: t(`leaderResearch.states.${state}`, { defaultValue: state })
               }))}
             />
-            <Input.Search
+            <Input
               allowClear
               style={{ width: 320 }}
               placeholder={t('leaderResearch.searchPlaceholder')}
               value={query}
               onChange={event => setQuery(event.target.value)}
-              onSearch={() => loadAll()}
+              onPressEnter={() => loadAll()}
+              suffix={<SearchOutlined style={{ cursor: 'pointer' }} onClick={() => loadAll()} />}
             />
           </Space>
           <Table

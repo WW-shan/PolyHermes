@@ -335,7 +335,7 @@ const BuyOrdersTab: React.FC<BuyOrdersTabProps> = ({ copyTradingId, active = fal
                 boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                 border: '1px solid #e8e8e8'
               }}
-              bodyStyle={{ padding: '16px' }}
+              styles={{ body: { padding: '16px' } }}
             >
               {/* 分组头部 */}
               <div
@@ -429,7 +429,7 @@ const BuyOrdersTab: React.FC<BuyOrdersTabProps> = ({ copyTradingId, active = fal
                               border: '1px solid #f0f0f0',
                               backgroundColor: '#fafafa'
                             }}
-                            bodyStyle={{ padding: '12px' }}
+                            styles={{ body: { padding: '12px' } }}
                           >
                             <div style={{ marginBottom: '8px' }}>
                               <div style={{
@@ -520,7 +520,7 @@ const BuyOrdersTab: React.FC<BuyOrdersTabProps> = ({ copyTradingId, active = fal
                       boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                       border: '1px solid #e8e8e8'
                     }}
-                    bodyStyle={{ padding: '16px' }}
+                    styles={{ body: { padding: '16px' } }}
                   >
                     <div style={{ marginBottom: '12px' }}>
                       <div style={{

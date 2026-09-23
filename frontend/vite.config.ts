@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
   // 如果未设置，使用默认值 localhost:8000
   const API_URL = env.VITE_API_URL || 'http://localhost:8000'
   const WS_URL = env.VITE_WS_URL || 'ws://localhost:8000'
+  // 生产环境由 Nginx 将 /api/update 代理到独立更新服务；开发环境保持同样路径。
+  const UPDATE_URL = env.VITE_UPDATE_URL || 'http://localhost:9090'
   
   // 从环境变量获取版本信息（构建时注入）
   const VERSION = env.VERSION || 'dev'
@@ -29,6 +31,11 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       proxy: {
+        '/api/update': {
+          target: UPDATE_URL,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/update/, '')
+        },
         '/api': {
           target: API_URL,
           changeOrigin: true
@@ -42,4 +49,3 @@ export default defineConfig(({ mode }) => {
     }
   }
 })
-

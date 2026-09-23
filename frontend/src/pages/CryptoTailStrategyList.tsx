@@ -757,7 +757,7 @@ const CryptoTailStrategyList: React.FC = () => {
                       border: '1px solid #e8e8e8',
                       overflow: 'hidden'
                     }}
-                    bodyStyle={{ padding: 0 }}
+                    styles={{ body: { padding: 0 } }}
                   >
                     <div style={{
                       padding: '10px 12px',
@@ -876,7 +876,7 @@ const CryptoTailStrategyList: React.FC = () => {
         onCancel={() => setFormModalOpen(false)}
         onOk={handleFormSubmit}
         width={isMobile ? '100%' : 520}
-        destroyOnClose
+        destroyOnHidden
       >
         <Alert type="warning" showIcon message={t('cryptoTailStrategy.form.walletTip')} style={{ marginBottom: 16 }} />
         <Form form={form} layout="vertical" initialValues={{ amountMode: 'RATIO', maxPrice: '1', spreadMode: 'AUTO', spreadDirection: 'MIN', enabled: true }}>
@@ -963,11 +963,11 @@ const CryptoTailStrategyList: React.FC = () => {
             {({ getFieldValue }) =>
               getFieldValue('amountMode') === 'RATIO' ? (
                 <Form.Item name="amountValue" label={t('cryptoTailStrategy.form.ratioPercent')} rules={[{ required: true }]}>
-                  <InputNumber min={0} max={100} step={1} style={{ width: '100%' }} addonAfter="%" stringMode />
+                  <InputNumber min={0} max={100} step={1} style={{ width: '100%' }} suffix="%" stringMode />
                 </Form.Item>
               ) : (
                 <Form.Item name="amountValue" label={t('cryptoTailStrategy.form.fixedUsdc')} rules={[{ required: true }]}>
-                  <InputNumber min={1} style={{ width: '100%' }} addonBefore="$" stringMode />
+                  <InputNumber min={1} style={{ width: '100%' }} prefix="$" stringMode />
                 </Form.Item>
               )
             }

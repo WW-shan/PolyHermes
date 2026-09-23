@@ -896,7 +896,7 @@ class RelayClientService(
 
         val relayerResponse = response.body()!!
         val txHash = relayerResponse.transactionHash ?: relayerResponse.hash
-            ?: return Result.failure(Exception("Builder Relayer 返回的交易哈希为空"))
+            ?: waitForRelayerTransactionHash(relayerApi, relayerResponse.transactionID).getOrElse { return Result.failure(it) }
         logger.info("Builder Relayer PROXY 执行成功: transactionID=${relayerResponse.transactionID}, txHash=$txHash")
         return Result.success(txHash)
     }
@@ -1171,7 +1171,7 @@ class RelayClientService(
 
         val relayerResponse = response.body()!!
         val txHash = relayerResponse.transactionHash ?: relayerResponse.hash
-        ?: return Result.failure(Exception("Builder Relayer 返回的交易哈希为空"))
+            ?: waitForRelayerTransactionHash(relayerApi, relayerResponse.transactionID).getOrElse { return Result.failure(it) }
 
         logger.info("Builder Relayer 执行成功: transactionID=${relayerResponse.transactionID}, txHash=$txHash")
         return Result.success(txHash)
@@ -1249,7 +1249,7 @@ class RelayClientService(
             }
             val relayerResponse = response.body()!!
             val txHash = relayerResponse.transactionHash ?: relayerResponse.hash
-                ?: return Result.failure(Exception("Builder Relayer 返回的交易哈希为空"))
+                ?: waitForRelayerTransactionHash(relayerApi, relayerResponse.transactionID).getOrElse { return Result.failure(it) }
             logger.info("Safe 部署成功: proxy=$proxyAddress, txHash=$txHash")
             Result.success(txHash)
         } catch (e: Exception) {

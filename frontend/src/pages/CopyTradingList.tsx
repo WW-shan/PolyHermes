@@ -437,7 +437,7 @@ const CopyTradingList: React.FC = () => {
         </Tooltip>
       </div>
 
-      <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} bodyStyle={{ padding: isMobile ? '12px' : '24px' }}>
+      <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} styles={{ body: { padding: isMobile ? '12px' : '24px' } }}>
         <div style={{ marginBottom: 16, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <Select
             placeholder={t('copyTradingList.filterWallet') || '筛选钱包'}
@@ -499,7 +499,7 @@ const CopyTradingList: React.FC = () => {
                         border: '1px solid #e8e8e8',
                         overflow: 'hidden'
                       }}
-                      bodyStyle={{ padding: '0' }}
+                      styles={{ body: { padding: '0' } }}
                     >
                       {/* 头部区域 - 配置名称 */}
                       <div style={{

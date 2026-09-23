@@ -989,7 +989,11 @@ const CryptoTailMonitor: React.FC = () => {
               onChange={(id) => setSelectedStrategyId(id)}
               placeholder={t('cryptoTailMonitor.selectStrategyPlaceholder')}
               popupMatchSelectWidth={false}
-              dropdownStyle={{ minWidth: isMobile ? 280 : 'auto', wordWrap: 'break-word', whiteSpace: 'normal' }}
+              styles={{
+                popup: {
+                  root: { minWidth: isMobile ? 280 : 'auto', wordWrap: 'break-word', whiteSpace: 'normal' }
+                }
+              }}
               optionLabelProp="label"
               options={strategies.map(s => ({
                 label: `${s.name || s.marketSlugPrefix} (${s.intervalSeconds === 300 ? '5m' : '15m'})`,

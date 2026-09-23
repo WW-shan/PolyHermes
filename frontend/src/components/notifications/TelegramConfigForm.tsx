@@ -88,8 +88,8 @@ const TelegramConfigForm: React.FC<TelegramConfigFormProps> = ({ form }) => {
         >
           <Input.Password
             placeholder={t('telegramConfig.botTokenPlaceholder')}
-            addonBefore={t('telegramConfig.botToken')}
-            addonAfter={
+            prefix={t('telegramConfig.botToken')}
+            suffix={
               <Button
                 type="link"
                 size="small"
@@ -120,4 +120,3 @@ const TelegramConfigForm: React.FC<TelegramConfigFormProps> = ({ form }) => {
 }
 
 export default TelegramConfigForm
-

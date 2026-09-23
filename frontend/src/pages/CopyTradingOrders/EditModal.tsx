@@ -272,7 +272,7 @@ const EditModal: React.FC<EditModalProps> = ({
       footer={null}
       width="90%"
       style={{ top: 20 }}
-      bodyStyle={{ padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' }}
+      styles={{ body: { padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' } }}
     >
       {fetching ? (
         <div style={{ textAlign: 'center', padding: '50px' }}>
@@ -410,7 +410,7 @@ const EditModal: React.FC<EditModalProps> = ({
                 step={0.01}
                 precision={2}
                 style={{ width: '100%' }}
-                addonAfter="%"
+                suffix="%"
                 placeholder={t('copyTradingEdit.copyRatioPlaceholder') || '例如：100 表示 100%（1:1 跟单）'}
                 parser={(value) => {
                   console.log('[EditModal copyRatio parser] 输入值:', value, '类型:', typeof value)
@@ -663,7 +663,7 @@ const EditModal: React.FC<EditModalProps> = ({
             name="priceRange"
             tooltip={t('copyTradingEdit.priceRangeTooltip') || '配置价格区间，仅在指定价格区间内的订单才会下单。例如：0.11-0.89 表示区间在0.11和0.89之间；-0.89 表示0.89以下都可以；0.11- 表示0.11以上都可以'}
           >
-            <Input.Group compact style={{ display: 'flex' }}>
+            <Space.Compact style={{ display: 'flex' }}>
               <Form.Item name="minPrice" noStyle>
                 <InputNumber
                   min={0.01}
@@ -697,7 +697,7 @@ const EditModal: React.FC<EditModalProps> = ({
                   }}
                 />
               </Form.Item>
-            </Input.Group>
+            </Space.Compact>
           </Form.Item>
           
           <Divider>{t('copyTradingEdit.positionLimitFilter') || '最大仓位限制'}</Divider>
@@ -799,7 +799,7 @@ const EditModal: React.FC<EditModalProps> = ({
             label={t('copyTradingEdit.maxMarketEndDate') || '最大市场截止时间'}
             tooltip={t('copyTradingEdit.maxMarketEndDateTooltip') || '仅跟单截止时间小于设定时间的订单。例如：24 小时表示只跟单距离结算还剩24小时以内的市场'}
           >
-            <Input.Group compact style={{ display: 'flex' }}>
+            <Space.Compact style={{ display: 'flex' }}>
               <InputNumber
                 min={0}
                 max={9999}
@@ -845,7 +845,7 @@ const EditModal: React.FC<EditModalProps> = ({
                 <Option value="HOUR">{t('copyTradingEdit.hour') || '小时'}</Option>
                 <Option value="DAY">{t('copyTradingEdit.day') || '天'}</Option>
               </Select>
-            </Input.Group>
+            </Space.Compact>
           </Form.Item>
           
           <Form.Item style={{ marginBottom: 0 }}>

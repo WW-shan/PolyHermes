@@ -96,7 +96,7 @@ const ApiHealthStatus: React.FC = () => {
                     style={{
                       borderLeft: `4px solid ${getStatusColor(item.status)}`,
                     }}
-                    bodyStyle={{ padding: '12px' }}
+                    styles={{ body: { padding: '12px' } }}
                   >
                     <Space direction="vertical" size="small" style={{ width: '100%' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
@@ -141,7 +141,7 @@ const ApiHealthStatus: React.FC = () => {
                       borderLeft: `4px solid ${getStatusColor(item.status)}`,
                       height: '100%'
                     }}
-                    bodyStyle={{ padding: '16px' }}
+                    styles={{ body: { padding: '16px' } }}
                   >
                     <Space direction="vertical" size="small" style={{ width: '100%' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

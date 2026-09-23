@@ -130,8 +130,12 @@ npm install
 Create `.env` file:
 
 ```env
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000
+# Usually leave VITE_API_URL/VITE_WS_URL unset. Relative paths go through the
+# Vite proxy and avoid browser CORS issues. Set them only for a separated
+# deployment that has CORS configured.
+
+# Optional: update service URL for testing the update page locally
+VITE_UPDATE_URL=http://localhost:9090
 ```
 
 3. **Start Development Server**

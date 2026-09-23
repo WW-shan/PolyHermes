@@ -472,7 +472,7 @@ const LeaderList: React.FC = () => {
         </Tooltip>
       </div>
 
-      <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} bodyStyle={{ padding: isMobile ? '12px' : '24px' }}>
+      <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} styles={{ body: { padding: isMobile ? '12px' : '24px' } }}>
         {isMobile ? (
           <div>
             {loading ? (
@@ -497,7 +497,7 @@ const LeaderList: React.FC = () => {
                         border: '1px solid #e8e8e8',
                         overflow: 'hidden'
                       }}
-                      bodyStyle={{ padding: '0' }}
+                      styles={{ body: { padding: '0' } }}
                     >
                       {/* 头部区域 - 名称和地址 */}
                       <div style={{
@@ -740,7 +740,7 @@ const LeaderList: React.FC = () => {
               <>
                 <Row gutter={16} style={{ marginBottom: '16px' }}>
                   <Col xs={24} sm={8} md={6}>
-                    <Card bordered={false} style={{ backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
+                    <Card variant="borderless" style={{ backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
                       <Statistic
                         title={t('leaderDetail.availableBalance')}
                         value={parseFloat(detailBalance.availableBalance)}
@@ -752,7 +752,7 @@ const LeaderList: React.FC = () => {
                     </Card>
                   </Col>
                   <Col xs={24} sm={8} md={6}>
-                    <Card bordered={false} style={{ backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
+                    <Card variant="borderless" style={{ backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
                       <Statistic
                         title={t('leaderDetail.positionBalance')}
                         value={parseFloat(detailBalance.positionBalance)}
@@ -764,7 +764,7 @@ const LeaderList: React.FC = () => {
                     </Card>
                   </Col>
                   <Col xs={24} sm={8} md={6}>
-                    <Card bordered={false} style={{ backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
+                    <Card variant="borderless" style={{ backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
                       <Statistic
                         title={t('leaderDetail.totalBalance')}
                         value={parseFloat(detailBalance.totalBalance)}
@@ -790,7 +790,7 @@ const LeaderList: React.FC = () => {
                   <Table
                     dataSource={detailBalance.positions}
                     columns={getPositionColumns()}
-                    rowKey={(record, index) => `${record.title}-${record.side}-${index}`}
+                    rowKey={(record) => `${record.marketId}-${record.side}`}
                     pagination={{ pageSize: 10, showSizeChanger: !isMobile }}
                     scroll={{ x: isMobile ? 800 : 'auto' }}
                     size={isMobile ? 'small' : 'middle'}

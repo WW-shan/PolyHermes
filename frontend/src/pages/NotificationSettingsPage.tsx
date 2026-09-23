@@ -433,7 +433,7 @@ const NotificationSettingsPage: React.FC = () => {
           </span>
         }
         style={{ height: '100%', borderRadius: 8 }}
-        bodyStyle={{ padding: '12px 16px', maxHeight: 420, overflowY: 'auto' }}
+        styles={{ body: { padding: '12px 16px', maxHeight: 420, overflowY: 'auto' } }}
       >
         {templateVariables.categories.map(category => {
           const categoryVariables = templateVariables.variables.filter(v => v.category === category.key)
@@ -622,7 +622,7 @@ const NotificationSettingsPage: React.FC = () => {
         
         <Row gutter={[16, 16]}>
           <Col xs={24} sm={24} md={17}>
-            <Card size="small" bordered={false} style={{ background: '#fafafa', marginBottom: 12, borderRadius: 8 }} bodyStyle={{ padding: '10px 16px' }}>
+            <Card size="small" variant="borderless" style={{ background: '#fafafa', marginBottom: 12, borderRadius: 8 }} styles={{ body: { padding: '10px 16px' } }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
                 <Space wrap size="small">
                   <Text type="secondary" style={{ fontSize: 13 }}>{t('notificationSettings.templates.templateContent')}</Text>

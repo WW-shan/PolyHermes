@@ -392,8 +392,9 @@ const AddModal: React.FC<AddModalProps> = ({
         footer={null}
         width="90%"
         style={{ top: 20 }}
-        bodyStyle={{ padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' }}
-        destroyOnClose
+        styles={{ body: { padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' } }}
+        destroyOnHidden
+        forceRender
       >
         <Form
           form={form}
@@ -584,7 +585,7 @@ const AddModal: React.FC<AddModalProps> = ({
                 step={0.01}
                 precision={2}
                 style={{ width: '100%' }}
-                addonAfter="%"
+                suffix="%"
                 placeholder={t('copyTradingAdd.copyRatioPlaceholder') || '例如：100 表示 100%（1:1 跟单），默认 100%'}
                 parser={(value) => {
                   const cleaned = (value || '').toString().replace(/%/g, '').trim()
@@ -813,7 +814,7 @@ const AddModal: React.FC<AddModalProps> = ({
             name="priceRange"
             tooltip={t('copyTradingAdd.priceRangeTooltip') || '配置价格区间，仅在指定价格区间内的订单才会下单。例如：0.11-0.89 表示区间在0.11和0.89之间；-0.89 表示0.89以下都可以；0.11- 表示0.11以上都可以'}
           >
-            <Input.Group compact style={{ display: 'flex' }}>
+            <Space.Compact style={{ display: 'flex' }}>
               <Form.Item name="minPrice" noStyle>
                 <InputNumber
                   min={0.01}
@@ -847,7 +848,7 @@ const AddModal: React.FC<AddModalProps> = ({
                   }}
                 />
               </Form.Item>
-            </Input.Group>
+            </Space.Compact>
           </Form.Item>
           
           <Divider>{t('copyTradingAdd.positionLimitFilter') || '最大仓位限制'}</Divider>
@@ -948,7 +949,7 @@ const AddModal: React.FC<AddModalProps> = ({
             label={t('copyTradingAdd.maxMarketEndDate') || '最大市场截止时间'}
             tooltip={t('copyTradingAdd.maxMarketEndDateTooltip') || '仅跟单截止时间小于设定时间的订单。例如：24 小时表示只跟单距离结算还剩24小时以内的市场'}
           >
-            <Input.Group compact style={{ display: 'flex' }}>
+            <Space.Compact style={{ display: 'flex' }}>
               <InputNumber
                 min={0}
                 max={9999}
@@ -994,7 +995,7 @@ const AddModal: React.FC<AddModalProps> = ({
                 <Option value="HOUR">{t('copyTradingAdd.hour') || '小时'}</Option>
                 <Option value="DAY">{t('copyTradingAdd.day') || '天'}</Option>
               </Select>
-            </Input.Group>
+            </Space.Compact>
           </Form.Item>
           
           <Form.Item style={{ marginBottom: 0 }}>
@@ -1108,8 +1109,9 @@ const AddModal: React.FC<AddModalProps> = ({
         footer={null}
         width={isMobile ? '95%' : 640}
         style={{ top: isMobile ? 20 : 50 }}
-        bodyStyle={{ padding: isMobile ? '16px 20px' : '24px 28px', maxHeight: 'calc(100vh - 140px)', overflow: 'auto' }}
-        destroyOnClose
+        styles={{ body: { padding: isMobile ? '16px 20px' : '24px 28px', maxHeight: 'calc(100vh - 140px)', overflow: 'auto' } }}
+        destroyOnHidden
+        forceRender
         maskClosable
         closable
       >
@@ -1134,8 +1136,9 @@ const AddModal: React.FC<AddModalProps> = ({
         footer={null}
         width={isMobile ? '95%' : 600}
         style={{ top: isMobile ? 20 : 50 }}
-        bodyStyle={{ padding: '24px', maxHeight: 'calc(100vh - 150px)', overflow: 'auto' }}
-        destroyOnClose
+        styles={{ body: { padding: '24px', maxHeight: 'calc(100vh - 150px)', overflow: 'auto' } }}
+        destroyOnHidden
+        forceRender
         maskClosable
         closable
       >
@@ -1154,4 +1157,3 @@ const AddModal: React.FC<AddModalProps> = ({
 }
 
 export default AddModal
-

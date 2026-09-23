@@ -233,9 +233,12 @@ class AccountOnChainMonitorService(
     /**
      * 处理账户的卖出或赎回事件
      * 更新对应的订单状态
+     *
+     * 该方法内部只有阻塞式数据库操作，保持为普通方法，避免 Spring 事务绑定到
+     * suspend 协程恢复后的不同线程而失效。
      */
     @Transactional
-    suspend fun handleAccountSellOrRedeem(account: Account, trade: TradeResponse, txHash: String) {
+    fun handleAccountSellOrRedeem(account: Account, trade: TradeResponse, txHash: String) {
         // 获取该账户的所有启用的跟单配置
         val copyTradings = copyTradingRepository.findByAccountId(account.id!!)
             .filter { it.enabled }
@@ -265,11 +268,14 @@ class AccountOnChainMonitorService(
 
             // 数据库幂等兜底：同一跟单关系 + 同一笔链上交易 + 同一市场已记账则跳过
             // （内存去重只在单进程有效，这里保证重启后也不会重复计入盈亏）
-            if (sellMatchRecordRepository.existsByCopyTradingIdAndSourceTxHashAndMarketId(
-                    copyTrading.id!!, txHash, marketId
+            if (sellMatchRecordRepository.existsByCopyTradingIdAndSourceTxHashAndMarketIdAndOutcomeIndex(
+                    copyTrading.id!!, txHash, marketId, outcomeIndex
                 )
             ) {
-                logger.debug("链上交易已记账，跳过重复处理: copyTradingId=${copyTrading.id}, txHash=$txHash, marketId=$marketId")
+                logger.debug(
+                    "链上交易已记账，跳过重复处理: copyTradingId=${copyTrading.id}, txHash=$txHash, " +
+                        "marketId=$marketId, outcomeIndex=$outcomeIndex"
+                )
                 continue
             }
 
@@ -294,7 +300,7 @@ class AccountOnChainMonitorService(
     /**
      * 按 FIFO 顺序更新订单为已卖出
      */
-    private suspend fun updateOrdersAsSoldByFIFO(
+    private fun updateOrdersAsSoldByFIFO(
         orders: List<CopyOrderTracking>,
         soldQuantity: BigDecimal,
         sellPrice: BigDecimal,

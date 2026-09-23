@@ -213,7 +213,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
                         boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                         border: '1px solid #e8e8e8'
                       }}
-                      bodyStyle={{ padding: '16px' }}
+                      styles={{ body: { padding: '16px' } }}
                     >
                       {/* 订单ID */}
                       <div style={{ marginBottom: '12px' }}>

@@ -572,7 +572,7 @@ const PositionList: React.FC = () => {
 
     return (
       <Row gutter={[16, 16]}>
-        {paginatedPositions.map((position, index) => {
+        {paginatedPositions.map((position) => {
           const pnlNum = parseFloat(position.pnl || '0')
           const isProfit = pnlNum >= 0
           // 只有当前仓位才根据盈亏显示边框颜色
@@ -580,7 +580,7 @@ const PositionList: React.FC = () => {
             ? (isProfit ? 'rgba(82, 196, 26, 0.2)' : 'rgba(245, 34, 45, 0.2)')
             : 'rgba(0,0,0,0.06)'
 
-          const cardKey = `${position.accountId}-${position.marketId}-${index}`
+          const cardKey = getPositionKey(position)
           const isExpanded = expandedCards.has(cardKey)
           // 移动端需要折叠功能，桌面端始终展开
           const shouldCollapse = isMobile && !isExpanded
@@ -604,7 +604,7 @@ const PositionList: React.FC = () => {
                   border: `1px solid ${borderColor}`,
                   cursor: isMobile ? 'pointer' : 'default'
                 }}
-                bodyStyle={{ padding: '16px' }}
+                styles={{ body: { padding: '16px' } }}
               >
                 {/* 头部：市场图标和标题 */}
                 <div style={{ marginBottom: '12px' }}>
@@ -1078,7 +1078,7 @@ const PositionList: React.FC = () => {
               style={{ width: isMobile ? '100%' : 300 }}
             />
             {!isMobile && (
-              <Button.Group>
+              <Space.Compact>
                 <Button
                   type={viewMode === 'list' ? 'primary' : 'default'}
                   icon={<UnorderedListOutlined />}
@@ -1091,7 +1091,7 @@ const PositionList: React.FC = () => {
                   onClick={() => setViewMode('card')}
                   title="卡片视图"
                 />
-              </Button.Group>
+              </Space.Compact>
             )}
             <span style={{ color: '#999', fontSize: '14px', whiteSpace: 'nowrap' }}>
               {searchKeyword || selectedAccountId !== undefined
@@ -1103,12 +1103,12 @@ const PositionList: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
           <Select
             placeholder="选择账户"
-            value={selectedAccountId ?? null}
-            onChange={(value) => setSelectedAccountId(value ?? undefined)}
+            value={selectedAccountId ?? 'ALL'}
+            onChange={(value: number | 'ALL') => setSelectedAccountId(value === 'ALL' ? undefined : value)}
             style={{ width: isMobile ? '100%' : 200 }}
             loading={accountsLoading}
             options={[
-              { value: null, label: '全部账户' },
+              { value: 'ALL', label: '全部账户' },
               ...accounts
                 .sort((a, b) => {
                   const nameA = (a.accountName || `账户 ${a.id}`).toLowerCase()
@@ -1340,7 +1340,7 @@ const PositionList: React.FC = () => {
           <Table
             dataSource={filteredPositions}
             columns={columns}
-            rowKey={(record, index) => `${record.accountId}-${record.marketId}-${index}`}
+            rowKey={(record) => getPositionKey(record)}
             loading={loading}
             pagination={{
               current: currentPage,
@@ -1374,7 +1374,7 @@ const PositionList: React.FC = () => {
         okText="确认卖出"
         cancelText="取消"
         width={isMobile ? '90%' : 600}
-        destroyOnClose
+        destroyOnHidden
         confirmLoading={submitting}
         maskClosable={!submitting}
       >
@@ -1560,7 +1560,7 @@ const PositionList: React.FC = () => {
         okText="确认赎回"
         cancelText="取消"
         width={isMobile ? '90%' : 800}
-        destroyOnClose
+        destroyOnHidden
         confirmLoading={redeeming}
         maskClosable={!redeeming}
       >
@@ -1586,7 +1586,7 @@ const PositionList: React.FC = () => {
               <div style={{ marginBottom: '8px', fontWeight: '500' }}>赎回仓位列表：</div>
               <Table
                 dataSource={redeemableSummary.positions}
-                rowKey={(record, index) => `${record.marketId}-${record.outcomeIndex}-${index}`}
+                rowKey={(record) => `${record.accountId}-${record.marketId}-${record.outcomeIndex}`}
                 pagination={false}
                 size="small"
                 scroll={{ y: 300 }}
@@ -1667,4 +1667,3 @@ const PositionList: React.FC = () => {
 }
 
 export default PositionList
-

@@ -14,15 +14,15 @@ import shutil
 import tarfile
 import requests
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 from flask import Flask, jsonify, request
 from datetime import datetime
 
 # ==================== 配置 ====================
 app = Flask(__name__)
 
-# 日志配置
-LOG_FILE = Path('/var/log/polyhermes/update-service.log')
+# 日志配置（允许环境变量覆盖，便于本地测试；生产默认值保持不变）
+LOG_FILE = Path(os.getenv('POLYHERMES_UPDATE_LOG', '/var/log/polyhermes/update-service.log'))
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -35,13 +35,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 路径配置
-APP_DIR = Path('/app')
-VERSION_FILE = APP_DIR / 'version.json'
-UPDATES_DIR = APP_DIR / 'updates'
-BACKUPS_DIR = APP_DIR / 'backups'
-BACKEND_JAR = APP_DIR / 'app.jar'
-FRONTEND_DIR = Path('/usr/share/nginx/html')
+# 路径配置（允许环境变量覆盖，便于本地测试；生产默认值保持不变）
+APP_DIR = Path(os.getenv('POLYHERMES_APP_DIR', '/app'))
+VERSION_FILE = Path(os.getenv('POLYHERMES_VERSION_FILE', str(APP_DIR / 'version.json')))
+UPDATES_DIR = Path(os.getenv('POLYHERMES_UPDATES_DIR', str(APP_DIR / 'updates')))
+BACKUPS_DIR = Path(os.getenv('POLYHERMES_BACKUPS_DIR', str(APP_DIR / 'backups')))
+BACKEND_JAR = Path(os.getenv('POLYHERMES_BACKEND_JAR', str(APP_DIR / 'app.jar')))
+FRONTEND_DIR = Path(os.getenv('POLYHERMES_FRONTEND_DIR', '/usr/share/nginx/html'))
 
 # 创建必要目录
 UPDATES_DIR.mkdir(parents=True, exist_ok=True)
@@ -50,15 +50,34 @@ BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
 # GitHub 配置
 GITHUB_REPO = os.getenv('GITHUB_REPO', 'WrBug/PolyHermes')
 ALLOW_PRERELEASE = os.getenv('ALLOW_PRERELEASE', 'false').lower() == 'true'
-BACKEND_URL = 'http://localhost:8000'
+BACKEND_URL = os.getenv('POLYHERMES_BACKEND_URL', 'http://localhost:8000')
 
 # 更新状态
+update_lock = Lock()
 update_status = {
     'updating': False,
     'progress': 0,
     'message': '就绪',
     'error': None
 }
+
+# GitHub Release 查询缓存，避免页面自动检查触发未认证 API 限流
+RELEASE_CACHE_TTL_SECONDS = 300
+RELEASE_CACHE_FILE = Path(os.getenv('POLYHERMES_RELEASE_CACHE', str(UPDATES_DIR / 'release-cache.json')))
+release_cache = {
+    'data': None,
+    'timestamp': 0.0
+}
+try:
+    if RELEASE_CACHE_FILE.exists():
+        cached_payload = json.loads(RELEASE_CACHE_FILE.read_text())
+        if isinstance(cached_payload.get('data'), dict):
+            release_cache = {
+                'data': cached_payload['data'],
+                'timestamp': float(cached_payload.get('timestamp', 0))
+            }
+except Exception as cache_error:
+    logger.warning(f"读取 Release 缓存失败: {cache_error}")
 
 # ==================== 工具函数 ====================
 
@@ -77,24 +96,42 @@ def get_current_version():
 
 def fetch_latest_release():
     """获取最新 Release"""
+    now = time.time()
+    cached_release = release_cache['data']
+    if cached_release and now - release_cache['timestamp'] < RELEASE_CACHE_TTL_SECONDS:
+        return cached_release
+
+    def cache_and_return(release):
+        release_cache['data'] = release
+        release_cache['timestamp'] = time.time()
+        try:
+            RELEASE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            RELEASE_CACHE_FILE.write_text(json.dumps(release_cache, ensure_ascii=False))
+        except Exception as cache_error:
+            logger.warning(f"写入 Release 缓存失败: {cache_error}")
+        return release
+
     try:
         if ALLOW_PRERELEASE:
             # 测试模式：获取所有 Release（包括 pre-release）
             url = f'https://api.github.com/repos/{GITHUB_REPO}/releases'
             response = requests.get(url, headers={'Accept': 'application/vnd.github.v3+json'}, timeout=10)
+            if response.status_code != 200:
+                logger.warning(f"获取 Release 列表失败: HTTP {response.status_code}")
+                return cached_release
             releases = response.json()
             
-            if releases and len(releases) > 0:
+            if isinstance(releases, list) and releases:
                 latest = releases[0]
                 logger.info(f"检测到版本: {latest['tag_name']} (pre-release: {latest.get('prerelease', False)})")
-                return {
+                return cache_and_return({
                     'tag': latest['tag_name'],
                     'name': latest['name'],
                     'body': latest['body'],
                     'published_at': latest['published_at'],
                     'assets': latest['assets'],
                     'prerelease': latest.get('prerelease', False)
-                }
+                })
         else:
             # 生产模式：只获取正式版本
             url = f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest'
@@ -102,20 +139,21 @@ def fetch_latest_release():
             
             if response.status_code == 200:
                 data = response.json()
-                return {
+                return cache_and_return({
                     'tag': data['tag_name'],
                     'name': data['name'],
                     'body': data['body'],
                     'published_at': data['published_at'],
                     'assets': data['assets'],
                     'prerelease': False
-                }
+                })
+            logger.warning(f"获取最新 Release 失败: HTTP {response.status_code}")
         
-        return None
+        return cached_release
         
     except Exception as e:
         logger.error(f"获取 Release 失败: {e}")
-        return None
+        return cached_release
 
 
 def compare_versions(v1, v2):
@@ -209,6 +247,26 @@ def backup_current_version():
     return backup_dir
 
 
+def extract_tar_safely(tar, dest_dir):
+    """校验并解压 tar，拒绝绝对路径、路径穿越和设备/链接条目。"""
+    dest = Path(dest_dir).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+
+    for member in tar.getmembers():
+        member_name = member.name.replace('\\', '/')
+        member_path = Path(member_name)
+        if member_path.is_absolute() or '..' in member_path.parts:
+            raise Exception(f"更新包包含非法路径: {member.name}")
+        if not (member.isfile() or member.isdir()):
+            raise Exception(f"更新包包含不允许的条目类型: {member.name}")
+
+        target = (dest / member_path).resolve()
+        if target != dest and dest not in target.parents:
+            raise Exception(f"更新包路径越界: {member.name}")
+
+    tar.extractall(dest)
+
+
 def restore_backup(backup_dir):
     """恢复备份"""
     logger.info(f"开始恢复备份: {backup_dir}")
@@ -228,7 +286,7 @@ def restore_backup(backup_dir):
         
         # 解压备份
         with tarfile.open(frontend_backup, 'r:gz') as tar:
-            tar.extractall(FRONTEND_DIR)
+            extract_tar_safely(tar, FRONTEND_DIR)
     
     # 恢复版本信息
     backup_version = backup_dir / 'version.json'
@@ -238,9 +296,49 @@ def restore_backup(backup_dir):
     logger.info("备份恢复完成")
 
 
+def validate_update_package(extract_dir):
+    """在停止后端前校验更新包结构，避免缺文件时误报更新成功。"""
+    new_jar = extract_dir / 'backend' / 'polyhermes.jar'
+    new_frontend = extract_dir / 'frontend'
+    new_version = extract_dir / 'version.json'
+
+    missing = []
+    if not new_jar.is_file():
+        missing.append('backend/polyhermes.jar')
+    if not new_frontend.is_dir():
+        missing.append('frontend/')
+    if not new_version.is_file():
+        missing.append('version.json')
+    if missing:
+        raise Exception(f"更新包缺少必要文件: {', '.join(missing)}")
+
+    return new_jar, new_frontend, new_version
+
+
+def rollback_update(backup_dir):
+    """停止失败的新后端，恢复备份并重新启动旧后端。"""
+    subprocess.run(['pkill', '-9', '-f', 'java.*app.jar'], check=False)
+    time.sleep(2)
+    restore_backup(backup_dir)
+
+    backend_log_file = LOG_FILE.parent / 'backend-rollback.log'
+    with open(backend_log_file, 'a') as backend_log:
+        subprocess.Popen([
+            'java', '-jar', str(BACKEND_JAR),
+            '--spring.profiles.active=prod'
+        ], stdout=backend_log, stderr=subprocess.STDOUT, start_new_session=True)
+
+    subprocess.run(['nginx', '-s', 'reload'], check=True)
+    logger.info(f"旧版本后端已重启，日志: {backend_log_file}")
+
+
 def perform_update(target_version):
     """执行更新流程"""
     global update_status
+    backup_dir = None
+    replacement_started = False
+    rollback_done = False
+    update_completed = False
     
     try:
         update_status['updating'] = True
@@ -277,13 +375,7 @@ def perform_update(target_version):
         
         update_status['progress'] = 40
         
-        # 3. 备份当前版本
-        update_status['message'] = '备份当前版本...'
-        backup_dir = backup_current_version()
-        
-        update_status['progress'] = 50
-        
-        # 4. 解压更新包
+        # 3. 解压并校验更新包
         update_status['message'] = '解压更新包...'
         extract_dir = UPDATES_DIR / 'current'
         if extract_dir.exists():
@@ -291,13 +383,20 @@ def perform_update(target_version):
         extract_dir.mkdir(parents=True, exist_ok=True)
         
         with tarfile.open(download_path, 'r:gz') as tar:
-            tar.extractall(extract_dir)
+            extract_tar_safely(tar, extract_dir)
+
+        new_jar, new_frontend, new_version = validate_update_package(extract_dir)
+
+        # 4. 备份当前版本（仅在校验通过后执行）
+        update_status['message'] = '备份当前版本...'
+        backup_dir = backup_current_version()
         
         update_status['progress'] = 60
         
         # 5. 停止后端进程
         update_status['message'] = '停止后端服务...'
         logger.info("停止后端进程...")
+        replacement_started = True
         subprocess.run(['pkill', '-f', 'java -jar'], check=False)
         time.sleep(2)
         
@@ -307,24 +406,18 @@ def perform_update(target_version):
         update_status['message'] = '更新文件...'
         
         # 替换后端 JAR
-        new_jar = extract_dir / 'backend' / 'polyhermes.jar'
-        if new_jar.exists():
-            shutil.copy2(new_jar, BACKEND_JAR)
-            logger.info("后端 JAR 已更新")
+        shutil.copy2(new_jar, BACKEND_JAR)
+        logger.info("后端 JAR 已更新")
         
         # 替换前端文件
-        new_frontend = extract_dir / 'frontend'
-        if new_frontend.exists():
-            if FRONTEND_DIR.exists():
-                shutil.rmtree(FRONTEND_DIR)
-            shutil.copytree(new_frontend, FRONTEND_DIR)
-            logger.info("前端文件已更新")
+        if FRONTEND_DIR.exists():
+            shutil.rmtree(FRONTEND_DIR)
+        shutil.copytree(new_frontend, FRONTEND_DIR)
+        logger.info("前端文件已更新")
         
         # 更新版本信息
-        new_version = extract_dir / 'version.json'
-        if new_version.exists():
-            shutil.copy2(new_version, VERSION_FILE)
-            logger.info("版本信息已更新")
+        shutil.copy2(new_version, VERSION_FILE)
+        logger.info("版本信息已更新")
         
         update_status['progress'] = 75
         
@@ -449,23 +542,41 @@ def perform_update(target_version):
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             
             subprocess.run(['nginx', '-s', 'reload'], check=True)
+
+            rollback_done = True
             
             raise Exception(f"健康检查失败（等待了 {max_wait_time} 秒），已回滚到旧版本。请查看日志文件 {backend_log_file} 了解详情")
         
+        # 清理临时文件；清理失败不应把已经健康的新版本误报为更新失败。
+        try:
+            if download_path.exists():
+                download_path.unlink()
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
+        except Exception as cleanup_error:
+            logger.warning(f"更新成功，但清理临时文件失败: {cleanup_error}")
+
         update_status['progress'] = 100
         update_status['message'] = f'更新成功：{tag}'
         logger.info(f"更新成功：{tag}")
-        
-        # 清理临时文件
-        if download_path.exists():
-            download_path.unlink()
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
+        update_completed = True
         
     except Exception as e:
         logger.error(f"更新失败: {e}")
+        if replacement_started and not rollback_done and not update_completed and backup_dir is not None:
+            update_status['message'] = '更新失败，回滚中...'
+            try:
+                rollback_update(backup_dir)
+                rollback_done = True
+                logger.info("更新失败后已自动回滚")
+            except Exception as rollback_error:
+                logger.error(f"自动回滚失败: {rollback_error}", exc_info=True)
+                e = Exception(f"{e}; 自动回滚失败: {rollback_error}")
         update_status['error'] = str(e)
-        update_status['message'] = f'更新失败: {str(e)}'
+        if rollback_done:
+            update_status['message'] = f'更新失败，已回滚: {str(e)}'
+        else:
+            update_status['message'] = f'更新失败: {str(e)}'
     finally:
         update_status['updating'] = False
 
@@ -567,17 +678,39 @@ def update():
             'message': '需要管理员权限'
         }), 403
     
-    if update_status['updating']:
+    # 在启动线程前原子占用更新状态，避免并发请求同时启动多个更新。
+    with update_lock:
+        if update_status['updating']:
+            return jsonify({
+                'code': 409,
+                'data': None,
+                'message': '正在更新中，请稍后'
+            }), 409
+        update_status.update({
+            'updating': True,
+            'progress': 0,
+            'message': '开始更新...',
+            'error': None
+        })
+
+    try:
+        # 异步执行更新
+        thread = Thread(target=perform_update, args=('latest',))
+        thread.start()
+    except Exception as e:
+        with update_lock:
+            update_status.update({
+                'updating': False,
+                'message': f'启动更新失败: {e}',
+                'error': str(e)
+            })
+        logger.error(f"启动更新线程失败: {e}", exc_info=True)
         return jsonify({
-            'code': 409,
+            'code': 500,
             'data': None,
-            'message': '正在更新中，请稍后'
-        }), 409
-    
-    # 异步执行更新
-    thread = Thread(target=perform_update, args=('latest',))
-    thread.start()
-    
+            'message': str(e)
+        }), 500
+
     return jsonify({
         'code': 0,
         'data': '更新已启动',

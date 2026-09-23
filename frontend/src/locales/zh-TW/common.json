@@ -282,7 +282,6 @@
       "CTF_CONTRACT": "CTF 合約",
       "CTF_EXCHANGE": "CTF 交易所",
       "NEG_RISK_EXCHANGE": "負風險交易所",
-      "NEG_RISK_ADAPTER": "負風險適配器",
       "notApproved": "未授權",
       "unlimited": "無限"
     },
@@ -450,6 +449,7 @@
     "updateFailedWithMessage": "更新失敗: {{message}}",
     "updateSuccessRefresh": "更新成功！頁面將在3秒後刷新...",
     "needAdmin": "需要管理員權限才能執行更新",
+    "updateInProgress": "系統正在更新中，請稍後再試",
     "startFailed": "啟動更新失敗",
     "updating": "系統正在更新",
     "updateFailedTitle": "更新失敗",

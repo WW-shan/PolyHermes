@@ -295,7 +295,7 @@ const AccountDetail: React.FC = () => {
         footer={null}
         width={isMobile ? '95%' : 600}
         style={{ top: isMobile ? 20 : 50 }}
-        destroyOnClose
+        destroyOnHidden
         maskClosable
         closable
       >

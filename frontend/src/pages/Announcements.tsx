@@ -318,7 +318,7 @@ const Announcements: React.FC = () => {
                     transition: 'all 0.3s ease',
                     transform: isSelected ? 'scale(1.02)' : 'scale(1)'
                   }}
-                  bodyStyle={{ padding: '16px' }}
+                  styles={{ body: { padding: '16px' } }}
                   hoverable
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -433,7 +433,7 @@ const Announcements: React.FC = () => {
           onClose={() => setDrawerVisible(false)}
           open={drawerVisible}
           width="85%"
-          bodyStyle={{ padding: '16px' }}
+          styles={{ body: { padding: '16px' } }}
         >
           {renderAnnouncementList()}
         </Drawer>

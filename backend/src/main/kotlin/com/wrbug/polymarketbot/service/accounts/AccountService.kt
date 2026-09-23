@@ -318,13 +318,15 @@ class AccountService(
     /**
      * Polymarket 代币批准检查：pUSD 需授权的 spender 合约地址（Polygon 主网）
      * 来源：Polymarket/magic-safe-builder-example README §6 Token Approvals
-     * 及 neg-risk-ctf-adapter 仓库 addresses.json (chainId 137)
+     * 及 polymarket-ts-sdk setupTradingApprovals。
+     *
+     * 注意：0xd91E80... 是已退役的 CLOB v1 Neg Risk Adapter，官方 SDK 已不再要求
+     * 对它授予 pUSD allowance；继续检查/授权会让健康账户被误报为未完成设置。
      */
     private val setupApprovalSpenders = mapOf(
         "CTF_CONTRACT" to "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",           // Conditional Tokens
         "CTF_EXCHANGE" to "0xE111180000d2663C0091e4f400237545B87B996B",             // 普通市场交易所
-        "NEG_RISK_EXCHANGE" to "0xe2222d279d744050d28e00520010520000310F59",         // 负风险市场交易所
-        "NEG_RISK_ADAPTER" to "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"          // 负风险适配器（非 WCOL 地址）
+        "NEG_RISK_EXCHANGE" to "0xe2222d279d744050d28e00520010520000310F59"          // 负风险市场交易所
     )
 
     /** USDC 精度（6 位小数） */
@@ -1919,5 +1921,4 @@ class AccountService(
         return blockchainService.queryUsdceBalance(account.proxyAddress)
     }
 }
-
 

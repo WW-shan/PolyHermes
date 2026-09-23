@@ -41,10 +41,12 @@ const LanguageSwitcher: React.FC = () => {
           width: isMobile ? 100 : 120,
           color: '#fff'
         }}
-        dropdownStyle={{ 
-          minWidth: 120
+        styles={{
+          popup: {
+            root: { minWidth: 120 }
+          }
         }}
-        bordered={false}
+        variant="borderless"
         size={isMobile ? 'small' : 'middle'}
       />
     </Space>
