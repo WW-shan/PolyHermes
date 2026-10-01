@@ -169,7 +169,87 @@ interface PolymarketClobApi {
      */
     @GET("/time")
     suspend fun getServerTime(): Response<ResponseBody>
+
+    /**
+     * 获取 token 最小价格单位
+     * 端点: GET /tick-size?token_id=，返回 {"minimum_tick_size": 0.01}
+     */
+    @GET("/tick-size")
+    suspend fun getTickSize(
+        @Query("token_id") tokenId: String
+    ): Response<TickSizeResponse>
+
+    /**
+     * 获取 token 是否为 Neg Risk 市场
+     * 端点: GET /neg-risk?token_id=，返回 {"neg_risk": false}
+     */
+    @GET("/neg-risk")
+    suspend fun getNegRisk(
+        @Query("token_id") tokenId: String
+    ): Response<NegRiskResponse>
+
+    /**
+     * 获取 CLOB 成交记录（完整字段，含 status / maker_orders）
+     * 端点: GET /data/trades，需要 L2 认证，需带 maker_address（账户 proxy 地址）
+     */
+    @GET("/data/trades")
+    suspend fun getClobTrades(
+        @Query("id") id: String? = null,
+        @Query("maker_address") makerAddress: String? = null,
+        @Query("market") market: String? = null,
+        @Query("asset_id") assetId: String? = null,
+        @Query("next_cursor") nextCursor: String? = null
+    ): Response<ClobTradesResponse>
 }
+
+/** tick size 响应（数值用字符串接收，避免 Double） */
+data class TickSizeResponse(
+    @SerializedName("minimum_tick_size")
+    val minimumTickSize: String? = null
+)
+
+/** neg risk 响应 */
+data class NegRiskResponse(
+    @SerializedName("neg_risk")
+    val negRisk: Boolean? = null
+)
+
+/** CLOB 成交记录列表响应 */
+data class ClobTradesResponse(
+    val data: List<ClobTrade>? = null,
+    @SerializedName("next_cursor")
+    val nextCursor: String? = null
+)
+
+/** CLOB 成交记录（taker 视角，maker_orders 为对手 maker 订单明细） */
+data class ClobTrade(
+    val id: String? = null,
+    @SerializedName("taker_order_id")
+    val takerOrderId: String? = null,
+    val market: String? = null,
+    @SerializedName("asset_id")
+    val assetId: String? = null,
+    val side: String? = null,
+    val size: String? = null,
+    val price: String? = null,
+    val status: String? = null,  // MATCHED / MINED / CONFIRMED / RETRYING / FAILED
+    @SerializedName("maker_orders")
+    val makerOrders: List<ClobMakerOrder>? = null,
+    @SerializedName("trader_side")
+    val traderSide: String? = null
+)
+
+/** CLOB 成交中的 maker 订单明细 */
+data class ClobMakerOrder(
+    @SerializedName("order_id")
+    val orderId: String? = null,
+    @SerializedName("matched_amount")
+    val matchedAmount: String? = null,
+    val price: String? = null,
+    @SerializedName("asset_id")
+    val assetId: String? = null,
+    val side: String? = null
+)
 
 // 请求和响应数据类
 
@@ -245,7 +325,13 @@ data class CancelOrdersBatchRequest(
 
 data class OrderbookResponse(
     val bids: List<OrderbookEntry>,
-    val asks: List<OrderbookEntry>
+    val asks: List<OrderbookEntry>,
+    @SerializedName("tick_size")
+    val tickSize: String? = null,
+    @SerializedName("neg_risk")
+    val negRisk: Boolean? = null,
+    @SerializedName("min_order_size")
+    val minOrderSize: String? = null
 )
 
 data class OrderbookEntry(
@@ -378,6 +464,7 @@ data class FeeRateResponse(
 data class LatestPriceResponse(
     val tokenId: String,
     val bestBid: String?,  // 最高买入价
-    val bestAsk: String?   // 最低卖出价
+    val bestAsk: String?,  // 最低卖出价
+    val tickSize: String   // 市场最小价格单位（下单价格必须落在该 tick 上）
 )
 

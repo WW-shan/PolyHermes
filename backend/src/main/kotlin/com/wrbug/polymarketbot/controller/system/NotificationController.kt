@@ -38,7 +38,7 @@ class NotificationController(
                     notificationConfigService.getAllConfigs()
                 }
             }
-            ResponseEntity.ok(ApiResponse.success(configs))
+            ResponseEntity.ok(ApiResponse.success(configs.map { notificationConfigService.maskForDisplay(it) }))
         } catch (e: Exception) {
             logger.error("获取通知配置列表失败: ${e.message}", e)
             ResponseEntity.ok(ApiResponse.error(
@@ -69,7 +69,7 @@ class NotificationController(
             if (config == null) {
                 ResponseEntity.ok(ApiResponse.error(ErrorCode.NOT_FOUND, messageSource = messageSource))
             } else {
-                ResponseEntity.ok(ApiResponse.success(config))
+                ResponseEntity.ok(ApiResponse.success(notificationConfigService.maskForDisplay(config)))
             }
         } catch (e: Exception) {
             logger.error("获取通知配置详情失败: ${e.message}", e)
@@ -103,7 +103,7 @@ class NotificationController(
             
             result.fold(
                 onSuccess = { config ->
-                    ResponseEntity.ok(ApiResponse.success(config))
+                    ResponseEntity.ok(ApiResponse.success(notificationConfigService.maskForDisplay(config)))
                 },
                 onFailure = { e ->
                     logger.error("创建通知配置失败: ${e.message}", e)
@@ -168,7 +168,7 @@ class NotificationController(
             
             result.fold(
                 onSuccess = { config ->
-                    ResponseEntity.ok(ApiResponse.success(config))
+                    ResponseEntity.ok(ApiResponse.success(notificationConfigService.maskForDisplay(config)))
                 },
                 onFailure = { e ->
                     logger.error("更新通知配置失败: ${e.message}", e)
@@ -208,7 +208,7 @@ class NotificationController(
             
             result.fold(
                 onSuccess = { config ->
-                    ResponseEntity.ok(ApiResponse.success(config))
+                    ResponseEntity.ok(ApiResponse.success(notificationConfigService.maskForDisplay(config)))
                 },
                 onFailure = { e ->
                     logger.error("更新通知配置启用状态失败: ${e.message}", e)
@@ -312,7 +312,8 @@ class NotificationController(
             }
             
             val result = runBlocking {
-                telegramNotificationService.getChatIds(request.botToken)
+                // 编辑已有配置时前端回传的是掩码 token，这里还原为已保存的明文
+                telegramNotificationService.getChatIds(notificationConfigService.resolveMaskedBotToken(request.botToken, request.configId))
             }
             
             result.fold(
@@ -492,7 +493,8 @@ class NotificationController(
  * 获取 Telegram Chat IDs 请求
  */
 data class GetTelegramChatIdsRequest(
-    val botToken: String
+    val botToken: String = "",
+    val configId: Long? = null  // 可选：botToken 为掩码值时用于定位已保存的配置
 )
 
 /**

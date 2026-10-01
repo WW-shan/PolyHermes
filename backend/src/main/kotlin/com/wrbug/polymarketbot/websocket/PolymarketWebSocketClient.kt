@@ -8,6 +8,7 @@ import okhttp3.Request
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import java.util.concurrent.TimeUnit
 import org.slf4j.LoggerFactory
 
 /**
@@ -25,23 +26,31 @@ class PolymarketWebSocketClient(
     
     private val logger = LoggerFactory.getLogger(PolymarketWebSocketClient::class.java)
     
+    @Volatile
     private var webSocket: WebSocket? = null
+    @Volatile
     private var isConnected = false
     private var pingJob: Job? = null
     private var reconnectJob: Job? = null
+    @Volatile
     private var shouldReconnect = true  // 是否应该自动重连
     private var reconnectDelay = 3000L  // 重连延迟（毫秒），初始 3 秒
     
-    private val okHttpClient: OkHttpClient by lazy {
+    /**
+     * 每次连接都新建 OkHttpClient，读取当前代理配置（代理变更后重连即可生效）。
+     * pingInterval 让 OkHttp 发送协议层 ping，服务端无响应时触发 onFailure 进而重连。
+     */
+    private fun buildHttpClient(): OkHttpClient {
         val proxy = getProxyConfig()
         val builder = createClient()
+            .pingInterval(PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
         
         // 如果启用了代理，配置代理
         if (proxy != null) {
             builder.proxy(proxy)
         }
         
-        builder.build()
+        return builder.build()
     }
     
     /**
@@ -57,7 +66,7 @@ class PolymarketWebSocketClient(
                 .url(url)
                 .build()
             
-            webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+            webSocket = buildHttpClient().newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
                     isConnected = true
                     
@@ -90,24 +99,30 @@ class PolymarketWebSocketClient(
                 }
                 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    // 已被替换的旧连接的回调直接忽略，避免影响新连接状态
+                    if (webSocket !== this@PolymarketWebSocketClient.webSocket) return
                     isConnected = false
                     stopPing()
-                    // 如果不是正常关闭（code != 1000），尝试重连
-                    if (code != 1000 && shouldReconnect) {
+                    // 除本地主动关闭（shouldReconnect=false）外，服务端任何关闭（包括 1000）都重连
+                    if (shouldReconnect) {
                         scheduleReconnect()
                     }
                 }
                 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    // 已被替换的旧连接的回调直接忽略，避免影响新连接状态
+                    if (webSocket !== this@PolymarketWebSocketClient.webSocket) return
                     isConnected = false
                     stopPing()
-                    // 如果不是正常关闭（code != 1000），尝试重连
-                    if (code != 1000 && shouldReconnect) {
+                    // 除本地主动关闭外任何关闭都重连（scheduleReconnect 内部防重复）
+                    if (shouldReconnect) {
                         scheduleReconnect()
                     }
                 }
                 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+                    // 已被替换的旧连接的回调直接忽略，避免影响新连接状态
+                    if (webSocket !== this@PolymarketWebSocketClient.webSocket) return
                     logger.error("Polymarket WebSocket 错误: $sessionId, ${t.message}", t)
                     if (response != null) {
                         logger.error("响应码: ${response.code}, 响应消息: ${response.message}")
@@ -261,5 +276,9 @@ class PolymarketWebSocketClient(
     fun isConnected(): Boolean {
         return isConnected && webSocket != null
     }
-}
 
+    companion object {
+        // OkHttp 协议层 ping 间隔（秒）
+        private const val PING_INTERVAL_SECONDS = 20L
+    }
+}

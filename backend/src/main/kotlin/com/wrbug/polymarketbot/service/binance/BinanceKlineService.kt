@@ -12,6 +12,7 @@ import okhttp3.Request
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.slf4j.LoggerFactory
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import jakarta.annotation.PreDestroy
@@ -36,8 +37,15 @@ class BinanceKlineService(
         createClient().build()
     }
 
-    /** (marketSlugPrefix, intervalSeconds, periodStartUnix) -> (open, close) */
-    private val openCloseByPeriod = ConcurrentHashMap<String, Pair<BigDecimal, BigDecimal>>()
+    /** 币安 K 线快照：开盘价、最新价与本地收到时间 */
+    private data class KlineSnapshot(
+        val open: BigDecimal,
+        val close: BigDecimal,
+        val receivedAtMs: Long
+    )
+
+    /** (marketSlugPrefix, intervalSeconds, periodStartUnix) -> K 线快照 */
+    private val openCloseByPeriod = ConcurrentHashMap<String, KlineSnapshot>()
     
     /** 市场 slug 前缀（如 btc-updown）-> Binance 交易对映射 */
     private val marketToSymbol = mapOf(
@@ -74,7 +82,25 @@ class BinanceKlineService(
     fun getCurrentOpenClose(marketSlugPrefix: String, intervalSeconds: Int, periodStartUnix: Long): Pair<BigDecimal, BigDecimal>? {
         // 5/15 分钟加密市场以 Chainlink 60 秒 TWAP 结算；RTDS 未就绪时再回退到币安 K 线。
         chainlinkTwapService.getOpenClose(marketSlugPrefix, periodStartUnix)?.let { return it }
-        return openCloseByPeriod[key(marketSlugPrefix, intervalSeconds, periodStartUnix)]
+        val snapshot = openCloseByPeriod[key(marketSlugPrefix.lowercase(), intervalSeconds, periodStartUnix)] ?: return null
+        // 回退数据必须足够新鲜，否则宁可不下单也不能用过期价格判断价差
+        if (System.currentTimeMillis() - snapshot.receivedAtMs > FALLBACK_MAX_STALENESS_MS) return null
+        return snapshot.open to snapshot.close
+    }
+
+    /** 定时清理过期周期的 K 线快照，避免无界增长 */
+    @Scheduled(fixedDelay = 5 * 60 * 1000L)
+    fun cleanExpiredSnapshots() {
+        val threshold = System.currentTimeMillis() - SNAPSHOT_RETENTION_MS
+        openCloseByPeriod.entries.removeIf { it.value.receivedAtMs < threshold }
+    }
+
+    companion object {
+        /** 回退到币安数据时允许的最大延迟 */
+        const val FALLBACK_MAX_STALENESS_MS = 15_000L
+
+        /** K 线快照保留时长 */
+        private const val SNAPSHOT_RETENTION_MS = 60 * 60 * 1000L
     }
 
     /** 供 API 健康检查使用：各币种各周期的连接状态 */
@@ -114,7 +140,8 @@ class BinanceKlineService(
             parsed.forEach { (fullPrefix, symbol, interval) ->
                 connectStream(symbol, interval, fullPrefix) { marketPrefixParam, intervalSec, tMs, openP, closeP ->
                     val periodSec = tMs / 1000
-                    openCloseByPeriod[key(marketPrefixParam, intervalSec, periodSec)] = openP to closeP
+                    openCloseByPeriod[key(marketPrefixParam, intervalSec, periodSec)] =
+                        KlineSnapshot(openP, closeP, System.currentTimeMillis())
                 }
             }
         }
@@ -150,18 +177,22 @@ class BinanceKlineService(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
-                connectedWebSockets.remove(wsKey)
+                // 主动关闭的连接已先从 map 移除，其迟到回调不再触发重连
+                val wasCurrent = connectedWebSockets.remove(wsKey, webSocket)
                 logger.warn("币安 K 线 WS 异常 $streamName: ${t.message}")
-                scheduleReconnect()
+                if (wasCurrent || connectedWebSockets[wsKey] == null) scheduleReconnect()
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                connectedWebSockets.remove(wsKey)
-                if (code != 1000) scheduleReconnect()
+                // 非主动关闭（包括服务端发来的 1000）都要重连
+                if (connectedWebSockets.remove(wsKey, webSocket)) {
+                    logger.warn("币安 K 线 WS 被关闭，准备重连 $streamName: code=$code, reason=$reason")
+                    scheduleReconnect()
+                }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                connectedWebSockets.remove(wsKey)
+                connectedWebSockets.remove(wsKey, webSocket)
             }
         })
     }
@@ -187,8 +218,10 @@ class BinanceKlineService(
             delay(3_000)
             reconnectJob = null
             val current = requiredMarketPrefixes.get()
-            connectedWebSockets.values.forEach { it.close(1000, "reconnect") }
+            // 先清空再关闭，旧连接的迟到回调因不在 map 中而被忽略
+            val old = connectedWebSockets.values.toList()
             connectedWebSockets.clear()
+            old.forEach { it.close(1000, "reconnect") }
             logger.info("币安 K 线 WS 尝试重连")
             // 清空 requiredMarketPrefixes，否则 updateSubscriptions(current) 内会因 normalized == requiredMarketPrefixes.get() 直接 return，不会重新 connectStream
             requiredMarketPrefixes.set(emptySet())

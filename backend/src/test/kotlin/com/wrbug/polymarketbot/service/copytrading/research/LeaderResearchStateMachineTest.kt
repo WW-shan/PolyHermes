@@ -73,6 +73,47 @@ class LeaderResearchStateMachineTest {
         Mockito.verify(poolMappingService, Mockito.never()).syncCandidate(anyCandidate())
     }
 
+    @Test
+    fun `entering cooldown ends the active paper session`() {
+        val session = com.wrbug.polymarketbot.entity.LeaderPaperSession(id = 5L, candidateId = 1L)
+        val candidate = LeaderResearchCandidate(
+            id = 1L,
+            normalizedWallet = "0x1111111111111111111111111111111111111111",
+            researchState = LeaderResearchState.PAPER,
+            lastSourceSeenAt = System.currentTimeMillis()
+        )
+        Mockito.`when`(
+            paperSessionRepository.findTopByCandidateIdAndStatusOrderByStartedAtDesc(
+                1L, com.wrbug.polymarketbot.enums.LeaderPaperSessionStatus.ACTIVE
+            )
+        ).thenReturn(session)
+        Mockito.`when`(paperTradingService.shouldEnterCooldown(session, true)).thenReturn("drawdown")
+        Mockito.`when`(candidateRepository.save(anyCandidate())).thenAnswer { it.arguments[0] }
+        Mockito.`when`(poolMappingService.syncCandidate(anyCandidate())).thenAnswer { it.arguments[0] }
+
+        val result = stateMachine.advance(candidate, runId = 99L)
+
+        assertEquals(LeaderResearchState.COOLDOWN, result.researchState)
+        Mockito.verify(paperTradingService).endActiveSession(Mockito.eq(1L), Mockito.anyLong())
+    }
+
+    @Test
+    fun `candidate whose pool item is locked is not advanced`() {
+        val candidate = LeaderResearchCandidate(
+            id = 1L,
+            normalizedWallet = "0x1111111111111111111111111111111111111111",
+            researchState = LeaderResearchState.DISCOVERED,
+            lastSourceSeenAt = System.currentTimeMillis(),
+            agentOwned = true
+        )
+        Mockito.`when`(poolMappingService.isPoolLocked(anyCandidate())).thenReturn(true)
+
+        val result = stateMachine.advance(candidate, runId = 99L)
+
+        assertEquals(LeaderResearchState.DISCOVERED, result.researchState)
+        Mockito.verify(candidateRepository, Mockito.never()).save(anyCandidate())
+    }
+
     private fun anyCandidate(): LeaderResearchCandidate {
         Mockito.any(LeaderResearchCandidate::class.java)
         return LeaderResearchCandidate(normalizedWallet = "0x1111111111111111111111111111111111111111")

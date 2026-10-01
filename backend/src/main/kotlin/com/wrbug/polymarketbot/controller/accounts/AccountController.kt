@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.controller.accounts
 import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.enums.ErrorCode
 import com.wrbug.polymarketbot.service.accounts.AccountService
+import com.wrbug.polymarketbot.service.system.RelayClientService
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
@@ -32,10 +33,7 @@ class AccountController(
             if (request.walletAddress.isBlank()) {
                 return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_WALLET_ADDRESS_EMPTY, messageSource = messageSource))
             }
-            if (request.privateKey.isNullOrBlank() && request.mnemonic.isNullOrBlank()) {
-                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "必须提供私钥或助记词", messageSource))
-            }
-
+            // 不再要求请求中携带私钥/助记词：导入方式由 importMethod 决定（兼容旧前端时只判断是否非空）
             val result = runBlocking { accountService.checkProxyOptions(request) }
             result.fold(
                 onSuccess = { response ->
@@ -264,7 +262,7 @@ class AccountController(
                 },
                 onFailure = { e ->
                     logger.error("执行设置步骤失败: ${e.message}", e)
-                    when (e) {
+                    onChainErrorResponse<ExecuteSetupStepResponse>(e) ?: when (e) {
                         is IllegalArgumentException -> ResponseEntity.ok(
                             ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource)
                         )
@@ -526,7 +524,7 @@ class AccountController(
                 },
                 onFailure = { e ->
                     logger.error("赎回仓位失败: ${e.message}", e)
-                    when (e) {
+                    onChainErrorResponse<PositionRedeemResponse>(e) ?: when (e) {
                         is IllegalArgumentException -> ResponseEntity.ok(
                             ApiResponse.error(
                                 ErrorCode.PARAM_ERROR,
@@ -620,5 +618,23 @@ class AccountController(
         }
     }
 
+
+    /**
+     * 链上操作的统一错误映射：结果未知（处理中）→ 4040，链上失败 → 4041，Builder API Key 未配置 → 2014
+     */
+    private fun <T> onChainErrorResponse(e: Throwable): ResponseEntity<ApiResponse<T>>? {
+        return when (e) {
+            is RelayClientService.RelayerTransactionPendingException -> ResponseEntity.ok(
+                ApiResponse.error(ErrorCode.ACCOUNT_ONCHAIN_TX_PENDING, e.message, messageSource)
+            )
+            is RelayClientService.RelayerTransactionFailedException -> ResponseEntity.ok(
+                ApiResponse.error(ErrorCode.ACCOUNT_ONCHAIN_TX_FAILED, e.message, messageSource)
+            )
+            is RelayClientService.BuilderApiKeyNotConfiguredException -> ResponseEntity.ok(
+                ApiResponse.error(ErrorCode.BUILDER_API_KEY_NOT_CONFIGURED, "${e.message} 请前往系统设置页面配置：/system-settings", messageSource)
+            )
+            else -> null
+        }
+    }
 }
 

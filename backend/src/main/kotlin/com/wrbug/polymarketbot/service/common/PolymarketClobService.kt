@@ -1,11 +1,14 @@
 package com.wrbug.polymarketbot.service.common
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.wrbug.polymarketbot.api.*
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.util.concurrent.TimeUnit
 
 /**
  * Polymarket CLOB API 服务封装
@@ -18,6 +21,75 @@ class PolymarketClobService(
 ) {
     
     private val logger = LoggerFactory.getLogger(PolymarketClobService::class.java)
+
+    /** tickSize 缓存（市场 tick 可能在价格接近 0/1 时调整，缓存 5 分钟） */
+    private val tickSizeCache: Cache<String, BigDecimal> = Caffeine.newBuilder()
+        .expireAfterWrite(5, TimeUnit.MINUTES)
+        .maximumSize(20_000)
+        .build()
+
+    /** negRisk 缓存（市场属性不变，缓存 1 小时） */
+    private val negRiskCache: Cache<String, Boolean> = Caffeine.newBuilder()
+        .expireAfterWrite(1, TimeUnit.HOURS)
+        .maximumSize(20_000)
+        .build()
+
+    companion object {
+        /** Polymarket 支持的 tick size */
+        val SUPPORTED_TICK_SIZES: List<BigDecimal> =
+            listOf(BigDecimal("0.1"), BigDecimal("0.01"), BigDecimal("0.001"), BigDecimal("0.0001"))
+
+        /** bestBid = bids 中最高价（/book 的 bids 为升序，不能依赖顺序） */
+        fun bestBid(orderbook: OrderbookResponse): BigDecimal? =
+            orderbook.bids.mapNotNull { it.price.toBigDecimalOrNull() }.maxOrNull()
+
+        /** bestAsk = asks 中最低价（/book 的 asks 为降序，不能依赖顺序） */
+        fun bestAsk(orderbook: OrderbookResponse): BigDecimal? =
+            orderbook.asks.mapNotNull { it.price.toBigDecimalOrNull() }.minOrNull()
+    }
+
+    /**
+     * 获取 token 的最小价格单位（tick size），带缓存
+     * 查询失败返回 failure（调用方应中止下单，不能使用默认值）
+     */
+    suspend fun getTickSize(tokenId: String): Result<BigDecimal> {
+        tickSizeCache.getIfPresent(tokenId)?.let { return Result.success(it) }
+        return try {
+            val response = clobApi.getTickSize(tokenId)
+            val raw = response.body()?.minimumTickSize
+            val tick = raw?.toBigDecimalOrNull()?.stripTrailingZeros()
+            if (!response.isSuccessful || tick == null) {
+                return Result.failure(Exception("获取 tick size 失败: tokenId=$tokenId, code=${response.code()}"))
+            }
+            val supported = SUPPORTED_TICK_SIZES.firstOrNull { it.compareTo(tick) == 0 }
+                ?: return Result.failure(IllegalStateException("不支持的 tick size: $raw, tokenId=$tokenId"))
+            tickSizeCache.put(tokenId, supported)
+            Result.success(supported)
+        } catch (e: Exception) {
+            logger.warn("获取 tick size 异常: tokenId=$tokenId, error=${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 获取 token 是否为 Neg Risk 市场，带缓存
+     * 查询失败返回 failure（调用方应中止下单，不能当作 false）
+     */
+    suspend fun getNegRisk(tokenId: String): Result<Boolean> {
+        negRiskCache.getIfPresent(tokenId)?.let { return Result.success(it) }
+        return try {
+            val response = clobApi.getNegRisk(tokenId)
+            val negRisk = response.body()?.negRisk
+            if (!response.isSuccessful || negRisk == null) {
+                return Result.failure(Exception("获取 neg_risk 失败: tokenId=$tokenId, code=${response.code()}"))
+            }
+            negRiskCache.put(tokenId, negRisk)
+            Result.success(negRisk)
+        } catch (e: Exception) {
+            logger.warn("获取 neg_risk 异常: tokenId=$tokenId, error=${e.message}")
+            Result.failure(e)
+        }
+    }
     
     /**
      * 获取订单簿
@@ -76,27 +148,46 @@ class PolymarketClobService(
                 return Result.failure(IllegalStateException("订单表为空: tokenId=$tokenId"))
             }
             
-            // 获取 bestBid（最高买入价）
-            val bestBid = orderbook.bids.firstOrNull()?.price
-            val bestBidPrice = bestBid?.toSafeBigDecimal()
-            
-            // 获取 bestAsk（最低卖出价）
-            val bestAsk = orderbook.asks.firstOrNull()?.price
-            val bestAskPrice = bestAsk?.toSafeBigDecimal()
-            
+            // 获取 bestBid（最高买入价）/ bestAsk（最低卖出价）
+            // 注意：/book 的 bids 按价格升序、asks 按价格降序，不能取第一个元素
+            val bestBidPrice = bestBid(orderbook)
+            val bestBid = bestBidPrice?.toPlainString()
+            val bestAskPrice = bestAsk(orderbook)
+            val bestAsk = bestAskPrice?.toPlainString()
+
+            // 下单价格必须使用市场 tick；缺失或不支持时中止，前端不能自行猜一个精度
+            val rawTick = orderbook.tickSize
+            val parsedTick = rawTick?.toBigDecimalOrNull()?.stripTrailingZeros()
+            val tick = if (parsedTick != null) {
+                SUPPORTED_TICK_SIZES.firstOrNull { it.compareTo(parsedTick) == 0 }
+                    ?: return Result.failure(
+                        IllegalStateException("订单表返回不支持的 tick size: raw=$rawTick, tokenId=$tokenId")
+                    )
+            } else {
+                // 部分 /book 响应不带 tick_size，回退到专用接口；失败时不能猜精度
+                getTickSize(tokenId).getOrElse {
+                    return Result.failure(
+                        IllegalStateException("获取 tick size 失败: tokenId=$tokenId, error=${it.message}")
+                    )
+                }
+            }
+
             // 验证价格范围
-            if (bestBidPrice != null && (bestBidPrice < BigDecimal("0.01") || bestBidPrice > BigDecimal("0.99"))) {
-                logger.warn("订单表 bestBid 价格超出有效范围: $bestBid (tokenId=$tokenId)")
+            val minPrice = tick
+            val maxPrice = BigDecimal.ONE.subtract(tick)
+            if (bestBidPrice != null && (bestBidPrice < minPrice || bestBidPrice > maxPrice)) {
+                logger.warn("订单表 bestBid 价格超出有效范围: $bestBid (tick=$tick, tokenId=$tokenId)")
             }
-            if (bestAskPrice != null && (bestAskPrice < BigDecimal("0.01") || bestAskPrice > BigDecimal("0.99"))) {
-                logger.warn("订单表 bestAsk 价格超出有效范围: $bestAsk (tokenId=$tokenId)")
+            if (bestAskPrice != null && (bestAskPrice < minPrice || bestAskPrice > maxPrice)) {
+                logger.warn("订单表 bestAsk 价格超出有效范围: $bestAsk (tick=$tick, tokenId=$tokenId)")
             }
-            
+
             Result.success(
                 LatestPriceResponse(
                     tokenId = tokenId,
                     bestBid = bestBid,
-                    bestAsk = bestAsk
+                    bestAsk = bestAsk,
+                    tickSize = tick.toPlainString()
                 )
             )
         } catch (e: Exception) {
@@ -140,7 +231,7 @@ class PolymarketClobService(
         
         if (isSellOrder) {
             // 市价卖单：需要 bestBid（最高买入价）
-            val bestBid = orderbook.bids.firstOrNull()?.price
+            val bestBid = bestBid(orderbook)?.toPlainString()
             if (bestBid == null) {
                 val errorMsg = "订单表 bids 为空: tokenId=$tokenId"
                 logger.error(errorMsg)
@@ -164,7 +255,7 @@ class PolymarketClobService(
             return finalPrice.toPlainString()
         } else {
             // 市价买单：需要 bestAsk（最低卖出价）
-            val bestAsk = orderbook.asks.firstOrNull()?.price
+            val bestAsk = bestAsk(orderbook)?.toPlainString()
             if (bestAsk == null) {
                 val errorMsg = "订单表 asks 为空: tokenId=$tokenId"
                 logger.error(errorMsg)

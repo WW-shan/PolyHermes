@@ -67,7 +67,13 @@ class BlockchainService(
     // 根据 Polygonscan 的 F4 方法，函数签名为: computeProxyAddress(address)
     private val computeProxyAddressFunctionSignature = "computeProxyAddress(address)"
     
-    private val dataApi: PolymarketDataApi by lazy {
+    /** 测试替身注入点（生产环境为 null，使用默认 Retrofit 客户端） */
+    internal var dataApiOverride: PolymarketDataApi? = null
+
+    private val dataApi: PolymarketDataApi
+        get() = dataApiOverride ?: defaultDataApi
+
+    private val defaultDataApi: PolymarketDataApi by lazy {
         val baseUrl = if (PolymarketConstants.DATA_API_BASE_URL.endsWith("/")) {
             PolymarketConstants.DATA_API_BASE_URL.dropLast(1)
         } else {
@@ -85,10 +91,9 @@ class BlockchainService(
             .create(PolymarketDataApi::class.java)
     }
     
-    private val polygonRpcApi: EthereumRpcApi by lazy {
-        val rpcUrl = rpcNodeService.getHttpUrl()
-        retrofitFactory.createEthereumRpcApi(rpcUrl)
-    }
+    // 每个请求先校验 Polygon chainId；只读请求失败时在本次请求内切换 RPC 节点。
+    private val polygonRpcApi: EthereumRpcApi
+        get() = rpcNodeService.createFailoverRpcApi()
     
     /**
      * 获取 Polymarket 代理钱包地址
@@ -136,49 +141,42 @@ class BlockchainService(
     }
 
     /**
-     * 计算 Deposit Wallet 地址
-     * 参考 ts-sdk wallet.ts deriveCurrentDepositWalletAddress：
-     * 调用工厂 beacon() 判断当前工厂类型，非零地址使用 beacon 代理推导，否则使用 UUPS 代理推导；
-     * RPC 不可用时回退为 beacon 推导（当前生产工厂）。
+     * 计算 Deposit Wallet 地址（失败时抛异常，由 [getProxyAddress] 转为 Result.failure）
+     * 见 [resolveDepositWalletCandidate]
      */
-    suspend fun resolveDepositWalletAddress(walletAddress: String): String {
-        val useBeacon = try {
-            isBeaconDepositWalletFactory()
-        } catch (e: Exception) {
-            logger.warn("查询 DepositWalletFactory beacon 失败，默认按 beacon 推导: ${e.message}")
-            true
-        }
-        return if (useBeacon) {
-            PolymarketWalletDerivation.deriveBeaconDepositWalletAddress(walletAddress)
-        } else {
-            PolymarketWalletDerivation.deriveUupsDepositWalletAddress(walletAddress)
-        }
-    }
+    suspend fun resolveDepositWalletAddress(walletAddress: String): String =
+        resolveDepositWalletCandidate(walletAddress).getOrThrow()
 
-    private suspend fun isBeaconDepositWalletFactory(): Boolean {
-        val rpcRequest = JsonRpcRequest(
-            method = "eth_call",
-            params = listOf(
-                mapOf(
-                    "to" to PolymarketWalletDerivation.DEPOSIT_WALLET_FACTORY,
-                    "data" to PolymarketWalletDerivation.FACTORY_BEACON_SELECTOR
-                ),
-                "latest"
-            )
+    /**
+     * 同时计算 beacon 与 UUPS 两个候选（参考 ts-sdk wallet.ts classifyWallet）：
+     * - 选择“已部署且 owner()==EOA”的候选（两者都满足时优先 beacon）；
+     * - 两者都未部署时选 beacon（新账户默认）；
+     * - 部署状态 / owner 查询失败一律 fail-closed（返回失败），不当作“未部署”。
+     * 两种钱包的 ERC-7739 domain（DepositWallet / 1 / 钱包地址）与 Relayer WALLET 的 to（工厂）相同，签名无差异。
+     */
+    suspend fun resolveDepositWalletCandidate(walletAddress: String): Result<String> {
+        val candidates = listOf(
+            PolymarketWalletDerivation.deriveBeaconDepositWalletAddress(walletAddress),
+            PolymarketWalletDerivation.deriveUupsDepositWalletAddress(walletAddress)
         )
-        val response = polygonRpcApi.call(rpcRequest)
-        if (!response.isSuccessful || response.body() == null) {
-            throw Exception("RPC 请求失败: ${response.code()} ${response.message()}")
+        var anyDeployed = false
+        for (candidate in candidates) {
+            val deployed = checkProxyDeployed(candidate).getOrElse {
+                return Result.failure(Exception("查询 Deposit Wallet 部署状态失败: ${it.message}", it))
+            }
+            if (!deployed) continue
+            anyDeployed = true
+            val owner = getDepositWalletOwner(candidate)
+                ?: return Result.failure(Exception("无法读取 Deposit Wallet $candidate 的 owner，请确认 RPC 节点可用后重试"))
+            if (owner.equals(walletAddress, ignoreCase = true)) {
+                return Result.success(candidate)
+            }
+            logger.warn("Deposit Wallet 候选 owner 不匹配: candidate=$candidate, owner=$owner")
         }
-        val body = response.body()!!
-        if (body.error != null) {
-            // 合约 revert（旧版工厂无 beacon()）视为非 beacon
-            return false
+        if (anyDeployed) {
+            return Result.failure(Exception("已部署的 Deposit Wallet owner 与导入的钱包地址不一致"))
         }
-        val hex = body.result?.asString ?: return false
-        if (hex.removePrefix("0x").length < 64) return false
-        val beacon = EthereumUtils.decodeAddress(hex)
-        return beacon.removePrefix("0x").any { it != '0' }
+        return Result.success(candidates.first())
     }
 
     /**
@@ -332,6 +330,7 @@ class BlockchainService(
 
     /**
      * 检查代理钱包是否已部署（链上有合约代码）
+     * 注意：查询失败时返回 false，仅适用于展示；需要据此做决策（部署/授权/导入）时使用 [checkProxyDeployed]
      * @param proxyAddress 代理钱包地址
      * @return 已部署返回 true
      */
@@ -340,6 +339,94 @@ class BlockchainService(
             return false
         }
         return isContract(proxyAddress)
+    }
+
+    /**
+     * 查询代理钱包是否已部署（fail-closed）：RPC 失败返回 Result.failure，而不是当作“未部署”。
+     * 用于部署前判断，避免 RPC 抖动时重复部署。
+     */
+    suspend fun checkProxyDeployed(proxyAddress: String): Result<Boolean> {
+        if (proxyAddress.isBlank() || !proxyAddress.startsWith("0x") || proxyAddress.length != 42) {
+            return Result.failure(IllegalArgumentException("代理地址格式错误: $proxyAddress"))
+        }
+        return try {
+            val response = polygonRpcApi.call(JsonRpcRequest(method = "eth_getCode", params = listOf(proxyAddress, "latest")))
+            val body = response.body()
+            if (!response.isSuccessful || body == null) {
+                return Result.failure(Exception("eth_getCode 请求失败: ${response.code()} ${response.message()}"))
+            }
+            if (body.error != null) {
+                return Result.failure(Exception("eth_getCode 错误: ${body.error.message}"))
+            }
+            val code = body.result?.takeIf { !it.isJsonNull }?.asString
+                ?: return Result.failure(Exception("eth_getCode 结果为空"))
+            Result.success(code != "0x" && code != "0x0")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 执行只读 eth_call，返回 32 字节对齐的十六进制结果；
+     * RPC 失败、revert、result 为空或 "0x"（地址无代码）均返回失败，不静默当作 0/false。
+     */
+    private suspend fun ethCallWord(to: String, data: String): Result<String> {
+        return try {
+            val response = polygonRpcApi.call(
+                JsonRpcRequest(method = "eth_call", params = listOf(mapOf("to" to to, "data" to data), "latest"))
+            )
+            val body = response.body()
+            if (!response.isSuccessful || body == null) {
+                return Result.failure(Exception("RPC 请求失败: ${response.code()} ${response.message()}"))
+            }
+            if (body.error != null) {
+                return Result.failure(Exception("RPC 错误: ${body.error.message}"))
+            }
+            val hex = body.result?.takeIf { !it.isJsonNull }?.asString
+                ?: return Result.failure(Exception("RPC 响应 result 为空"))
+            if (hex.removePrefix("0x").length < 64) {
+                return Result.failure(Exception("eth_call 返回数据长度不足（合约可能未部署）: to=$to, result=$hex"))
+            }
+            Result.success(hex)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 查询 ERC1155 isApprovedForAll(owner, operator)（默认 CTF）
+     */
+    suspend fun isErc1155ApprovedForAll(
+        owner: String,
+        operator: String,
+        token: String = conditionalTokensAddress
+    ): Result<Boolean> {
+        val data = EthereumUtils.getFunctionSelector("isApprovedForAll(address,address)") +
+                EthereumUtils.encodeAddress(owner) + EthereumUtils.encodeAddress(operator)
+        return ethCallWord(token, data).map { EthereumUtils.decodeUint256(it) != BigInteger.ZERO }
+    }
+
+    /**
+     * 查询 CTF 持仓余额 balanceOf(owner, tokenId)，返回份数（6 位小数）；RPC 失败返回失败
+     */
+    suspend fun getCtfBalance(owner: String, tokenId: String): Result<BigDecimal> {
+        val id = try {
+            BigInteger(tokenId)
+        } catch (e: NumberFormatException) {
+            return Result.failure(IllegalArgumentException("tokenId 格式错误: $tokenId"))
+        }
+        val data = "0x00fdd58e" + EthereumUtils.encodeAddress(owner) + EthereumUtils.encodeUint256(id)
+        return ethCallWord(conditionalTokensAddress, data).map {
+            BigDecimal(EthereumUtils.decodeUint256(it)).movePointLeft(6)
+        }
+    }
+
+    /**
+     * 查询任意 ERC20 的 allowance(owner, spender)
+     */
+    suspend fun getErc20Allowance(token: String, owner: String, spender: String): Result<BigInteger> {
+        val data = "0xdd62ed3e" + EthereumUtils.encodeAddress(owner) + EthereumUtils.encodeAddress(spender)
+        return ethCallWord(token, data).map { EthereumUtils.decodeUint256(it) }
     }
 
     /**
@@ -442,17 +529,17 @@ class BlockchainService(
                     )
                 } ?: emptyList()
             } else {
-                logger.warn("持仓信息查询失败: ${positionsResult.exceptionOrNull()?.message}")
-                emptyList()
+                // 外部 API 失败不能按“无持仓”返回成功
+                val error = positionsResult.exceptionOrNull()
+                logger.warn("持仓信息查询失败: ${error?.message}")
+                return Result.failure(Exception("持仓信息查询失败: ${error?.message}", error))
             }
 
             // 2. 使用 /value 接口获取仓位总价值
             val positionBalanceResult = getTotalValue(walletAddress)
-            val positionBalance = if (positionBalanceResult.isSuccess) {
-                positionBalanceResult.getOrNull() ?: "0"
-            } else {
-                logger.warn("仓位总价值查询失败: ${positionBalanceResult.exceptionOrNull()?.message}")
-                "0"
+            val positionBalance = positionBalanceResult.getOrElse {
+                logger.warn("仓位总价值查询失败: ${it.message}")
+                return Result.failure(Exception("仓位总价值查询失败: ${it.message}", it))
             }
 
             // 3. 查询可用余额（通过 RPC 查询 USDC 余额）
@@ -543,28 +630,41 @@ class BlockchainService(
      */
     suspend fun getPositions(proxyWalletAddress: String, sortBy: String? = "CURRENT"): Result<List<PositionResponse>> {
         return try {
-            // 使用代理钱包地址查询仓位
-            // sortBy=CURRENT 表示只返回当前仓位
-            val response = dataApi.getPositions(
-                user = proxyWalletAddress,
-                limit = 500,  // 最大限制
-                offset = 0,
-                sortBy = sortBy
-            )
-            
-            if (response.isSuccessful && response.body() != null) {
-                val positions = response.body()!!
-                Result.success(positions)
-            } else {
-                val errorMsg = "Data API 请求失败: ${response.code()} ${response.message()}"
-                logger.error(errorMsg)
-                Result.failure(Exception(errorMsg))
+            // sizeThreshold=0：服务端默认只返回 size>=1 的仓位，小仓位会被当成“不存在”
+            // 按 offset 翻页取全：单页上限 500，活跃地址常常超过 500 条
+            val all = mutableListOf<PositionResponse>()
+            for (page in 0 until positionsMaxPages) {
+                val response = dataApi.getPositions(
+                    user = proxyWalletAddress,
+                    sizeThreshold = 0.0,
+                    limit = positionsPageSize,
+                    offset = page * positionsPageSize,
+                    sortBy = sortBy
+                )
+                val body = response.body()
+                if (!response.isSuccessful || body == null) {
+                    val errorMsg = "Data API 请求失败: ${response.code()} ${response.message()}"
+                    logger.error(errorMsg)
+                    return Result.failure(Exception(errorMsg))
+                }
+                all.addAll(body)
+                if (body.size < positionsPageSize) {
+                    return Result.success(all)
+                }
             }
+            // 超过翻页上限仍未取完：返回失败，避免把截断的列表当作完整持仓
+            Result.failure(Exception("持仓数量超过 ${positionsMaxPages * positionsPageSize} 条，未能完整获取"))
         } catch (e: Exception) {
             logger.error("查询持仓信息失败: ${e.message}", e)
             Result.failure(e)
         }
     }
+
+    /** Data API /positions 单页条数（服务端上限 500） */
+    private val positionsPageSize = 500
+
+    /** 最多翻页数 */
+    private val positionsMaxPages = 20
     
     /**
      * 从 condition ID 和 outcomeIndex 计算 tokenId
@@ -582,6 +682,46 @@ class BlockchainService(
      * @return tokenId（BigInteger 的字符串表示）
      */
     suspend fun getTokenId(conditionId: String, outcomeIndex: Int): Result<String> {
+        val negRisk = resolveNegRiskFromGamma(conditionId).getOrElse {
+            logger.warn("无法确定市场是否为 Neg Risk，拒绝推导 tokenId: conditionId=$conditionId, ${it.message}")
+            return Result.failure(it)
+        }
+        return getTokenId(conditionId, outcomeIndex, negRisk)
+    }
+
+    /**
+     * 按市场类型推导 CTF positionId（tokenId）
+     * CTF 持仓的抵押品不是 pUSD：普通市场按 USDC.e、Neg Risk 市场按 WCOL 推导（链上实测，含新建市场）。
+     * 优先使用 Data API 仓位的 asset 或 Gamma clobTokenIds，此方法用于兜底。
+     */
+    suspend fun getTokenId(conditionId: String, outcomeIndex: Int, negRisk: Boolean): Result<String> {
+        val collateral = if (negRisk) wcolContractAddress else usdceContractAddress
+        return computePositionId(conditionId, outcomeIndex, collateral)
+    }
+
+    /**
+     * 通过 Gamma 查询市场 negRisk（已结束市场需 closed=true 才能查到）；查不到或字段缺失返回失败
+     */
+    private suspend fun resolveNegRiskFromGamma(conditionId: String): Result<Boolean> {
+        return try {
+            val gammaApi = retrofitFactory.createGammaApi()
+            for (closed in listOf(null, true)) {
+                val response = gammaApi.listMarkets(conditionIds = listOf(conditionId), closed = closed)
+                if (!response.isSuccessful) {
+                    return Result.failure(Exception("Gamma 查询市场失败: ${response.code()} ${response.message()}"))
+                }
+                val market = response.body()?.firstOrNull() ?: continue
+                val negRisk = market.events?.firstOrNull()?.negRisk ?: market.negRisk ?: market.negRiskOther
+                    ?: return Result.failure(Exception("Gamma 市场缺少 negRisk 字段: $conditionId"))
+                return Result.success(negRisk)
+            }
+            Result.failure(Exception("Gamma 未找到市场: $conditionId"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun computePositionId(conditionId: String, outcomeIndex: Int, collateral: String): Result<String> {
         return try {
             val rpcApi = polygonRpcApi
             
@@ -628,7 +768,7 @@ class BlockchainService(
             
             // 2. 调用 getPositionId(collateralToken, collectionId)
             val getPositionIdSelector = EthereumUtils.getFunctionSelector("getPositionId(address,bytes32)")
-            val encodedCollateral = EthereumUtils.encodeAddress(usdcContractAddress)
+            val encodedCollateral = EthereumUtils.encodeAddress(collateral)
             val encodedCollectionId = EthereumUtils.encodeBytes32(collectionId)
             // getFunctionSelector 已经返回带 0x 前缀的字符串，所以直接拼接即可
             val positionIdData = getPositionIdSelector + encodedCollateral + encodedCollectionId
@@ -722,6 +862,100 @@ class BlockchainService(
     }
     
     /**
+     * 赎回执行结果（以链上回执为准）
+     * @param transactionHash 已确认的交易哈希
+     * @param payoutRaw 回执中转入代理钱包的 pUSD 总额（6 位小数 raw 值）
+     */
+    data class RedeemExecutionResult(
+        val transactionHash: String = "",
+        val payoutRaw: BigInteger = BigInteger.ZERO
+    ) {
+        /** pUSD 到账金额（6 位小数） */
+        val payout: BigDecimal get() = BigDecimal(payoutRaw).movePointLeft(6)
+    }
+
+    /**
+     * 构建赎回批量调用：对缺少 CTF 授权的 adapter 先 setApprovalForAll，再按市场调用 adapter.redeemPositions。
+     * 授权状态查询失败时整体失败（fail-closed），不盲目提交。
+     * @param markets (conditionId, isNegRisk) 列表，同一 conditionId 只赎回一次（adapter 总是赎回 [1,2]）
+     */
+    internal suspend fun buildRedeemCalls(
+        proxyAddress: String,
+        markets: List<Pair<String, Boolean>>
+    ): Result<List<RelayClientService.SafeTransaction>> {
+        val distinctMarkets = markets.distinctBy { it.first.lowercase() }
+        val approvals = mutableListOf<RelayClientService.SafeTransaction>()
+        for (adapter in distinctMarkets.map { RelayClientService.redeemAdapterFor(it.second) }.distinct()) {
+            val approved = isErc1155ApprovedForAll(proxyAddress, adapter).getOrElse {
+                return Result.failure(Exception("查询 CTF 对赎回适配器 $adapter 的授权失败: ${it.message}", it))
+            }
+            if (!approved) {
+                approvals.add(relayClientService.createCtfSetApprovalForAllTx(adapter))
+            }
+        }
+        val redeems = distinctMarkets.map { (conditionId, isNegRisk) ->
+            relayClientService.createRedeemTx(conditionId, RelayClientService.BINARY_INDEX_SETS, isNegRisk)
+        }
+        return Result.success(approvals + redeems)
+    }
+
+    /**
+     * 从回执中统计转入 recipient 的 pUSD（ERC20 Transfer 事件）总额
+     */
+    internal fun sumPusdTransfersTo(receipt: com.google.gson.JsonObject, recipient: String): BigInteger {
+        val transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+        val recipientTopic = "0x" + recipient.removePrefix("0x").lowercase().padStart(64, '0')
+        return receipt.getAsJsonArray("logs")?.map { it.asJsonObject }?.filter { log ->
+            val topics = log.getAsJsonArray("topics")
+            log.get("address")?.asString.equals(usdcContractAddress, ignoreCase = true) &&
+                    topics != null && topics.size() == 3 &&
+                    topics[0].asString.equals(transferTopic, ignoreCase = true) &&
+                    topics[2].asString.equals(recipientTopic, ignoreCase = true)
+        }?.fold(BigInteger.ZERO) { sum, log ->
+            sum.add(EthereumUtils.decodeUint256(log.get("data").asString))
+        } ?: BigInteger.ZERO
+    }
+
+    /**
+     * 赎回（官方 adapter 路径）并以链上回执确认到账金额
+     * Safe 用 MultiSend、Deposit Wallet 用原生批量、Magic 逐笔执行；
+     * Relayer 超时返回 [RelayClientService.RelayerTransactionPendingException]（结果未知）。
+     */
+    suspend fun redeemMarkets(
+        privateKey: String,
+        proxyAddress: String,
+        markets: List<Pair<String, Boolean>>,
+        walletType: WalletType
+    ): Result<RedeemExecutionResult> {
+        return try {
+            if (markets.isEmpty()) {
+                return Result.failure(IllegalArgumentException("赎回市场列表不能为空"))
+            }
+            if (proxyAddress.isBlank() || !proxyAddress.startsWith("0x") || proxyAddress.length != 42) {
+                return Result.failure(IllegalArgumentException("proxyAddress 格式错误，必须是有效的以太坊地址"))
+            }
+            for ((conditionId, _) in markets) {
+                if (conditionId.isBlank() || !conditionId.startsWith("0x") || conditionId.length != 66) {
+                    return Result.failure(IllegalArgumentException("conditionId 格式错误: $conditionId"))
+                }
+            }
+            val calls = buildRedeemCalls(proxyAddress, markets).getOrElse { return Result.failure(it) }
+            val txHash = relayClientService.executeCalls(
+                privateKey, proxyAddress, calls, walletType, metadata = "PolyHermes redeem positions"
+            ).getOrElse { return Result.failure(it) }
+            // executeCalls 已核验回执 status；此处再读取回执统计 pUSD 到账
+            val receipt = relayClientService.verifyTransactionReceipt(txHash, walletType == WalletType.MAGIC)
+                .getOrElse { return Result.failure(it) }
+            val payoutRaw = sumPusdTransfersTo(receipt, proxyAddress)
+            logger.info("赎回已上链: proxy=$proxyAddress, markets=${markets.size}, txHash=$txHash, pUSD 到账=$payoutRaw")
+            Result.success(RedeemExecutionResult(transactionHash = txHash, payoutRaw = payoutRaw))
+        } catch (e: Exception) {
+            logger.error("赎回仓位失败: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * 赎回仓位
      * Safe 账户通过代理 execTransaction 调用，Magic 账户通过 Builder Relayer PROXY（Gasless）执行
      *
@@ -729,7 +963,7 @@ class BlockchainService(
      * @param proxyAddress 代理地址（Safe 或 Magic 代理钱包地址）
      * @param conditionId 市场条件ID（bytes32，必须是 0x 开头的 66 位十六进制字符串）
      * @param indexSets 要赎回的索引集合列表（每个元素是 2^outcomeIndex）
-     * @param isNegRisk 是否为 Neg Risk 市场（true 时使用 WrappedCollateral 作为抵押品）
+     * @param isNegRisk 是否为 Neg Risk 市场（决定使用 NegRiskCtfCollateralAdapter 还是 CtfCollateralAdapter）
      * @param walletType 钱包类型：MAGIC 或 SAFE，用于选择执行路径
      * @return 交易哈希
      */
@@ -752,8 +986,9 @@ class BlockchainService(
                 return Result.failure(IllegalArgumentException("proxyAddress 格式错误，必须是有效的以太坊地址"))
             }
 
-            val redeemTx = relayClientService.createRedeemTx(conditionId, indexSets, isNegRisk)
-            relayClientService.execute(privateKey, proxyAddress, redeemTx, walletType)
+            // 走官方 adapter 路径（自动补齐 CTF 授权），并等待链上确认
+            redeemMarkets(privateKey, proxyAddress, listOf(conditionId to isNegRisk), walletType)
+                .map { it.transactionHash }
         } catch (e: Exception) {
             logger.error("赎回仓位失败: ${e.message}", e)
             Result.failure(e)
@@ -797,18 +1032,15 @@ class BlockchainService(
                 }
             }
 
-            // 创建每个市场的赎回交易（Neg Risk 市场使用 WrappedCollateral）
-            val redeemTxs = redeemRequests.map { (conditionId, indexSets, isNegRisk) ->
+            for ((conditionId, indexSets, _) in redeemRequests) {
                 if (indexSets.isEmpty()) {
-                    throw IllegalArgumentException("indexSets 不能为空: $conditionId")
+                    return Result.failure(IllegalArgumentException("indexSets 不能为空: $conditionId"))
                 }
-                relayClientService.createRedeemTx(conditionId, indexSets, isNegRisk)
             }
-
             logger.info("批量赎回: 合并 ${redeemRequests.size} 个市场为一笔交易")
-
-            // Safe 使用 MultiSend 合并，Deposit Wallet 使用原生 calls[] 批量提交
-            relayClientService.executeCalls(privateKey, proxyAddress, redeemTxs, walletType)
+            // Safe 使用 MultiSend 合并，Deposit Wallet 使用原生 calls[] 批量提交（含必要的 CTF 授权）
+            redeemMarkets(privateKey, proxyAddress, redeemRequests.map { it.first to it.third }, walletType)
+                .map { it.transactionHash }
         } catch (e: Exception) {
             logger.error("批量赎回仓位失败: ${e.message}", e)
             Result.failure(e)
@@ -911,14 +1143,15 @@ class BlockchainService(
         return try {
             val balanceResult = getWcolBalance(proxyAddress)
             val balance = balanceResult.getOrElse {
-                logger.warn("查询 WCOL 余额失败，跳过解包: ${it.message}")
-                return Result.success(null)
+                // 查询失败返回失败，由轮询任务下轮重试（不当作“余额为 0”）
+                logger.warn("查询 WCOL 余额失败，跳过本轮解包: ${it.message}")
+                return Result.failure(it)
             }
             if (balance == BigInteger.ZERO) {
                 return Result.success(null)
             }
             val unwrapTx = relayClientService.createUnwrapWcolTx(proxyAddress, balance)
-            val executeResult = relayClientService.execute(privateKey, proxyAddress, unwrapTx, walletType)
+            val executeResult = relayClientService.execute(privateKey, proxyAddress, unwrapTx, walletType, metadata = "PolyHermes WCOL unwrap")
             executeResult.fold(
                 onSuccess = { txHash ->
                     logger.info("WCOL 解包成功: proxy=${proxyAddress.take(10)}..., txHash=$txHash")
@@ -942,24 +1175,10 @@ class BlockchainService(
      * 查询 USDC.e 余额（用于 wrap 前检查）
      */
     suspend fun queryUsdceBalance(walletAddress: String): Result<BigDecimal> {
-        return try {
-            val rpcApi = polygonRpcApi
-            val functionSelector = "0x70a08231"
-            val paddedAddress = walletAddress.removePrefix("0x").lowercase().padStart(64, '0')
-            val data = functionSelector + paddedAddress
-            val rpcRequest = JsonRpcRequest(
-                method = "eth_call",
-                params = listOf(mapOf("to" to usdceContractAddress, "data" to data), "latest")
-            )
-            val response = rpcApi.call(rpcRequest)
-            if (!response.isSuccessful || response.body() == null) {
-                return Result.failure(Exception("RPC 请求失败"))
-            }
-            val hexBalance = response.body()!!.result?.asString ?: return Result.failure(Exception("result 为空"))
-            val balanceWei = BigInteger(hexBalance.removePrefix("0x"), 16)
-            Result.success(BigDecimal(balanceWei).divide(BigDecimal("1000000")))
-        } catch (e: Exception) {
-            Result.failure(e)
+        // RPC 错误 / 空结果均返回失败（不再把 error 响应当作余额解析）
+        val data = "0x70a08231" + EthereumUtils.encodeAddress(walletAddress)
+        return ethCallWord(usdceContractAddress, data).map {
+            BigDecimal(EthereumUtils.decodeUint256(it)).movePointLeft(6)
         }
     }
 
@@ -990,14 +1209,14 @@ class BlockchainService(
             if (walletType == WalletType.MAGIC) {
                 // MAGIC 账户走 PROXY 时，不使用 Safe MultiSend(delegatecall)；
                 // 改为顺序执行两笔 CALL，避免内层 delegatecall 回滚导致“外层成功但业务失败”。
-                val approveResult = relayClientService.execute(privateKey, proxyAddress, approveTx, walletType)
+                val approveResult = relayClientService.execute(privateKey, proxyAddress, approveTx, walletType, metadata = "PolyHermes USDC.e approve for wrap")
                 val approveHash = approveResult.getOrElse {
                     logger.error("USDC.e approve 失败: ${it.message}", it)
                     return Result.failure(it)
                 }
                 logger.info("USDC.e approve 成功: txHash=$approveHash")
 
-                val wrapResult = relayClientService.execute(privateKey, proxyAddress, wrapTx, walletType)
+                val wrapResult = relayClientService.execute(privateKey, proxyAddress, wrapTx, walletType, metadata = "PolyHermes wrap USDC.e to pUSD")
                 wrapResult.fold(
                     onSuccess = { txHash ->
                         logger.info("USDC.e → pUSD wrap 成功: txHash=$txHash")
@@ -1010,7 +1229,7 @@ class BlockchainService(
                 )
             } else {
                 // SAFE 走 MultiSend，DEPOSIT 走原生批量调用
-                val executeResult = relayClientService.executeCalls(privateKey, proxyAddress, listOf(approveTx, wrapTx), walletType)
+                val executeResult = relayClientService.executeCalls(privateKey, proxyAddress, listOf(approveTx, wrapTx), walletType, metadata = "PolyHermes wrap USDC.e to pUSD")
                 executeResult.fold(
                     onSuccess = { txHash ->
                         logger.info("USDC.e → pUSD wrap 成功: txHash=$txHash")
@@ -1328,23 +1547,26 @@ class BlockchainService(
                     )
                 )
                 
+                // 任一 outcome 查询失败或结果为空 → 整体失败（不能 continue，否则数组错位；不能把 null 当 0）
                 val payoutResponse = rpcApi.call(payoutRequest)
                 if (!payoutResponse.isSuccessful || payoutResponse.body() == null) {
-                    logger.warn("查询 payoutNumerators 失败: index=$i")
-                    continue
+                    return Result.failure(Exception("查询 payoutNumerators 失败: index=$i, code=${payoutResponse.code()}"))
                 }
                 
                 val payoutRpcResponse = payoutResponse.body()!!
                 if (payoutRpcResponse.error != null) {
-                    logger.warn("查询 payoutNumerators 错误: index=$i, error=${payoutRpcResponse.error.message}")
-                    continue
+                    return Result.failure(Exception("查询 payoutNumerators 错误: index=$i, error=${payoutRpcResponse.error.message}"))
                 }
                 
-                val payoutHex = payoutRpcResponse.result?.asString ?: "0x0"
-                val payout = EthereumUtils.decodeUint256(payoutHex)
-                payouts.add(payout)
+                val payoutHex = payoutRpcResponse.result?.takeIf { !it.isJsonNull }?.asString
+                    ?.takeIf { it.removePrefix("0x").isNotEmpty() }
+                    ?: return Result.failure(Exception("查询 payoutNumerators 结果为空: index=$i"))
+                payouts.add(EthereumUtils.decodeUint256(payoutHex))
             }
             
+            if (payouts.size != outcomeSlotCount) {
+                return Result.failure(Exception("payouts 数量(${payouts.size})与 outcomeSlotCount($outcomeSlotCount)不一致"))
+            }
             Result.success(Pair(payoutDenominator, payouts))
         } catch (e: Exception) {
             logger.error("查询市场条件失败: conditionId=$conditionId, ${e.message}", e)
@@ -1406,4 +1628,3 @@ class BlockchainService(
         }
     }
 }
-

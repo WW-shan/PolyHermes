@@ -97,8 +97,13 @@ class NotificationConfigService(
             
             // 验证配置数据
             validateConfig(request.type, request.config)
-            
-            val configJson = objectMapper.writeValueAsString(request.config)
+
+            // 前端回传掩码 botToken 表示未修改，保持原值
+            val configToSave = request.config["botToken"]?.toString()
+                ?.takeIf { SystemConfigService.isMaskedValue(it) }
+                ?.let { request.config + ("botToken" to resolveMaskedBotToken(it, id)) }
+                ?: request.config
+            val configJson = objectMapper.writeValueAsString(configToSave)
             val updated = existing.copy(
                 type = request.type,
                 name = request.name,
@@ -195,6 +200,37 @@ class NotificationConfigService(
         }
     }
     
+    /**
+     * 返回给前端前掩码敏感字段（Telegram botToken 只保留前后 4 位）
+     * 注意：发送通知走 getEnabledConfigsByType，拿到的仍是明文
+     */
+    fun maskForDisplay(dto: NotificationConfigDto): NotificationConfigDto {
+        val config = dto.config
+        if (config is NotificationConfigData.Telegram && config.data.botToken.isNotEmpty()) {
+            val masked = SystemConfigService.maskSecret(config.data.botToken, visibleChars = 4)
+            return dto.copy(config = NotificationConfigData.Telegram(config.data.copy(botToken = masked)))
+        }
+        return dto
+    }
+
+    /**
+     * 把前端回传的掩码 botToken 还原为已保存的明文（未掩码时原样返回）
+     * @throws IllegalArgumentException 找不到匹配的已保存配置
+     */
+    suspend fun resolveMaskedBotToken(botToken: String, configId: Long? = null): String {
+        if (!SystemConfigService.isMaskedValue(botToken)) {
+            return botToken
+        }
+        val candidates = if (configId != null) {
+            listOfNotNull(getConfigById(configId))
+        } else {
+            getConfigsByType("telegram")
+        }
+        return candidates.mapNotNull { (it.config as? NotificationConfigData.Telegram)?.data?.botToken }
+            .firstOrNull { it.isNotEmpty() && SystemConfigService.maskSecret(it, visibleChars = 4) == botToken }
+            ?: throw IllegalArgumentException("Bot Token 无效，请重新输入")
+    }
+
     /**
      * 实体转 DTO
      */

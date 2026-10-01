@@ -6,8 +6,7 @@ import com.wrbug.polymarketbot.repository.ProxyConfigRepository
 import com.wrbug.polymarketbot.service.copytrading.monitor.CopyTradingWebSocketService
 import com.wrbug.polymarketbot.service.copytrading.orders.OrderPushService
 import com.wrbug.polymarketbot.util.ProxyConfigProvider
-import com.wrbug.polymarketbot.util.TrustAllHostnameVerifier
-import com.wrbug.polymarketbot.util.createSSLSocketFactory
+import com.wrbug.polymarketbot.event.ProxyConfigChangedEvent
 import okhttp3.*
 import org.slf4j.LoggerFactory
 import org.springframework.beans.BeansException
@@ -137,7 +136,8 @@ class ProxyConfigService(
                 ProxyConfigProvider.setProxyConfig(null)
             }
             
-            // 触发 WebSocket 重连（使用新代理配置）
+            // 通知 HTTP/WS 客户端按新代理重建连接，并触发 WebSocket 重连
+            publishProxyConfigChanged()
             triggerWebSocketReconnect()
             
             Result.success(toDto(saved))
@@ -183,9 +183,7 @@ class ProxyConfigService(
                 .readTimeout(10, TimeUnit.SECONDS)
                 .writeTimeout(10, TimeUnit.SECONDS)
             
-            // 配置 SSL：信任所有证书（用于代理连接）
-            clientBuilder.createSSLSocketFactory()
-            clientBuilder.hostnameVerifier(TrustAllHostnameVerifier())
+            // HTTP CONNECT 代理只转发 TLS 隧道，保持默认证书与主机名校验
             
             // 如果配置了用户名和密码，添加代理认证
             if (config.username != null && config.password != null) {
@@ -259,6 +257,7 @@ class ProxyConfigService(
             // 如果删除的是启用的代理配置，清除 ProxyConfigProvider
             if (wasEnabled) {
                 ProxyConfigProvider.setProxyConfig(null)
+                publishProxyConfigChanged()
                 // 触发 WebSocket 重连（使用新配置，即无代理）
                 triggerWebSocketReconnect()
             }
@@ -270,6 +269,17 @@ class ProxyConfigService(
         }
     }
     
+    /**
+     * 发布代理配置变更事件（RetrofitFactory 清理缓存客户端，WS 服务监听后重连）
+     */
+    private fun publishProxyConfigChanged() {
+        try {
+            applicationContext?.publishEvent(ProxyConfigChangedEvent())
+        } catch (e: Exception) {
+            logger.error("发布代理配置变更事件失败", e)
+        }
+    }
+
     /**
      * 触发所有 WebSocket 重连（使用新代理配置）
      */

@@ -66,6 +66,9 @@ class CopyTradingService(
             // 2. 验证 Leader 是否存在
             val leader = leaderRepository.findById(request.leaderId).orElse(null)
                 ?: return Result.failure(IllegalArgumentException("Leader 不存在"))
+
+            // 2.1 自跟单检查：Leader 不能是该账户的代理钱包或 EOA
+            CopyTradingValidation.requireNotSelfFollow(leader.leaderAddress, account)
             
             // 3. 验证配置名（强校验：不能为空字符串）
             val configName = request.configName?.trim()
@@ -138,6 +141,20 @@ class CopyTradingService(
                 )
             }
             
+            // 5.1 参数校验
+            CopyTradingValidation.validateParams(
+                copyMode = config.copyMode,
+                copyRatio = config.copyRatio,
+                fixedAmount = config.fixedAmount,
+                maxOrderSize = config.maxOrderSize,
+                minOrderSize = config.minOrderSize,
+                maxDailyLoss = config.maxDailyLoss,
+                maxPositionValue = config.maxPositionValue,
+                minPrice = config.minPrice,
+                maxPrice = config.maxPrice,
+                maxDailyOrders = config.maxDailyOrders
+            )
+
             // 6. 创建跟单配置
             val copyTrading = CopyTrading(
                 accountId = request.accountId,
@@ -302,6 +319,29 @@ class CopyTradingService(
                 },
                 updatedAt = System.currentTimeMillis()
             )
+
+            // 参数校验（与创建一致）
+            CopyTradingValidation.validateParams(
+                copyMode = updated.copyMode,
+                copyRatio = updated.copyRatio,
+                fixedAmount = updated.fixedAmount,
+                maxOrderSize = updated.maxOrderSize,
+                minOrderSize = updated.minOrderSize,
+                maxDailyLoss = updated.maxDailyLoss,
+                maxPositionValue = updated.maxPositionValue,
+                minPrice = updated.minPrice,
+                maxPrice = updated.maxPrice,
+                maxDailyOrders = updated.maxDailyOrders
+            )
+
+            // 启用时做自跟单检查（历史数据可能已存在自跟单配置）
+            if (updated.enabled) {
+                val ownerAccount = accountRepository.findById(updated.accountId).orElse(null)
+                    ?: return Result.failure(IllegalArgumentException("账户不存在"))
+                val ownerLeader = leaderRepository.findById(updated.leaderId).orElse(null)
+                    ?: return Result.failure(IllegalArgumentException("Leader 不存在"))
+                CopyTradingValidation.requireNotSelfFollow(ownerLeader.leaderAddress, ownerAccount)
+            }
             
             val saved = copyTradingRepository.save(updated)
             

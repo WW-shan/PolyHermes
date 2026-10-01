@@ -247,7 +247,12 @@ class LeaderResearchSourceService(
         val backfill = backfillWalletActivities(activeResearchWallets(), LeaderResearchSourceType.ACTIVITY_DERIVED, runId)
         val freshAfter = System.currentTimeMillis() - FRESH_ACTIVITY_WINDOW_MS
         val events = activityEventRepository.findByUsableForDiscoveryTrueAndEventTimeGreaterThanEqual(freshAfter)
-        val wallets = events.mapNotNull { it.normalizedWallet }.distinct()
+        // 按新鲜活动数量排序并限制数量，避免全局捕获的大量钱包无上限地创建候选
+        val countsByWallet = events.mapNotNull { it.normalizedWallet }.groupingBy { it }.eachCount()
+        val wallets = countsByWallet.entries
+            .sortedByDescending { it.value }
+            .take(MAX_ACTIVITY_DERIVED_CANDIDATES_PER_RUN)
+            .map { it.key }
         val candidates = wallets.mapIndexed { index, wallet ->
             upsertCandidate(
                 wallet = wallet,
@@ -255,7 +260,7 @@ class LeaderResearchSourceService(
                 leader = leaderRepository.findByLeaderAddress(wallet),
                 sourceRank = index + 1,
                 provenance = LeaderCandidateProvenance.AGENT_CREATED,
-                sourceEvidence = "leader_activity_event:fresh_count=${events.count { it.normalizedWallet == wallet }}",
+                sourceEvidence = "leader_activity_event:fresh_count=${countsByWallet[wallet] ?: 0}",
                 runId = runId
             )
         }
@@ -510,6 +515,9 @@ class LeaderResearchSourceService(
         const val CONFIG_WATCHLIST = "leader_research.watchlist"
         const val FRESH_ACTIVITY_WINDOW_MS = 48L * 60 * 60 * 1000
         const val MAX_BACKFILL_WALLETS_PER_RUN = 50
+
+        /** 每轮由活动派生发现的候选数量上限 */
+        const val MAX_ACTIVITY_DERIVED_CANDIDATES_PER_RUN = 50
         private const val GLOBAL_CAPTURE_DISABLED_LIMITATION =
             "Global activity capture is disabled; activity-derived discovery only uses already persisted research events."
         private const val PUBLIC_LEADERBOARD_DISABLED_LIMITATION =

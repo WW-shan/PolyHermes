@@ -8,7 +8,10 @@ import com.wrbug.polymarketbot.util.toSafeBigDecimal
  * 加密价差策略触发记录
  */
 @Entity
-@Table(name = "crypto_tail_strategy_trigger")
+@Table(
+    name = "crypto_tail_strategy_trigger",
+    uniqueConstraints = [UniqueConstraint(name = "uk_crypto_tail_trigger_strategy_period", columnNames = ["strategy_id", "period_start_unix"])]
+)
 data class CryptoTailStrategyTrigger(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -35,6 +38,10 @@ data class CryptoTailStrategyTrigger(
     @Column(name = "order_id", length = 128)
     val orderId: String? = null,
 
+    /** 下单响应的成交交易哈希（逗号分隔），结算时按哈希过滤成交 */
+    @Column(name = "transaction_hashes", length = 2000)
+    val transactionHashes: String? = null,
+
     @Column(name = "condition_id", length = 66)
     val conditionId: String? = null,
 
@@ -50,6 +57,11 @@ data class CryptoTailStrategyTrigger(
     @Column(name = "settled_at")
     val settledAt: Long? = null,
 
+    /** 结算数据来源：TX_HASH（按交易哈希精确）、TIME_WINDOW（按时间窗聚合，可能不精确）、ESTIMATED（估算） */
+    @Column(name = "settlement_source", length = 20)
+    val settlementSource: String? = null,
+
+    /** 状态：pending（已占位、下单中）、success、fail */
     @Column(name = "status", nullable = false, length = 20)
     val status: String = "success",
 

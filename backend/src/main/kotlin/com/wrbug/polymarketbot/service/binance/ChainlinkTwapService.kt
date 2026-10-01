@@ -47,6 +47,12 @@ class ChainlinkTwapService(
         private const val MAX_HISTORY_MS = 20 * 60 * 1000L
         private const val OPEN_PRICE_TOLERANCE_MS = 15_000L
         private const val CURRENT_PRICE_MAX_STALENESS_MS = 15_000L
+
+        /** 健康检查：某 symbol 超过该时长无更新视为不健康 */
+        internal const val SYMBOL_HEALTH_MAX_AGE_MS = 30_000L
+
+        /** 连接已建立但某个 symbol 超过该时长无更新时主动重连 */
+        private const val SYMBOL_STALE_RECONNECT_MS = 60_000L
         private val E18 = BigDecimal("1000000000000000000")
     }
 
@@ -63,6 +69,13 @@ class ChainlinkTwapService(
 
     /** symbol（如 btc/usd）-> 观察时间 -> TWAP 值 */
     private val history = ConcurrentHashMap<String, ConcurrentSkipListMap<Long, BigDecimal>>()
+
+    /** symbol -> 最近一次收到更新的本地时间（毫秒），用于按 symbol 做健康检查 */
+    private val lastUpdateBySymbol = ConcurrentHashMap<String, Long>()
+
+    /** 当前连接建立时间，用于判断某 symbol 是否长时间无增量 */
+    @Volatile
+    private var connectedAtMs = 0L
 
     /** 当前需要订阅的 symbol 集合 */
     private val requiredSymbols = AtomicReference<Set<String>>(emptySet())
@@ -97,9 +110,12 @@ class ChainlinkTwapService(
         }
     }
 
-    /** 供 API 健康检查使用：各 symbol 的 RTDS 连接状态 */
+    /** 供 API 健康检查使用：各 symbol 连接正常且最近 [SYMBOL_HEALTH_MAX_AGE_MS] 内有更新才算健康 */
     fun getConnectionStatuses(): Map<String, Boolean> {
-        return requiredSymbols.get().associateWith { connected }
+        val now = currentTimeMillis()
+        return requiredSymbols.get().associateWith { symbol ->
+            connected && (lastUpdateBySymbol[symbol]?.let { now - it <= SYMBOL_HEALTH_MAX_AGE_MS } ?: false)
+        }
     }
 
     /**
@@ -145,7 +161,10 @@ class ChainlinkTwapService(
             val root = JsonParser.parseString(text).asJsonObject
             if (root.get("topic")?.asString != SIXTY_SECOND_TOPIC) return
             val payload = root.getAsJsonObject("payload") ?: return
-            val symbol = payload.get("symbol")?.takeIf { !it.isJsonNull }?.asString ?: return
+            val symbol = payload.get("symbol")?.takeIf { !it.isJsonNull }?.asString?.lowercase() ?: return
+            // 不带 filters 订阅会收到全部 symbol，本地只保留需要的（未设置订阅集合时全部保留）
+            val required = requiredSymbols.get()
+            if (required.isNotEmpty() && symbol !in required) return
 
             val data = payload.getAsJsonArray("data")
             if (data != null) {
@@ -182,6 +201,7 @@ class ChainlinkTwapService(
         points[point.timestampMs] = point.value
         val cutoff = point.timestampMs - MAX_HISTORY_MS
         points.headMap(cutoff, false).clear()
+        lastUpdateBySymbol[symbol] = currentTimeMillis()
     }
 
     private fun connectLocked() {
@@ -192,6 +212,7 @@ class ChainlinkTwapService(
             override fun onOpen(socket: WebSocket, response: Response) {
                 if (webSocket !== createdSocket) return
                 connected = true
+                connectedAtMs = currentTimeMillis()
                 logger.info("Chainlink TWAP RTDS 已连接: ${requiredSymbols.get().sorted()}")
                 sendSubscriptions()
                 startPing()
@@ -218,7 +239,8 @@ class ChainlinkTwapService(
                 webSocket = null
                 pingJob?.cancel()
                 pingJob = null
-                if (code != 1000) scheduleReconnect()
+                logger.warn("Chainlink TWAP RTDS 连接被关闭，准备重连: code=$code, reason=$reason")
+                scheduleReconnect()
             }
 
             override fun onClosed(socket: WebSocket, code: Int, reason: String) {
@@ -232,16 +254,15 @@ class ChainlinkTwapService(
     private fun sendSubscriptions() {
         val symbols = requiredSymbols.get()
         if (symbols.isEmpty()) return
-        val subscriptions = symbols.sorted().map { symbol ->
-            mapOf(
-                "topic" to SIXTY_SECOND_TOPIC,
-                "type" to "update",
-                "filters" to gson.toJson(mapOf("symbol" to symbol))
-            )
-        }
+        // 带 filters 的多条订阅只有第一个 symbol 有增量（实测），因此不带 filters 订阅全部 symbol，本地按 symbol 过滤
         val message = mapOf(
             "action" to "subscribe",
-            "subscriptions" to subscriptions
+            "subscriptions" to listOf(
+                mapOf(
+                    "topic" to SIXTY_SECOND_TOPIC,
+                    "type" to "update"
+                )
+            )
         )
         webSocket?.send(gson.toJson(message))
     }
@@ -252,7 +273,26 @@ class ChainlinkTwapService(
             while (isActive) {
                 delay(PING_INTERVAL_MS)
                 webSocket?.send("PING")
+                if (hasStaleSymbol()) {
+                    logger.warn("Chainlink TWAP RTDS 部分 symbol 长时间无更新，主动重连: ${requiredSymbols.get().sorted()}")
+                    synchronized(connectionLock) {
+                        closeConnectionLocked()
+                        connectLocked()
+                    }
+                    break
+                }
             }
+        }
+    }
+
+    /** 连接已建立超过阈值，但某个需要的 symbol 在阈值内没有任何更新 */
+    private fun hasStaleSymbol(): Boolean {
+        if (!connected) return false
+        val now = currentTimeMillis()
+        if (now - connectedAtMs < SYMBOL_STALE_RECONNECT_MS) return false
+        return requiredSymbols.get().any { symbol ->
+            val last = lastUpdateBySymbol[symbol] ?: 0L
+            now - last > SYMBOL_STALE_RECONNECT_MS
         }
     }
 

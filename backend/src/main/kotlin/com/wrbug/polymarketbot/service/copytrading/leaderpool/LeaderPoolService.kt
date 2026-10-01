@@ -11,6 +11,8 @@ import com.wrbug.polymarketbot.repository.CopyTradingRepository
 import com.wrbug.polymarketbot.repository.LeaderPoolRepository
 import com.wrbug.polymarketbot.repository.LeaderRepository
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingService
+import com.wrbug.polymarketbot.enums.LeaderResearchEventType
+import com.wrbug.polymarketbot.service.copytrading.research.LeaderResearchEventService
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
@@ -23,7 +25,8 @@ class LeaderPoolService(
     private val leaderRepository: LeaderRepository,
     private val copyTradingRepository: CopyTradingRepository,
     private val accountRepository: AccountRepository,
-    private val copyTradingService: CopyTradingService
+    private val copyTradingService: CopyTradingService,
+    private val researchEventService: LeaderResearchEventService? = null
 ) {
     private val logger = LoggerFactory.getLogger(LeaderPoolService::class.java)
 
@@ -252,10 +255,28 @@ class LeaderPoolService(
                 return Result.failure(LeaderPoolDuplicateTrialConfigException())
             }
 
+            // 研究候选只能建出禁用的配置：真钱启用必须由用户在跟单配置里手动完成
+            val enableRequested = request.enableImmediately && request.confirm
+            val enableNow = enableRequested && pool.researchCandidateId == null
+            if (enableRequested && !enableNow) {
+                logger.warn(
+                    "研究候选禁止立即启用真钱试跟配置，已改为禁用: poolId={}, leaderId={}, researchCandidateId={}",
+                    pool.id,
+                    pool.leaderId,
+                    pool.researchCandidateId
+                )
+                researchEventService?.record(
+                    type = LeaderResearchEventType.REAL_MONEY_ACTIVATION_FORBIDDEN,
+                    candidateId = pool.researchCandidateId,
+                    reason = "Leader pool trial config for research candidate was forced to disabled",
+                    dedupeKey = "pool-enable-forbidden:${pool.id}:${request.accountId}:${System.currentTimeMillis()}"
+                )
+            }
+
             val copyTradingRequest = CopyTradingCreateRequest(
                 accountId = request.accountId,
                 leaderId = pool.leaderId,
-                enabled = request.enableImmediately && request.confirm,
+                enabled = enableNow,
                 copyMode = "FIXED",
                 copyRatio = "1",
                 fixedAmount = pool.suggestedFixedAmount.strip(),

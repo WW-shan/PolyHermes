@@ -42,7 +42,8 @@ class OrderStatusUpdateService(
     private val trackingService: CopyOrderTrackingService,
     private val marketService: MarketService,  // 市场信息服务
     private val telegramNotificationService: TelegramNotificationService?,
-    private val blockchainService: com.wrbug.polymarketbot.service.common.BlockchainService
+    private val blockchainService: com.wrbug.polymarketbot.service.common.BlockchainService,
+    private val ledger: CopyOrderLedgerService
 ) : ApplicationContextAware {
 
     private val logger = LoggerFactory.getLogger(OrderStatusUpdateService::class.java)
@@ -67,11 +68,32 @@ class OrderStatusUpdateService(
             ?: throw IllegalStateException("ApplicationContext not initialized")
     }
 
-    // 缓存首次检测到订单详情为 null 的时间戳（订单ID -> 首次检测时间）
-    private val orderNullDetectionTime = ConcurrentHashMap<String, Long>()
+    // 最近一次清理孤儿记录的时间（清理为全表操作，限频执行）
+    @Volatile
+    private var lastCleanupAt: Long = 0L
 
-    // 订单详情为 null 的重试时间窗口（1分钟）
-    private val ORDER_NULL_RETRY_WINDOW_MS = 60000L
+    companion object {
+        /** 下单后等待多久再核对待确认订单（毫秒） */
+        private const val PENDING_CHECK_DELAY_MS = 5_000L
+        /** 待确认订单查询不到（404/null）超过该时长后停止轮询并标记无法确认 */
+        private const val PENDING_NOT_FOUND_MAX_AGE_MS = 10 * 60_000L
+        /** 已成交买单查询订单详情持续失败超过该时长后输出人工核对告警 */
+        private const val NOTIFY_MAX_AGE_MS = 10 * 60_000L
+        /** 卖出成交价查询最大失败次数 */
+        internal const val MAX_PRICE_QUERY_ATTEMPTS = 12
+        /** 卖出成交价查询退避基准与上限（毫秒） */
+        private const val PRICE_QUERY_BACKOFF_BASE_MS = 5_000L
+        private const val PRICE_QUERY_BACKOFF_MAX_MS = 10 * 60_000L
+        /** 孤儿记录清理间隔 */
+        private const val CLEANUP_INTERVAL_MS = 10 * 60_000L
+
+        /** 第 attempts 次失败后需要等待的退避时间（指数退避，封顶） */
+        internal fun priceQueryBackoffMs(attempts: Int): Long {
+            if (attempts <= 0) return 0L
+            val shift = (attempts - 1).coerceAtMost(20)
+            return (PRICE_QUERY_BACKOFF_BASE_MS shl shift).coerceAtMost(PRICE_QUERY_BACKOFF_MAX_MS)
+        }
+    }
 
     @EventListener(ApplicationReadyEvent::class)
     fun onApplicationReady() {
@@ -82,6 +104,7 @@ class OrderStatusUpdateService(
      * 定时更新订单状态
      * 每5秒执行一次
      * 如果上一次任务还在执行，则跳过本次执行，避免并发问题
+     * 所有数据库写入通过 [CopyOrderLedgerService] 的事务方法完成（suspend 函数上的 @Transactional 不生效）
      */
     @Scheduled(fixedDelay = 5000)
     fun updateOrderStatus() {
@@ -91,23 +114,24 @@ class OrderStatusUpdateService(
             logger.debug("上一次订单状态更新任务还在执行，跳过本次执行")
             return
         }
-        
+
         // 启动新任务并记录 Job
         updateJob = updateScope.launch {
             try {
-                val self = getSelf()
-                
-                // 1. 清理已删除账户的订单（通过代理对象调用，确保事务生效）
-                self.cleanupDeletedAccountOrders()
+                // 1. 清理已删除账户/配置的卖出记录（限频）
+                cleanupDeletedAccountOrders()
 
-                // 2. 检查30秒前创建的订单，如果未成交则删除（通过代理对象调用，确保事务生效）
-                self.checkAndDeleteUnfilledOrders()
+                // 2. 核对待确认的买入订单（按 size_matched 回填或删除 0 成交）
+                reconcilePendingBuyOrders()
 
-                // 3. 更新卖出订单的实际成交价并发送通知（priceUpdated 共用字段）（通过代理对象调用，确保事务生效）
-                self.updatePendingSellOrderPrices()
+                // 3. 核对待确认的卖出订单（按 size_matched 核销，未成交部分退回）
+                reconcilePendingSellOrders()
 
-                // 4. 更新买入订单的实际数据并发送通知（通过代理对象调用，确保事务生效）
-                self.updatePendingBuyOrders()
+                // 4. 更新卖出订单的实际成交价并发送通知（priceUpdated 共用字段）
+                updatePendingSellOrderPrices()
+
+                // 5. 更新买入订单的实际数据并发送通知
+                updatePendingBuyOrders()
             } catch (e: Exception) {
                 logger.error("订单状态更新异常: ${e.message}", e)
             } finally {
@@ -137,43 +161,54 @@ class OrderStatusUpdateService(
         return hexPart.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
     }
 
+    /** 已认证客户端及解密后的凭证 */
+    private data class AccountClient(
+        val account: Account,
+        val clobApi: PolymarketClobApi,
+        val apiSecret: String = "",
+        val apiPassphrase: String = ""
+    )
+
     /**
-     * 清理已删除账户的订单
+     * 为账户创建 L2 认证客户端（同一轮任务内按账户缓存）；账户不存在/未配置凭证/解密失败返回 null
      */
-    @Transactional
-    suspend fun cleanupDeletedAccountOrders() {
-        try {
-            // 查询所有卖出记录
-            val allRecords = sellMatchRecordRepository.findAll()
-
-            // 查询所有有效的账户ID
-            val validAccountIds = accountRepository.findAll().mapNotNull { it.id }.toSet()
-
-            // 查询所有有效的跟单关系
-            val validCopyTradingIds = copyTradingRepository.findAll()
-                .filter { it.accountId in validAccountIds }
-                .mapNotNull { it.id }
-                .toSet()
-
-            // 找出需要删除的记录（关联的跟单关系已不存在或账户已删除）
-            val recordsToDelete = allRecords.filter { record ->
-                val copyTrading = copyTradingRepository.findById(record.copyTradingId).orElse(null)
-                copyTrading == null || copyTrading.accountId !in validAccountIds
-            }
-
-            if (recordsToDelete.isNotEmpty()) {
-                logger.info("清理已删除账户的订单: ${recordsToDelete.size} 条记录")
-
-                // 删除匹配明细
-                for (record in recordsToDelete) {
-                    val details = sellMatchDetailRepository.findByMatchRecordId(record.id!!)
-                    sellMatchDetailRepository.deleteAll(details)
+    private fun accountClient(accountId: Long, cache: MutableMap<Long, AccountClient?>): AccountClient? {
+        return cache.getOrPut(accountId) {
+            val account = accountRepository.findById(accountId).orElse(null)
+            if (account?.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
+                null
+            } else {
+                try {
+                    val secret = cryptoUtils.decrypt(account.apiSecret!!)
+                    val passphrase = cryptoUtils.decrypt(account.apiPassphrase!!)
+                    AccountClient(
+                        account = account,
+                        clobApi = retrofitFactory.createClobApi(account.apiKey!!, secret, passphrase, account.walletAddress),
+                        apiSecret = secret,
+                        apiPassphrase = passphrase
+                    )
+                } catch (e: Exception) {
+                    logger.warn("解密 API 凭证失败: accountId=$accountId, error=${e.message}")
+                    null
                 }
+            }
+        }
+    }
 
-                // 删除卖出记录
-                sellMatchRecordRepository.deleteAll(recordsToDelete)
-
-                logger.info("已清理 ${recordsToDelete.size} 条已删除账户的订单记录")
+    /**
+     * 清理关联跟单配置已删除的卖出记录（限频，单条 SQL 查询孤儿记录，避免 N+1）
+     */
+    suspend fun cleanupDeletedAccountOrders() {
+        val now = System.currentTimeMillis()
+        if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) return
+        lastCleanupAt = now
+        try {
+            val orphans = sellMatchRecordRepository.findOrphanRecords()
+            if (orphans.isEmpty()) return
+            logger.info("清理已删除配置的卖出记录: ${orphans.size} 条")
+            for (record in orphans) {
+                sellMatchDetailRepository.deleteAll(sellMatchDetailRepository.findByMatchRecordId(record.id!!))
+                sellMatchRecordRepository.delete(record)
             }
         } catch (e: Exception) {
             logger.error("清理已删除账户订单异常: ${e.message}", e)
@@ -181,720 +216,240 @@ class OrderStatusUpdateService(
     }
 
     /**
-     * 检查30秒前创建的订单，如果未成交则删除
-     * 首次检测但加入缓存中30s后还没有成交，则删除
+     * 核对待确认买入（PENDING）：
+     * - 订单终态：按 size_matched 回填实际成交（0 成交删除记录）
+     * - 仍在进行中（LIVE 等）：继续等待
+     * - 查询不到（404/null）：超过 [PENDING_NOT_FOUND_MAX_AGE_MS] 后标记无法确认并停止轮询
      */
-    @Transactional
-    suspend fun checkAndDeleteUnfilledOrders() {
-        try {
-            // 计算30秒前的时间戳
-            val thirtySecondsAgo = System.currentTimeMillis() - 30000
-
-            // 查询30秒前创建的订单,并过滤掉已经完全匹配的订单
-            // 已经完全匹配的订单(status = "fully_matched")不需要再检查
-            // 使用数据库查询过滤，避免加载过多数据
-            val ordersToCheck = copyOrderTrackingRepository.findByCreatedAtBeforeAndStatusNot(
-                thirtySecondsAgo,
-                "fully_matched"
-            )
-
-            if (ordersToCheck.isEmpty()) {
-                return
-            }
-
-            // 按账户分组，避免重复创建 API 客户端
-            val ordersByAccount = ordersToCheck.groupBy { it.accountId }
-
-            for ((accountId, orders) in ordersByAccount) {
-                try {
-                    // 获取账户
-                    val account = accountRepository.findById(accountId).orElse(null)
-                    if (account == null) {
-                        logger.warn("账户不存在，跳过检查: accountId=$accountId")
-                        continue
+    suspend fun reconcilePendingBuyOrders() {
+        val now = System.currentTimeMillis()
+        val pendingOrders = copyOrderTrackingRepository.findTop200ByStatusAndCreatedAtBeforeOrderByCreatedAtAsc(
+            CopyOrderTracking.STATUS_PENDING, now - PENDING_CHECK_DELAY_MS
+        )
+        if (pendingOrders.isEmpty()) return
+        val clients = mutableMapOf<Long, AccountClient?>()
+        for (order in pendingOrders) {
+            try {
+                val client = accountClient(order.accountId, clients) ?: continue
+                val response = client.clobApi.getOrder(order.buyOrderId)
+                val detail = if (response.isSuccessful) response.body() else null
+                if (detail == null) {
+                    if (response.code() in 500..599) continue
+                    if (now - order.createdAt >= PENDING_NOT_FOUND_MAX_AGE_MS) {
+                        logger.error("待确认买入长时间查询不到订单，标记为无法确认并停止轮询，请人工核对: orderId=${order.buyOrderId}, trackingId=${order.id}, code=${response.code()}")
+                        ledger.markBuyUnconfirmed(order.id!!)
                     }
-
-                    // 检查账户是否配置了 API 凭证
-                    if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
-                        logger.debug("账户未配置 API 凭证，跳过检查: accountId=${account.id}")
-                        continue
-                    }
-
-                    // 解密 API 凭证
-                    val apiSecret = try {
-                        cryptoUtils.decrypt(account.apiSecret!!)
-                    } catch (e: Exception) {
-                        logger.warn("解密 API Secret 失败: accountId=${account.id}, error=${e.message}")
-                        continue
-                    }
-
-                    val apiPassphrase = try {
-                        cryptoUtils.decrypt(account.apiPassphrase!!)
-                    } catch (e: Exception) {
-                        logger.warn("解密 API Passphrase 失败: accountId=${account.id}, error=${e.message}")
-                        continue
-                    }
-
-                    // 创建带认证的 CLOB API 客户端
-                    val clobApi = retrofitFactory.createClobApi(
-                        account.apiKey!!,
-                        apiSecret,
-                        apiPassphrase,
-                        account.walletAddress
-                    )
-
-                    // 检查每个订单
-                    for (order in orders) {
-                        try {
-                            // 查询订单详情
-                            val orderResponse = clobApi.getOrder(order.buyOrderId)
-
-                            // 先检查 HTTP 状态码，非 200 的都跳过
-                            if (orderResponse.code() != 200) {
-                                // HTTP 非 200，记录日志并跳过，等待下次轮询
-                                // 不删除订单，因为可能是临时网络问题或 API 错误
-                                val errorBody = orderResponse.errorBody()?.string()?.take(200) ?: "无错误详情"
-                                logger.debug("订单查询失败（HTTP非200），等待下次轮询: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, code=${orderResponse.code()}, errorBody=$errorBody")
-                                continue
-                            }
-
-                            // HTTP 200，检查响应体
-                            // 响应体也可能返回字符串 "null"，Gson 解析时会返回 null
-                            val orderDetail = orderResponse.body()
-                            if (orderDetail == null) {
-                                // HTTP 200 且响应体为 null（或字符串 "null"），可能是网络异常或 API 暂时不可用
-                                // 使用兜底逻辑：首次检测不删除，1分钟后仍为 null 才删除
-                                val firstDetectionTime =
-                                    orderNullDetectionTime.getOrPut(order.buyOrderId) { System.currentTimeMillis() }
-                                val currentTime = System.currentTimeMillis()
-
-                                // 检查订单是否已经通过订单详情更正过数据并发送过通知
-                                if (order.notificationSent) {
-                                    // 检查是否超过重试时间窗口
-                                    if (currentTime - firstDetectionTime >= ORDER_NULL_RETRY_WINDOW_MS) {
-                                        // 超过60秒，将订单状态改为 fully_matched，不再查询
-                                        logger.info("订单已发送通知且详情为 null 超过60秒，标记为 fully_matched: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}")
-                                        try {
-                                            val updatedOrder = CopyOrderTracking(
-                                                id = order.id,
-                                                copyTradingId = order.copyTradingId,
-                                                accountId = order.accountId,
-                                                leaderId = order.leaderId,
-                                                marketId = order.marketId,
-                                                side = order.side,
-                                                outcomeIndex = order.outcomeIndex,
-                                                buyOrderId = order.buyOrderId,
-                                                leaderBuyTradeId = order.leaderBuyTradeId,
-                                                quantity = order.quantity,
-                                                price = order.price,
-                                                matchedQuantity = order.matchedQuantity,
-                                                remainingQuantity = order.remainingQuantity,
-                                                status = "fully_matched",  // 标记为完全匹配
-                                                notificationSent = order.notificationSent,
-                                                source = order.source,
-                                                createdAt = order.createdAt,
-                                                updatedAt = System.currentTimeMillis()
-                                            )
-                                            copyOrderTrackingRepository.save(updatedOrder)
-                                            // 清除缓存（仅在处理完成后清除）
-                                            orderNullDetectionTime.remove(order.buyOrderId)
-                                        } catch (e: Exception) {
-                                            logger.error("更新订单状态失败: orderId=${order.buyOrderId}, error=${e.message}", e)
-                                        }
-                                    }
-                                    // 未超过60秒，继续等待，不清除缓存
-                                    continue
-                                }
-
-                                // 检查是否超过重试时间窗口（统一使用60秒，无论是否已部分卖出）
-                                if (currentTime - firstDetectionTime < ORDER_NULL_RETRY_WINDOW_MS) {
-                                    // 未超过重试窗口，记录日志并等待下次轮询
-                                    val elapsedSeconds = ((currentTime - firstDetectionTime) / 1000).toInt()
-                                    val hasMatchedDetails = sellMatchDetailRepository.findByTrackingId(order.id!!).isNotEmpty()
-                                    val hasPartialSold = hasMatchedDetails || order.matchedQuantity > BigDecimal.ZERO
-                                    if (hasPartialSold) {
-                                        logger.debug("订单详情为 null 且已部分卖出，等待重试: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, matchedQuantity=${order.matchedQuantity}, 已等待=${elapsedSeconds}s, 重试窗口=${ORDER_NULL_RETRY_WINDOW_MS / 1000}s")
-                                    } else {
-                                        logger.debug("订单详情为 null（可能是网络异常），等待重试: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, 已等待=${elapsedSeconds}s, 重试窗口=${ORDER_NULL_RETRY_WINDOW_MS / 1000}s")
-                                    }
-                                    continue
-                                }
-
-                                // 超过重试窗口，删除本地订单（无论是否已部分卖出）
-                                val hasMatchedDetails = sellMatchDetailRepository.findByTrackingId(order.id!!).isNotEmpty()
-                                val hasPartialSold = hasMatchedDetails || order.matchedQuantity > BigDecimal.ZERO
-                                if (hasPartialSold) {
-                                    logger.warn("订单详情为 null 且已部分卖出，超过重试窗口，删除本地订单: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, matchedQuantity=${order.matchedQuantity}, 已等待=$((currentTime - firstDetectionTime) / 1000}s")
-                                } else {
-                                    logger.warn("订单详情为 null 超过重试窗口，删除本地订单: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, 已等待=$((currentTime - firstDetectionTime) / 1000}s")
-                                }
-                                try {
-                                    copyOrderTrackingRepository.deleteById(order.id!!)
-                                    logger.info("已删除本地订单: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}")
-                                    // 清除缓存
-                                    orderNullDetectionTime.remove(order.buyOrderId)
-                                } catch (e: Exception) {
-                                    logger.error(
-                                        "删除本地订单失败: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, error=${e.message}",
-                                        e
-                                    )
-                                }
-                                continue
-                            }
-
-                            // 订单详情不为 null，清除缓存
-                            orderNullDetectionTime.remove(order.buyOrderId)
-
-                            // 检查订单是否成交
-                            // 如果订单状态不是 FILLED 且已成交数量为0，说明未成交，删除
-                            val sizeMatched = orderDetail.sizeMatched?.toSafeBigDecimal() ?: BigDecimal.ZERO
-                            if (orderDetail.status != "FILLED" && sizeMatched <= BigDecimal.ZERO) {
-                                logger.info("订单30秒后仍未成交，删除本地订单: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, status=${orderDetail.status}, sizeMatched=$sizeMatched")
-                                try {
-                                    copyOrderTrackingRepository.deleteById(order.id!!)
-                                    logger.info("已删除未成交订单: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}")
-                                } catch (e: Exception) {
-                                    logger.error(
-                                        "删除未成交订单失败: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, error=${e.message}",
-                                        e
-                                    )
-                                }
-                            }
-                        } catch (e: Exception) {
-                            logger.error("检查订单失败: orderId=${order.buyOrderId}, error=${e.message}", e)
-                        }
-                    }
-                } catch (e: Exception) {
-                    logger.error("检查账户订单失败: accountId=$accountId, error=${e.message}", e)
+                    continue
                 }
+                if (!CopyOrderPlacementExecutor.isTerminal(detail)) {
+                    logger.debug("待确认买入仍未终结: orderId=${order.buyOrderId}, status=${detail.status}, sizeMatched=${detail.sizeMatched}")
+                    continue
+                }
+                val filled = detail.sizeMatched.toBigDecimalOrNull()
+                if (filled == null || filled.signum() < 0) {
+                    logger.error("待确认买入的 size_matched 无效，保留记录并标记为无法确认，请人工核对: orderId=${order.buyOrderId}, sizeMatched=${detail.sizeMatched}")
+                    ledger.markBuyUnconfirmed(order.id!!)
+                    continue
+                }
+                // 订单详情的 price 是下单价；必须优先用成交明细回查真实加权均价，查询失败时才回退到下单价。
+                val actualPrice = trackingService.queryExecutionPrice(
+                    order.buyOrderId,
+                    client.clobApi,
+                    client.account.proxyAddress
+                ) ?: detail.price.toBigDecimalOrNull()
+                ledger.confirmBuyFill(order.id!!, filled, actualPrice)
+                logger.info("待确认买入已回填: orderId=${order.buyOrderId}, status=${detail.status}, sizeMatched=$filled, avgPrice=$actualPrice")
+            } catch (e: Exception) {
+                logger.warn("核对待确认买入失败: orderId=${order.buyOrderId}, error=${e.message}", e)
             }
-        } catch (e: Exception) {
-            logger.error("检查未成交订单异常: ${e.message}", e)
         }
     }
 
     /**
-     * 更新待更新的卖出订单价格
-     * 注意：priceUpdated 现在同时表示价格已更新和通知已发送（共用字段）
+     * 核对待确认卖出（fill_status = PENDING）：终态按 size_matched 核销（未成交部分退回 tracking），
+     * 查询不到超过阈值后标记 UNCONFIRMED（保留预占，等待人工核对）
      */
-    @Transactional
+    suspend fun reconcilePendingSellOrders() {
+        val now = System.currentTimeMillis()
+        val records = sellMatchRecordRepository.findTop200ByFillStatusAndCreatedAtBeforeOrderByIdAsc(
+            SellMatchRecord.FILL_STATUS_PENDING, now - PENDING_CHECK_DELAY_MS
+        )
+        if (records.isEmpty()) return
+        val clients = mutableMapOf<Long, AccountClient?>()
+        for (record in records) {
+            try {
+                val copyTrading = copyTradingRepository.findById(record.copyTradingId).orElse(null) ?: continue
+                val client = accountClient(copyTrading.accountId, clients) ?: continue
+                val response = client.clobApi.getOrder(record.sellOrderId)
+                val detail = if (response.isSuccessful) response.body() else null
+                if (detail == null) {
+                    if (response.code() in 500..599) continue
+                    if (now - record.createdAt >= PENDING_NOT_FOUND_MAX_AGE_MS) {
+                        logger.error("待确认卖出长时间查询不到订单，标记为无法确认（保留预占），请人工核对: orderId=${record.sellOrderId}, recordId=${record.id}, code=${response.code()}")
+                        ledger.updateSellRecordState(record.id!!, fillStatus = SellMatchRecord.FILL_STATUS_UNCONFIRMED)
+                    }
+                    continue
+                }
+                if (!CopyOrderPlacementExecutor.isTerminal(detail)) continue
+                val filled = detail.sizeMatched.toBigDecimalOrNull()
+                if (filled == null || filled.signum() < 0) {
+                    logger.error("待确认卖出的 size_matched 无效，保留预占并标记为无法确认，请人工核对: orderId=${record.sellOrderId}, sizeMatched=${detail.sizeMatched}")
+                    ledger.updateSellRecordState(
+                        record.id!!,
+                        fillStatus = SellMatchRecord.FILL_STATUS_UNCONFIRMED
+                    )
+                    continue
+                }
+                ledger.settleSell(record.id!!, filled, null, marketService.getTakerFeeRate(record.marketId))
+                logger.info("待确认卖出已核销: orderId=${record.sellOrderId}, status=${detail.status}, sizeMatched=$filled")
+            } catch (e: Exception) {
+                logger.warn("核对待确认卖出失败: orderId=${record.sellOrderId}, error=${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 更新已成交卖单的实际成交价并发送通知（priceUpdated 同时表示价格已更新和通知已发送）
+     * - 成交价查询失败：保持 priceUpdated=false，失败次数+1，按指数退避重试；达到上限后停止查询并用下单价发送通知
+     * - 非 0x 订单ID（自动生成记录）：直接标记已处理
+     */
     suspend fun updatePendingSellOrderPrices() {
-        try {
-            // 查询所有价格未更新的卖出记录（priceUpdated = false 表示未处理）
-            val pendingRecords = sellMatchRecordRepository.findByPriceUpdatedFalse()
+        val records = sellMatchRecordRepository.findTop200ByPriceUpdatedFalseAndPriceQueryAttemptsLessThanOrderByIdAsc(MAX_PRICE_QUERY_ATTEMPTS)
+            .filter { it.fillStatus == SellMatchRecord.FILL_STATUS_FILLED }
+        if (records.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val clients = mutableMapOf<Long, AccountClient?>()
+        for (record in records) {
+            try {
+                val lastQueryAt = record.lastPriceQueryAt
+                if (lastQueryAt != null && now - lastQueryAt < priceQueryBackoffMs(record.priceQueryAttempts)) continue
+                val copyTrading = copyTradingRepository.findById(record.copyTradingId).orElse(null) ?: continue
+                val client = accountClient(copyTrading.accountId, clients) ?: continue
 
-            if (pendingRecords.isEmpty()) {
-                return
-            }
-
-            logger.debug("找到 ${pendingRecords.size} 条待更新价格的卖出订单")
-
-            for (record in pendingRecords) {
-                try {
-                    // 获取跟单关系
-                    val copyTrading = copyTradingRepository.findById(record.copyTradingId).orElse(null)
-                    if (copyTrading == null) {
-                        logger.warn("跟单关系不存在，跳过更新: copyTradingId=${record.copyTradingId}")
-                        continue
-                    }
-
-                    // 获取账户
-                    val account = accountRepository.findById(copyTrading.accountId).orElse(null)
-                    if (account == null) {
-                        logger.warn("账户不存在，跳过更新: accountId=${copyTrading.accountId}")
-                        continue
-                    }
-
-                    // 检查账户是否配置了 API 凭证
-                    if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
-                        logger.debug("账户未配置 API 凭证，跳过更新: accountId=${account.id}")
-                        continue
-                    }
-
-                    // 解密 API 凭证
-                    val apiSecret = try {
-                        cryptoUtils.decrypt(account.apiSecret!!)
-                    } catch (e: Exception) {
-                        logger.warn("解密 API Secret 失败: accountId=${account.id}, error=${e.message}")
-                        continue
-                    }
-
-                    val apiPassphrase = try {
-                        cryptoUtils.decrypt(account.apiPassphrase!!)
-                    } catch (e: Exception) {
-                        logger.warn("解密 API Passphrase 失败: accountId=${account.id}, error=${e.message}")
-                        continue
-                    }
-
-                    // 创建带认证的 CLOB API 客户端
-                    val clobApi = retrofitFactory.createClobApi(
-                        account.apiKey!!,
-                        apiSecret,
-                        apiPassphrase,
-                        account.walletAddress
-                    )
-
-                    // 如果 orderId 不是 0x 开头，直接标记为已处理（priceUpdated = true 表示已处理，包括价格更新和通知发送）
-                    if (!record.sellOrderId.startsWith("0x", ignoreCase = true)) {
-                        logger.debug("卖出订单ID非0x开头，直接标记为已处理: orderId=${record.sellOrderId}")
-
-                        // 检查是否为自动生成的订单（AUTO_ 或 AUTO_FIFO_ 开头），如果是则不发送通知
-                        val isAutoOrder = record.sellOrderId.startsWith("AUTO_", ignoreCase = true) ||
-                                record.sellOrderId.startsWith("AUTO_FIFO_", ignoreCase = true) ||
-                                record.sellOrderId.startsWith("AUTO_WS_", ignoreCase = true)
-
-                        if (!isAutoOrder) {
-                            // 非自动订单，发送通知（使用临时数据）
-                            sendSellOrderNotification(
-                                record = record,
-                                useTemporaryData = true,
-                                account = account,
-                                copyTrading = copyTrading,
-                                clobApi = clobApi,
-                                apiSecret = apiSecret,
-                                apiPassphrase = apiPassphrase,
-                                orderCreatedAt = record.createdAt
-                            )
-                        } else {
-                            logger.debug("自动生成的订单，跳过发送通知: orderId=${record.sellOrderId}")
-                        }
-
-                        // 标记为已处理（priceUpdated = true 同时表示价格已更新和通知已发送）
-                        val updatedRecord = SellMatchRecord(
-                            id = record.id,
-                            copyTradingId = record.copyTradingId,
-                            sellOrderId = record.sellOrderId,
-                            leaderSellTradeId = record.leaderSellTradeId,
-                            sourceTxHash = record.sourceTxHash,
-                            marketId = record.marketId,
-                            side = record.side,
-                            outcomeIndex = record.outcomeIndex,
-                            totalMatchedQuantity = record.totalMatchedQuantity,
-                            sellPrice = record.sellPrice,
-                            totalRealizedPnl = record.totalRealizedPnl,
-                            priceUpdated = true,  // 标记为已处理（价格已更新和通知已发送）
-                            createdAt = record.createdAt
-                        )
-                        sellMatchRecordRepository.save(updatedRecord)
-                        continue
-                    }
-
-                    // 检查是否为自动生成的订单（AUTO_ 或 AUTO_FIFO_ 开头），如果是则跳过发送通知
-                    val isAutoOrder = record.sellOrderId.startsWith("AUTO_", ignoreCase = true) ||
-                            record.sellOrderId.startsWith("AUTO_FIFO_", ignoreCase = true) ||
-                            record.sellOrderId.startsWith("AUTO_WS_", ignoreCase = true)
-
-                    if (isAutoOrder) {
-                        logger.debug("自动生成的订单，跳过发送通知并直接标记为已处理: orderId=${record.sellOrderId}")
-                        // 直接标记为已处理，不发送通知
-                        val updatedRecord = SellMatchRecord(
-                            id = record.id,
-                            copyTradingId = record.copyTradingId,
-                            sellOrderId = record.sellOrderId,
-                            leaderSellTradeId = record.leaderSellTradeId,
-                            sourceTxHash = record.sourceTxHash,
-                            marketId = record.marketId,
-                            side = record.side,
-                            outcomeIndex = record.outcomeIndex,
-                            totalMatchedQuantity = record.totalMatchedQuantity,
-                            sellPrice = record.sellPrice,
-                            totalRealizedPnl = record.totalRealizedPnl,
-                            priceUpdated = true,  // 标记为已处理
-                            createdAt = record.createdAt
-                        )
-                        sellMatchRecordRepository.save(updatedRecord)
-                        continue
-                    }
-
-                    // 查询订单详情，获取实际成交价
-                    val actualSellPrice = trackingService.getActualExecutionPrice(
-                        orderId = record.sellOrderId,
-                        clobApi = clobApi,
-                        fallbackPrice = record.sellPrice
-                    )
-
-                    // 如果价格已更新（与当前价格不同），更新数据库
-                    if (actualSellPrice != record.sellPrice) {
-                        // 重新计算盈亏
-                        val details = sellMatchDetailRepository.findByMatchRecordId(record.id!!)
-                        val marketFeeRate = marketService.getTakerFeeRate(record.marketId)
-                        var totalRealizedPnl = BigDecimal.ZERO
-
-                        for (detail in details) {
-                            val updatedRealizedPnl = PolymarketTradingFee.netRealizedPnl(
-                                buyPrice = detail.buyPrice,
-                                sellPrice = actualSellPrice,
-                                shares = detail.matchedQuantity,
-                                feeRate = marketFeeRate
-                            )
-
-                            // 更新明细的卖出价格和盈亏
-                            // 注意：SellMatchDetail 的字段都是 val，需要创建新对象
-                            val updatedDetail = SellMatchDetail(
-                                id = detail.id,
-                                matchRecordId = detail.matchRecordId,
-                                trackingId = detail.trackingId,
-                                buyOrderId = detail.buyOrderId,
-                                matchedQuantity = detail.matchedQuantity,
-                                buyPrice = detail.buyPrice,
-                                sellPrice = actualSellPrice,  // 更新卖出价格
-                                realizedPnl = updatedRealizedPnl,  // 更新盈亏
-                                createdAt = detail.createdAt
-                            )
-                            sellMatchDetailRepository.save(updatedDetail)
-
-                            totalRealizedPnl = totalRealizedPnl.add(updatedRealizedPnl)
-                        }
-
-                        // 先更新卖出记录，标记 priceUpdated = true（在发送通知之前更新）
-                        // 注意：SellMatchRecord 的字段都是 val，需要创建新对象
-                        val updatedRecord = SellMatchRecord(
-                            id = record.id,
-                            copyTradingId = record.copyTradingId,
-                            sellOrderId = record.sellOrderId,
-                            leaderSellTradeId = record.leaderSellTradeId,
-                            sourceTxHash = record.sourceTxHash,
-                            marketId = record.marketId,
-                            side = record.side,
-                            outcomeIndex = record.outcomeIndex,
-                            totalMatchedQuantity = record.totalMatchedQuantity,
-                            sellPrice = actualSellPrice,  // 更新卖出价格
-                            totalRealizedPnl = totalRealizedPnl,  // 更新总盈亏
-                            priceUpdated = true,  // 标记为已处理（价格已更新和通知已发送）
-                            createdAt = record.createdAt
-                        )
-                        sellMatchRecordRepository.save(updatedRecord)
-
-                        logger.info("更新卖出订单价格成功: orderId=${record.sellOrderId}, 原价格=${record.sellPrice}, 新价格=$actualSellPrice")
-
-                        // 发送通知（使用实际成交价）
+                if (!record.sellOrderId.startsWith("0x", ignoreCase = true)) {
+                    val isAutoOrder = record.sellOrderId.startsWith("AUTO_", ignoreCase = true)
+                    if (!isAutoOrder) {
                         sendSellOrderNotification(
-                            record = updatedRecord,
-                            actualPrice = actualSellPrice.toString(),
-                            actualSize = record.totalMatchedQuantity.toString(),
-                            avgFilledPrice = actualSellPrice.toString(),
-                            filled = record.totalMatchedQuantity.toString(),
-                            account = account,
-                            copyTrading = copyTrading,
-                            clobApi = clobApi,
-                            apiSecret = apiSecret,
-                            apiPassphrase = apiPassphrase,
+                            record = record, useTemporaryData = true, account = client.account, copyTrading = copyTrading,
+                            clobApi = client.clobApi, apiSecret = client.apiSecret, apiPassphrase = client.apiPassphrase,
                             orderCreatedAt = record.createdAt
                         )
-                        logger.info("卖出订单通知已发送: orderId=${record.sellOrderId}")
-                    } else {
-                        // 价格相同，但已经查询过，先标记为已处理再发送通知
-                        val updatedRecord = SellMatchRecord(
-                            id = record.id,
-                            copyTradingId = record.copyTradingId,
-                            sellOrderId = record.sellOrderId,
-                            leaderSellTradeId = record.leaderSellTradeId,
-                            sourceTxHash = record.sourceTxHash,
-                            marketId = record.marketId,
-                            side = record.side,
-                            outcomeIndex = record.outcomeIndex,
-                            totalMatchedQuantity = record.totalMatchedQuantity,
-                            sellPrice = record.sellPrice,
-                            totalRealizedPnl = record.totalRealizedPnl,
-                            priceUpdated = true,  // 标记为已处理（价格已更新和通知已发送）
-                            createdAt = record.createdAt
-                        )
-                        sellMatchRecordRepository.save(updatedRecord)
-
-                        logger.debug("卖出订单价格无需更新: orderId=${record.sellOrderId}, price=$actualSellPrice")
-
-                        // 发送通知（使用实际成交价）
-                        sendSellOrderNotification(
-                            record = updatedRecord,
-                            actualPrice = actualSellPrice.toString(),
-                            actualSize = record.totalMatchedQuantity.toString(),
-                            avgFilledPrice = actualSellPrice.toString(),
-                            filled = record.totalMatchedQuantity.toString(),
-                            account = account,
-                            copyTrading = copyTrading,
-                            clobApi = clobApi,
-                            apiSecret = apiSecret,
-                            apiPassphrase = apiPassphrase,
-                            orderCreatedAt = record.createdAt
-                        )
-                        logger.info("卖出订单通知已发送: orderId=${record.sellOrderId}")
                     }
-                } catch (e: Exception) {
-                    logger.warn("更新卖出订单价格失败: orderId=${record.sellOrderId}, error=${e.message}", e)
-                    // 继续处理下一条记录
+                    ledger.updateSellRecordState(record.id!!, priceUpdated = true)
+                    continue
                 }
+
+                val actualPrice = trackingService.queryExecutionPrice(record.sellOrderId, client.clobApi, client.account.proxyAddress)
+                if (actualPrice == null) {
+                    val updated = ledger.updateSellRecordState(record.id!!, incrementPriceQueryAttempts = true)
+                    val attempts = updated?.priceQueryAttempts ?: (record.priceQueryAttempts + 1)
+                    if (attempts >= MAX_PRICE_QUERY_ATTEMPTS) {
+                        logger.error("卖出成交价查询达到上限，停止查询（价格保持为下单价，priceUpdated=false）: orderId=${record.sellOrderId}, attempts=$attempts")
+                        sendSellOrderNotification(
+                            record = record, useTemporaryData = true, account = client.account, copyTrading = copyTrading,
+                            clobApi = client.clobApi, apiSecret = client.apiSecret, apiPassphrase = client.apiPassphrase,
+                            orderCreatedAt = record.createdAt
+                        )
+                    } else {
+                        logger.warn("卖出成交价查询失败，稍后重试: orderId=${record.sellOrderId}, attempts=$attempts")
+                    }
+                    continue
+                }
+
+                val updatedRecord = ledger.updateSellPrice(record.id!!, actualPrice, marketService.getTakerFeeRate(record.marketId)) ?: continue
+                logger.info("更新卖出订单价格成功: orderId=${record.sellOrderId}, 原价格=${record.sellPrice}, 新价格=$actualPrice")
+                sendSellOrderNotification(
+                    record = updatedRecord,
+                    actualPrice = actualPrice.toPlainString(),
+                    actualSize = updatedRecord.totalMatchedQuantity.toPlainString(),
+                    avgFilledPrice = actualPrice.toPlainString(),
+                    filled = updatedRecord.totalMatchedQuantity.toPlainString(),
+                    account = client.account,
+                    copyTrading = copyTrading,
+                    clobApi = client.clobApi,
+                    apiSecret = client.apiSecret,
+                    apiPassphrase = client.apiPassphrase,
+                    orderCreatedAt = record.createdAt
+                )
+            } catch (e: Exception) {
+                logger.warn("更新卖出订单价格失败: orderId=${record.sellOrderId}, error=${e.message}", e)
             }
-        } catch (e: Exception) {
-            logger.error("更新待更新卖出订单价格异常: ${e.message}", e)
         }
     }
 
     /**
-     * 更新待发送通知的买入订单
-     * 查询订单详情获取实际价格和数量，然后发送通知并更新数据库
+     * 更新已确认买单的通知（排除待确认/无法确认记录）
+     * - 只更新需要的字段（notificationSent，必要时按 size_matched 校正数量），保存前重新读取，不重建实体（保留 leaderBuyQuantity 等字段）
+     * - 订单详情/实际成交均价持续查询不到时保留记录并继续核对，避免限价被永久记作成本价
      */
-    @Transactional
     suspend fun updatePendingBuyOrders() {
-        try {
-            // 查询所有未发送通知的买入订单
-            val pendingOrders = copyOrderTrackingRepository.findByNotificationSentFalse()
-
-            if (pendingOrders.isEmpty()) {
-                return
-            }
-
-            logger.debug("找到 ${pendingOrders.size} 条待发送通知的买入订单")
-
-            for (order in pendingOrders) {
-                try {
-                    // 验证 orderId 格式（必须以 0x 开头的 16 进制）
-                    if (!isValidOrderId(order.buyOrderId)) {
-                        logger.warn("买入订单ID格式无效，直接标记为已发送通知: orderId=${order.buyOrderId}")
-                        // 对于非 0x 开头的订单ID，先标记为已发送，再使用临时数据发送通知
-                        val updatedOrder = CopyOrderTracking(
-                            id = order.id,
-                            copyTradingId = order.copyTradingId,
-                            accountId = order.accountId,
-                            leaderId = order.leaderId,
-                            marketId = order.marketId,
-                            side = order.side,
-                            outcomeIndex = order.outcomeIndex,
-                            buyOrderId = order.buyOrderId,
-                            leaderBuyTradeId = order.leaderBuyTradeId,
-                            quantity = order.quantity,
-                            price = order.price,
-                            matchedQuantity = order.matchedQuantity,
-                            remainingQuantity = order.remainingQuantity,
-                            status = order.status,
-                            notificationSent = true,  // 标记为已发送通知
-                            source = order.source,  // 保留原始订单来源
-                            createdAt = order.createdAt,
-                            updatedAt = System.currentTimeMillis()
-                        )
-                        copyOrderTrackingRepository.save(updatedOrder)
-
-                        sendBuyOrderNotification(
-                            updatedOrder,
-                            useTemporaryData = true,
-                            orderCreatedAt = order.createdAt
-                        )
-                        continue
-                    }
-
-                    // 获取跟单关系
-                    val copyTrading = copyTradingRepository.findById(order.copyTradingId).orElse(null)
-                    if (copyTrading == null) {
-                        logger.warn("跟单关系不存在，跳过更新: copyTradingId=${order.copyTradingId}")
-                        continue
-                    }
-
-                    // 获取账户
-                    val account = accountRepository.findById(order.accountId).orElse(null)
-                    if (account == null) {
-                        logger.warn("账户不存在，跳过更新: accountId=${order.accountId}")
-                        continue
-                    }
-
-                    // 检查账户是否配置了 API 凭证
-                    if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
-                        logger.debug("账户未配置 API 凭证，跳过更新: accountId=${account.id}")
-                        continue
-                    }
-
-                    // 解密 API 凭证
-                    val apiSecret = try {
-                        cryptoUtils.decrypt(account.apiSecret!!)
-                    } catch (e: Exception) {
-                        logger.warn("解密 API Secret 失败: accountId=${account.id}, error=${e.message}")
-                        continue
-                    }
-
-                    val apiPassphrase = try {
-                        cryptoUtils.decrypt(account.apiPassphrase!!)
-                    } catch (e: Exception) {
-                        logger.warn("解密 API Passphrase 失败: accountId=${account.id}, error=${e.message}")
-                        continue
-                    }
-
-                    // 创建带认证的 CLOB API 客户端
-                    val clobApi = retrofitFactory.createClobApi(
-                        account.apiKey!!,
-                        apiSecret,
-                        apiPassphrase,
-                        account.walletAddress
-                    )
-
-                    // 查询订单详情
-                    val orderResponse = clobApi.getOrder(order.buyOrderId)
-
-                    // 先检查 HTTP 状态码，非 200 的都跳过
-                    if (orderResponse.code() != 200) {
-                        val errorBody = orderResponse.errorBody()?.string()?.take(200) ?: "无错误详情"
-                        logger.debug("查询订单详情失败（HTTP非200），等待下次轮询: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, code=${orderResponse.code()}, errorBody=$errorBody")
-                        continue
-                    }
-
-                    // HTTP 200，检查响应体
-                    // 响应体也可能返回字符串 "null"，Gson 解析时会返回 null
-                    val orderDetail = orderResponse.body()
-                    if (orderDetail == null) {
-                        // HTTP 200 且响应体为 null（或字符串 "null"），可能是网络异常或 API 暂时不可用
-                        // 使用兜底逻辑：首次检测不删除，1分钟后仍为 null 才删除
-                        val firstDetectionTime =
-                            orderNullDetectionTime.getOrPut(order.buyOrderId) { System.currentTimeMillis() }
-                        val currentTime = System.currentTimeMillis()
-
-                        // 检查订单是否已经通过订单详情更正过数据并发送过通知
-                        if (order.notificationSent) {
-                            // 检查是否超过重试时间窗口
-                            if (currentTime - firstDetectionTime >= ORDER_NULL_RETRY_WINDOW_MS) {
-                                // 超过60秒，将订单状态改为 fully_matched，不再查询
-                                logger.info("订单已发送通知且详情为 null 超过60秒，标记为 fully_matched: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}")
-                                try {
-                                    val updatedOrder = CopyOrderTracking(
-                                        id = order.id,
-                                        copyTradingId = order.copyTradingId,
-                                        accountId = order.accountId,
-                                        leaderId = order.leaderId,
-                                        marketId = order.marketId,
-                                        side = order.side,
-                                        outcomeIndex = order.outcomeIndex,
-                                        buyOrderId = order.buyOrderId,
-                                        leaderBuyTradeId = order.leaderBuyTradeId,
-                                        quantity = order.quantity,
-                                        price = order.price,
-                                        matchedQuantity = order.matchedQuantity,
-                                        remainingQuantity = order.remainingQuantity,
-                                        status = "fully_matched",  // 标记为完全匹配
-                                        notificationSent = order.notificationSent,
-                                        source = order.source,
-                                        createdAt = order.createdAt,
-                                        updatedAt = System.currentTimeMillis()
-                                    )
-                                    copyOrderTrackingRepository.save(updatedOrder)
-                                    // 清除缓存（仅在处理完成后清除）
-                                    orderNullDetectionTime.remove(order.buyOrderId)
-                                } catch (e: Exception) {
-                                    logger.error("更新订单状态失败: orderId=${order.buyOrderId}, error=${e.message}", e)
-                                }
-                            }
-                            // 未超过60秒，继续等待，不清除缓存
-                            continue
-                        }
-
-                        // 检查是否超过重试时间窗口（统一使用60秒，无论是否已部分卖出）
-                        if (currentTime - firstDetectionTime < ORDER_NULL_RETRY_WINDOW_MS) {
-                            // 未超过重试窗口，记录日志并等待下次轮询
-                            val elapsedSeconds = ((currentTime - firstDetectionTime) / 1000).toInt()
-                            val hasMatchedDetails = sellMatchDetailRepository.findByTrackingId(order.id!!).isNotEmpty()
-                            val hasPartialSold = hasMatchedDetails || order.matchedQuantity > BigDecimal.ZERO
-                            if (hasPartialSold) {
-                                logger.debug("订单详情为 null 且已部分卖出，等待重试: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, matchedQuantity=${order.matchedQuantity}, 已等待=${elapsedSeconds}s, 重试窗口=${ORDER_NULL_RETRY_WINDOW_MS / 1000}s")
-                            } else {
-                                logger.debug("订单详情为 null（可能是网络异常），等待重试: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, 已等待=${elapsedSeconds}s, 重试窗口=${ORDER_NULL_RETRY_WINDOW_MS / 1000}s")
-                            }
-                            continue
-                        }
-
-                        // 超过重试窗口，删除本地订单（无论是否已部分卖出）
-                        val hasMatchedDetails = sellMatchDetailRepository.findByTrackingId(order.id!!).isNotEmpty()
-                        val hasPartialSold = hasMatchedDetails || order.matchedQuantity > BigDecimal.ZERO
-                        if (hasPartialSold) {
-                            logger.warn("订单详情为 null 且已部分卖出，超过重试窗口，删除本地订单: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, matchedQuantity=${order.matchedQuantity}, 已等待=$((currentTime - firstDetectionTime) / 1000}s")
-                        } else {
-                            logger.warn("订单详情为 null 超过重试窗口，删除本地订单: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, 已等待=$((currentTime - firstDetectionTime) / 1000}s")
-                        }
-                        try {
-                            copyOrderTrackingRepository.deleteById(order.id!!)
-                            logger.info("已删除本地订单: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}")
-                            // 清除缓存
-                            orderNullDetectionTime.remove(order.buyOrderId)
-                        } catch (e: Exception) {
-                            logger.error(
-                                "删除本地订单失败: orderId=${order.buyOrderId}, copyOrderTrackingId=${order.id}, error=${e.message}",
-                                e
-                            )
-                        }
-                        continue
-                    }
-
-                    // 订单详情不为 null，清除缓存
-                    orderNullDetectionTime.remove(order.buyOrderId)
-
-                    // 获取实际价格和数量
-                    val actualPrice = orderDetail.price?.toSafeBigDecimal() ?: order.price
-                    val actualSize = orderDetail.originalSize?.toSafeBigDecimal() ?: order.quantity
-                    val actualOutcome = orderDetail.outcome
-                    // 使用交易所订单的实际创建时间（API返回秒级，转为毫秒）
-                    val actualCreatedAt = if (orderDetail.createdAt > 0) orderDetail.createdAt * 1000 else order.createdAt
-
-                    // 更新订单数据（如果实际数据与临时数据不同）
-                    val needUpdate = actualPrice != order.price || actualSize != order.quantity || actualCreatedAt != order.createdAt
-
-                    // 先保存更新后的订单，标记 notificationSent = true
-                    // 这样可以防止其他并发任务重复发送通知
-                    val updatedOrder = CopyOrderTracking(
-                        id = order.id,
-                        copyTradingId = order.copyTradingId,
-                        accountId = order.accountId,
-                        leaderId = order.leaderId,
-                        marketId = order.marketId,
-                        side = order.side,
-                        outcomeIndex = order.outcomeIndex,
-                        buyOrderId = order.buyOrderId,
-                        leaderBuyTradeId = order.leaderBuyTradeId,
-                        quantity = actualSize,  // 使用实际数量
-                        price = actualPrice,  // 使用实际价格
-                        matchedQuantity = order.matchedQuantity,
-                        remainingQuantity = order.remainingQuantity,
-                        status = order.status,
-                        notificationSent = true,  // 标记为已发送通知
-                        source = order.source,  // 保留原始订单来源
-                        createdAt = actualCreatedAt,
-                        updatedAt = System.currentTimeMillis()
-                    )
-
-                    // 保存更新后的订单（在发送通知之前保存）
-                    copyOrderTrackingRepository.save(updatedOrder)
-
-                    if (needUpdate) {
-                        logger.info("更新买入订单数据成功: orderId=${order.buyOrderId}, 原价格=${order.price}, 新价格=$actualPrice, 原数量=${order.quantity}, 新数量=$actualSize")
-                    } else {
-                        logger.debug("买入订单数据无需更新: orderId=${order.buyOrderId}")
-                    }
-
-                    // 有成交时按公式计算实际成交价：original_size * price / size_matched，数量用 size_matched
-                    val sizeMatchedDec = orderDetail.sizeMatched.toSafeBigDecimal()
-                    val avgFilledPriceStr = if (sizeMatchedDec.gt(BigDecimal.ZERO)) {
-                        orderDetail.originalSize.toSafeBigDecimal()
-                            .multi(orderDetail.price)
-                            .div(sizeMatchedDec, 18)
-                            .toPlainString()
-                    } else null
-                    val filledSize = orderDetail.sizeMatched
-
-                    // 发送通知（使用实际数据，优先展示平均成交价）
-                    sendBuyOrderNotification(
-                        order = updatedOrder,
-                        actualPrice = actualPrice.toString(),
-                        actualSize = actualSize.toString(),
-                        actualOutcome = actualOutcome,
-                        avgFilledPrice = avgFilledPriceStr,
-                        filled = filledSize,
-                        account = account,
-                        copyTrading = copyTrading,
-                        clobApi = clobApi,
-                        apiSecret = apiSecret,
-                        apiPassphrase = apiPassphrase,
-                        orderCreatedAt = order.createdAt
-                    )
-                } catch (e: Exception) {
-                    logger.warn("更新买入订单失败: orderId=${order.buyOrderId}, error=${e.message}", e)
-                    // 继续处理下一条记录
+        val pendingOrders = copyOrderTrackingRepository.findTop200ByNotificationSentFalseAndStatusNotInOrderByIdAsc(
+            listOf(CopyOrderTracking.STATUS_PENDING, CopyOrderTracking.STATUS_UNCONFIRMED)
+        )
+        if (pendingOrders.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val clients = mutableMapOf<Long, AccountClient?>()
+        for (order in pendingOrders) {
+            try {
+                if (!isValidOrderId(order.buyOrderId)) {
+                    val updated = ledger.markBuyNotificationSent(order.id!!) ?: continue
+                    sendBuyOrderNotification(updated, useTemporaryData = true, orderCreatedAt = order.createdAt)
+                    continue
                 }
+                val copyTrading = copyTradingRepository.findById(order.copyTradingId).orElse(null) ?: continue
+                val client = accountClient(order.accountId, clients) ?: continue
+                val response = client.clobApi.getOrder(order.buyOrderId)
+                val detail = if (response.isSuccessful) response.body() else null
+                if (detail == null) {
+                    if (now - order.createdAt >= NOTIFY_MAX_AGE_MS) {
+                        logger.warn("买入订单详情长时间查询不到，保留记录继续等待核实成交价格: orderId=${order.buyOrderId}, code=${response.code()}")
+                    }
+                    continue
+                }
+
+                // 订单终态时优先回查成交明细，修正可能仍为下单限价的买入均价。
+                val actualPrice = if (CopyOrderPlacementExecutor.isTerminal(detail)) {
+                    trackingService.queryExecutionPrice(order.buyOrderId, client.clobApi, client.account.proxyAddress)
+                } else {
+                    null
+                }
+                // 订单终态且 size_matched 与本地数量不一致、尚未被卖出核销时，按 size_matched 校正（对账用实际成交量而非 original_size）
+                val sizeMatched = detail.sizeMatched.toBigDecimalOrNull()
+                if (CopyOrderPlacementExecutor.isTerminal(detail) && sizeMatched != null &&
+                    sizeMatched.compareTo(order.quantity) != 0 && order.matchedQuantity.signum() == 0
+                ) {
+                    logger.warn("买入订单实际成交量与本地记录不一致，按 size_matched 校正: orderId=${order.buyOrderId}, local=${order.quantity}, sizeMatched=$sizeMatched, avgPrice=$actualPrice")
+                    if (ledger.confirmBuyFill(order.id!!, sizeMatched, actualPrice) == null) continue
+                } else if (actualPrice != null && actualPrice.compareTo(order.price) != 0) {
+                    logger.info("买入订单实际成交均价与本地记录不一致，修正: orderId=${order.buyOrderId}, local=${order.price}, actual=$actualPrice")
+                }
+                if (actualPrice != null &&
+                    ledger.updateBuyPrice(order.id!!, actualPrice, marketService.getTakerFeeRate(order.marketId)) == null
+                ) continue
+                if (CopyOrderPlacementExecutor.isTerminal(detail) && actualPrice == null &&
+                    (sizeMatched ?: order.quantity).signum() > 0
+                ) {
+                    logger.warn("买入订单已有成交，但实际均价暂不可查，保留通知与价格核对重试: orderId=${order.buyOrderId}, sizeMatched=${sizeMatched ?: order.quantity}")
+                    continue
+                }
+                val updated = ledger.markBuyNotificationSent(order.id!!) ?: continue
+                sendBuyOrderNotification(
+                    order = updated,
+                    actualPrice = updated.price.toPlainString(),
+                    actualSize = updated.quantity.toPlainString(),
+                    actualOutcome = detail.outcome,
+                    avgFilledPrice = updated.price.toPlainString(),
+                    filled = updated.quantity.toPlainString(),
+                    account = client.account,
+                    copyTrading = copyTrading,
+                    clobApi = client.clobApi,
+                    apiSecret = client.apiSecret,
+                    apiPassphrase = client.apiPassphrase,
+                    orderCreatedAt = order.createdAt
+                )
+            } catch (e: Exception) {
+                logger.warn("更新买入订单失败: orderId=${order.buyOrderId}, error=${e.message}", e)
             }
-        } catch (e: Exception) {
-            logger.error("更新待发送通知买入订单异常: ${e.message}", e)
         }
     }
 

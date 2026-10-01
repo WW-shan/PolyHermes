@@ -20,33 +20,25 @@ class JwtAuthenticationInterceptor(
     private val userRepository: UserRepository
 ) : HandlerInterceptor {
     
+    companion object {
+        /** Request 属性：当前用户是否为管理员（默认账户） */
+        const val ATTR_IS_ADMIN = "isAdmin"
+    }
+
     private val logger = LoggerFactory.getLogger(JwtAuthenticationInterceptor::class.java)
     private val objectMapper = ObjectMapper()
     
-    // 不需要鉴权的路径
-    private val excludePaths = setOf(
-        "/api/auth/login",
-        "/api/auth/reset-password",
-        "/api/auth/check-first-use",
-        "/api/system/health"
-    )
-    
+    /**
+     * 注意：拦截范围与免认证白名单统一由 WebMvcConfig 的 addPathPatterns/excludePathPatterns 配置
+     * （Spring 使用解码并去除 ";" 参数后的路径匹配），这里不再按原始 requestURI 做前缀判断或放行，
+     * 否则 "/api;/xxx"、"/%61pi/xxx" 等写法可以绕过鉴权
+     */
     override fun preHandle(
         request: HttpServletRequest,
         response: HttpServletResponse,
         handler: Any
     ): Boolean {
         val path = request.requestURI
-
-        // 只拦截 /api/** 路径
-        if (!path.startsWith("/api/")) {
-            return true
-        }
-
-        // 排除不需要鉴权的路径
-        if (excludePaths.contains(path)) {
-            return true
-        }
 
         // 允许 OPTIONS 请求（CORS 预检请求）
         if (request.method == "OPTIONS") {
@@ -71,36 +63,37 @@ class JwtAuthenticationInterceptor(
         
         // 验证tokenVersion（检查token是否因密码修改而失效）
         val username = jwtUtils.getUsernameFromToken(token)
-        if (username != null) {
-            val user = userRepository.findByUsername(username)
-            if (user != null) {
-                val tokenVersion = jwtUtils.getTokenVersionFromToken(token)
-                if (tokenVersion == null || tokenVersion != user.tokenVersion) {
-                    logger.warn("Token版本不匹配，token已失效: username=$username, tokenVersion=$tokenVersion, userTokenVersion=${user.tokenVersion}, path=$path")
-                    sendAuthError(response, "认证令牌已失效，请重新登录")
-                    return false
-                }
-            }
+        if (username == null) {
+            logger.warn("Token中缺少用户名: path=$path")
+            sendAuthError(response, "认证令牌无效或已过期")
+            return false
         }
-        
+        // 用户不存在（例如已被删除）时直接鉴权失败，避免被删除用户的旧 token 继续可用
+        val user = userRepository.findByUsername(username)
+        if (user == null) {
+            logger.warn("Token对应的用户不存在，token已失效: username=$username, path=$path")
+            sendAuthError(response, "认证令牌已失效，请重新登录")
+            return false
+        }
+        val tokenVersion = jwtUtils.getTokenVersionFromToken(token)
+        if (tokenVersion == null || tokenVersion != user.tokenVersion) {
+            logger.warn("Token版本不匹配，token已失效: username=$username, tokenVersion=$tokenVersion, userTokenVersion=${user.tokenVersion}, path=$path")
+            sendAuthError(response, "认证令牌已失效，请重新登录")
+            return false
+        }
+
         // 检查是否需要刷新token（使用超过1天但未过期）
         if (jwtUtils.isTokenExpiring(token)) {
-            if (username != null) {
-                val user = userRepository.findByUsername(username)
-                if (user != null) {
-                    val newToken = jwtUtils.generateToken(username, user.tokenVersion)
-                    // 在响应头中返回新token
-                    response.setHeader("X-New-Token", newToken)
-                    logger.debug("Token自动刷新: username=$username, path=$path")
-                }
-            }
+            val newToken = jwtUtils.generateToken(username, user.tokenVersion)
+            // 在响应头中返回新token
+            response.setHeader("X-New-Token", newToken)
+            logger.debug("Token自动刷新: username=$username, path=$path")
         }
-        
-        // 将用户名存入Request属性，供后续使用
-        if (username != null) {
-            request.setAttribute("username", username)
-        }
-        
+
+        // 将用户名与管理员标记存入Request属性，供后续使用
+        request.setAttribute("username", username)
+        request.setAttribute(ATTR_IS_ADMIN, user.isDefault)
+
         return true
     }
     

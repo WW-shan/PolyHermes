@@ -76,22 +76,56 @@ class LeaderPaperTradingService(
         return session
     }
 
+    /**
+     * 结束候选当前的活跃纸跟会话（进入冷却/退役时调用），恢复纸跟时由 [ensureSession] 新建会话，
+     * 避免复用旧会话的回撤/亏损指标导致一恢复就再次冷却
+     */
+    @Transactional
+    fun endActiveSession(candidateId: Long, now: Long = System.currentTimeMillis()): LeaderPaperSession? {
+        val active = paperSessionRepository.findTopByCandidateIdAndStatusOrderByStartedAtDesc(
+            candidateId, LeaderPaperSessionStatus.ACTIVE
+        ) ?: return null
+        return paperSessionRepository.save(
+            active.copy(
+                status = LeaderPaperSessionStatus.COMPLETED,
+                endedAt = now,
+                updatedAt = now
+            )
+        )
+    }
+
     @Transactional
     fun processPaperCandidates(runId: Long? = null, batchSize: Int = 200): LeaderPaperProcessingResult {
         val paperCandidates = candidateRepository.findByResearchStateIn(
             listOf(LeaderResearchState.PAPER, LeaderResearchState.TRIAL_READY)
         )
+        val pendingStatuses = listOf(LeaderPaperProcessingStatus.NEW, LeaderPaperProcessingStatus.RETRYABLE)
         if (paperCandidates.isEmpty()) {
+            // 没有纸跟候选：待处理事件都不参与纸跟，标记为 FILTERED，避免堆积
+            val skipped = activityEventRepository.markAllPendingPaperEvents(
+                pendingStatuses, LeaderPaperProcessingStatus.FILTERED, System.currentTimeMillis()
+            )
+            if (skipped > 0) {
+                logger.debug("No paper candidates, skipped pending activity events: count={}", skipped)
+            }
             return LeaderPaperProcessingResult(processed = 0, filtered = 0, failed = 0)
         }
 
         val candidatesByWallet = paperCandidates.associateBy { it.normalizedWallet }
         paperCandidates.forEach { ensureSession(it, runId) }
 
-        val page = activityEventRepository.findByPaperProcessingStatusInAndUsableForPaperTrueOrderByEventTimeAsc(
-            listOf(LeaderPaperProcessingStatus.NEW, LeaderPaperProcessingStatus.RETRYABLE),
+        // 非纸跟钱包的待处理事件标记为 FILTERED；查询只取纸跟钱包的事件，避免被其他钱包的 NEW 事件卡死
+        val skipped = activityEventRepository.markNonPaperWalletEvents(
+            pendingStatuses, candidatesByWallet.keys, LeaderPaperProcessingStatus.FILTERED, System.currentTimeMillis()
+        )
+        val page = activityEventRepository.findByPaperProcessingStatusInAndUsableForPaperTrueAndNormalizedWalletInOrderByEventTimeAsc(
+            pendingStatuses,
+            candidatesByWallet.keys,
             PageRequest.of(0, batchSize)
         )
+        if (skipped > 0) {
+            logger.debug("Skipped activity events of non-paper wallets: count={}", skipped)
+        }
 
         var processed = 0
         var filtered = 0
@@ -151,7 +185,47 @@ class LeaderPaperTradingService(
             }
         }
 
+        // 定时重估：每轮对活跃会话的未平仓持仓重新取价并刷新汇总（回撤/可复制盈亏不只在有新事件时更新）
+        paperCandidates.forEach { candidate ->
+            try {
+                revalueActiveSession(candidate)
+            } catch (e: Exception) {
+                logger.warn("Paper session revaluation failed: candidateId={}, error={}", candidate.id, e.message)
+            }
+        }
+
         return LeaderPaperProcessingResult(processed = processed, filtered = filtered, failed = failed)
+    }
+
+    /**
+     * 对候选活跃会话的未平仓持仓按当前行情重估并刷新会话汇总
+     */
+    fun revalueActiveSession(candidate: LeaderResearchCandidate): LeaderPaperSession? {
+        val candidateId = candidate.id ?: return null
+        val session = paperSessionRepository.findTopByCandidateIdAndStatusOrderByStartedAtDesc(
+            candidateId, LeaderPaperSessionStatus.ACTIVE
+        ) ?: return null
+        val sessionId = session.id ?: return null
+        val now = System.currentTimeMillis()
+        paperPositionRepository.findBySessionIdOrderByUpdatedAtDesc(sessionId)
+            .filter { it.quantity > BigDecimal.ZERO }
+            .forEach { position ->
+                val valuation = quoteMarket(position.marketId, position.outcomeIndex ?: 0)
+                val currentValue = valuation.price?.multiply(position.quantity) ?: BigDecimal.ZERO
+                paperPositionRepository.save(
+                    position.copy(
+                        currentPrice = valuation.price,
+                        currentValue = currentValue,
+                        unrealizedPnl = currentValue.subtract(position.cost),
+                        valuationStatus = valuation.status,
+                        quoteConfidence = valuation.confidence,
+                        quoteSource = valuation.source,
+                        quoteTimestamp = valuation.timestamp,
+                        updatedAt = now
+                    )
+                )
+            }
+        return saveSessionSummary(session)
     }
 
     fun isEligibleForTrialReady(session: LeaderPaperSession, now: Long = System.currentTimeMillis()): Boolean {
@@ -196,7 +270,7 @@ class LeaderPaperTradingService(
     ): LeaderPaperFilterResult {
         val candidateId = candidate.id ?: throw IllegalArgumentException("candidate id missing")
         val sessionId = session.id ?: throw IllegalArgumentException("session id missing")
-        val filterReason = filterReason(event)
+        val filterReason = filterReason(event) ?: sellWithoutPositionReason(sessionId, event)
         if (filterReason != null) {
             val trade = buildTrade(
                 candidateId = candidateId,
@@ -384,7 +458,16 @@ class LeaderPaperTradingService(
             .fold(BigDecimal.ZERO) { acc, position -> acc + position.cost }
         val openExposure = positions.fold(BigDecimal.ZERO) { acc, position -> acc + position.cost }
         val copyablePnl = realized.add(availableUnrealized)
-        val maxDrawdown = minDecimal(session.maxDrawdown, copyablePnl)
+        // maxDrawdown 以百分比记录（与 -15%/-20% 阈值同口径）：累计可复制盈亏 / 累计模拟买入金额 × 100 的历史最小值
+        val totalBuyCost = trades
+            .filter { it.filterResult == LeaderPaperFilterResult.PASSED && it.side.equals("BUY", ignoreCase = true) }
+            .fold(BigDecimal.ZERO) { acc, trade -> acc + (trade.simulatedAmount ?: BigDecimal.ZERO) }
+        val currentReturnPct = if (totalBuyCost > BigDecimal.ZERO) {
+            copyablePnl.multiply(BigDecimal("100")).divide(totalBuyCost, 4, java.math.RoundingMode.HALF_UP)
+        } else {
+            BigDecimal.ZERO
+        }
+        val maxDrawdown = minDecimal(session.maxDrawdown, currentReturnPct)
         return paperSessionRepository.save(
             session.copy(
                 tradeCount = tradeCount,
@@ -469,12 +552,23 @@ class LeaderPaperTradingService(
         )
     }
 
+    /**
+     * 纸跟无持仓时的卖出无法复制，记为 FILTERED（不能计为 PASSED 抬高可复制交易数）
+     */
+    private fun sellWithoutPositionReason(sessionId: Long, event: LeaderActivityEvent): String? {
+        if (event.side?.uppercase() != "SELL") return null
+        val marketId = event.marketId ?: return null
+        val position = paperPositionRepository.findBySessionIdAndMarketIdAndOutcomeIndex(sessionId, marketId, event.outcomeIndex ?: 0)
+        return if (position == null || position.quantity <= BigDecimal.ZERO) "sell_without_paper_position" else null
+    }
+
     private fun filterReason(event: LeaderActivityEvent): String? {
         if (event.marketId.isNullOrBlank()) return "market_missing"
         if (event.side.isNullOrBlank()) return "side_missing"
         if (event.side.uppercase() !in setOf("BUY", "SELL")) return "unsupported_side:${event.side}"
         if (event.price == null || event.price <= BigDecimal.ZERO) return "price_missing_or_invalid"
-        if (event.price < MIN_PRICE || event.price > MAX_PRICE) return "price_outside_safe_band"
+        // 价格带只限制买入；卖出是平仓，不能因价格带被跳过
+        if (event.side.uppercase() == "BUY" && (event.price < MIN_PRICE || event.price > MAX_PRICE)) return "price_outside_safe_band"
         if (event.size == null || event.size <= BigDecimal.ZERO) return "size_missing_or_invalid"
         if (event.side.uppercase() == "BUY" && (event.amount ?: event.price.multiply(event.size)) <= BigDecimal.ZERO) return "amount_missing_or_invalid"
         return null

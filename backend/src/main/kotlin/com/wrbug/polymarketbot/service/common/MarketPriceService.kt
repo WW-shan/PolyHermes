@@ -117,30 +117,14 @@ class MarketPriceService(
         return try {
             val chainResult = blockchainService.getCondition(marketId)
             chainResult.fold(
-                onSuccess = { (_, payouts) ->
-                    // 如果 payouts 不为空，说明市场已结算
-                    if (payouts.isNotEmpty() && outcomeIndex < payouts.size) {
-                        val payout = payouts[outcomeIndex]
-                        when {
-                            payout > BigInteger.ZERO -> {
-                                logger.info("从链上查询到市场已结算，该 outcome 赢了: marketId=$marketId, outcomeIndex=$outcomeIndex, payout=$payout")
-                                val price = BigDecimal.ONE
-                                // 缓存已结算的结果
-                                settledMarketCache.put(cacheKey, price)
-                                return Pair(price, false)
-                            }
-                            payout == BigInteger.ZERO -> {
-                                logger.info("从链上查询到市场已结算，该 outcome 输了: marketId=$marketId, outcomeIndex=$outcomeIndex, payout=$payout")
-                                val price = BigDecimal.ZERO
-                                // 缓存已结算的结果
-                                settledMarketCache.put(cacheKey, price)
-                                return Pair(price, false)
-                            }
-                            else -> {
-                                logger.warn("从链上查询到异常的 payout 值: marketId=$marketId, outcomeIndex=$outcomeIndex, payout=$payout")
-                                Pair(null, false)
-                            }
-                        }
+                onSuccess = { (denominator, payouts) ->
+                    // 已结算：denominator > 0 且 payouts 完整（getCondition 保证长度 = outcomeSlotCount）
+                    if (denominator > BigInteger.ZERO && payouts.isNotEmpty() && outcomeIndex < payouts.size) {
+                        // 结算价 = numerator / denominator（50/50 结算为 0.5）
+                        val price = settlementPrice(payouts[outcomeIndex], denominator)
+                        logger.info("从链上查询到市场已结算: marketId=$marketId, outcomeIndex=$outcomeIndex, payout=${payouts[outcomeIndex]}/$denominator, price=$price")
+                        settledMarketCache.put(cacheKey, price)
+                        Pair(price, false)
                     } else {
                         logger.debug("从链上查询到市场尚未结算: marketId=$marketId, payouts=${payouts.size}")
                         Pair(null, false)  // 未结算的市场不缓存
@@ -169,6 +153,14 @@ class MarketPriceService(
     }
     
     /**
+     * 结算价 = numerator / denominator，保留 8 位小数（向下截断）
+     */
+    internal fun settlementPrice(numerator: BigInteger, denominator: BigInteger): BigDecimal {
+        require(denominator > BigInteger.ZERO) { "payoutDenominator 必须大于 0" }
+        return BigDecimal(numerator).divide(BigDecimal(denominator), 8, java.math.RoundingMode.DOWN)
+    }
+
+    /**
      * 从 Gamma Market API 获取价格
      * 使用 outcomePrices 字段，格式通常为 JSON 字符串 "[\"0.5\", \"0.5\"]"
      * 如果查询失败或 outcomePrices 为空，返回 null
@@ -176,7 +168,11 @@ class MarketPriceService(
     private suspend fun getPriceFromGammaMarket(marketId: String, outcomeIndex: Int): BigDecimal? {
         return try {
             val gammaApi = retrofitFactory.createGammaApi()
-            val marketResponse = gammaApi.listMarkets(conditionIds = listOf(marketId))
+            var marketResponse = gammaApi.listMarkets(conditionIds = listOf(marketId))
+            // Gamma 对已结束市场默认返回 []，需加 closed=true 才能查到
+            if (marketResponse.isSuccessful && marketResponse.body().isNullOrEmpty()) {
+                marketResponse = gammaApi.listMarkets(conditionIds = listOf(marketId), closed = true)
+            }
             
             if (!marketResponse.isSuccessful || marketResponse.body() == null) {
                 logger.debug("Gamma Market API 查询失败: marketId=$marketId, code=${marketResponse.code()}")

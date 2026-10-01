@@ -182,6 +182,27 @@ class LeaderPoolServiceTest {
     }
 
     @Test
+    fun `research candidate trial config is forced disabled even with confirmed immediate enable`() {
+        Mockito.`when`(leaderPoolRepository.findById(10L)).thenReturn(
+            Optional.of(pool(researchCandidateId = 99, researchState = LeaderResearchState.TRIAL_READY))
+        )
+        Mockito.`when`(accountRepository.findById(2L)).thenReturn(Optional.of(account()))
+        Mockito.`when`(leaderRepository.findById(1L)).thenReturn(Optional.of(leader()))
+        Mockito.`when`(copyTradingRepository.findByAccountIdAndLeaderId(2L, 1L)).thenReturn(emptyList())
+        Mockito.`when`(copyTradingService.createCopyTrading(anyCreateRequest())).thenReturn(Result.success(copyTradingDto()))
+        Mockito.`when`(leaderPoolRepository.save(anyLeaderPool())).thenAnswer { it.arguments[0] }
+
+        val result = service.createTrialConfig(
+            LeaderPoolCreateTrialConfigRequest(poolId = 10, accountId = 2, enableImmediately = true, confirm = true)
+        )
+
+        assertTrue(result.isSuccess)
+        val requestCaptor = ArgumentCaptor.forClass(com.wrbug.polymarketbot.dto.CopyTradingCreateRequest::class.java)
+        Mockito.verify(copyTradingService).createCopyTrading(captureCreateRequest(requestCaptor))
+        assertEquals(false, requestCaptor.value.enabled)
+    }
+
+    @Test
     fun `research pool item must be trial ready before creating trial config`() {
         Mockito.`when`(leaderPoolRepository.findById(10L)).thenReturn(
             Optional.of(pool(researchCandidateId = 99, researchState = LeaderResearchState.PAPER))

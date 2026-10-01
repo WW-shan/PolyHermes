@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.service.cryptotail
 import com.wrbug.polymarketbot.api.GammaEventBySlugResponse
 import com.wrbug.polymarketbot.api.NewOrderRequest
 import com.wrbug.polymarketbot.api.PolymarketClobApi
+import com.wrbug.polymarketbot.constants.PolymarketConstants
 import com.wrbug.polymarketbot.dto.CryptoTailManualOrderRequest
 import com.wrbug.polymarketbot.dto.CryptoTailManualOrderResponse
 import com.wrbug.polymarketbot.dto.ManualOrderDetails
@@ -21,13 +22,18 @@ import com.wrbug.polymarketbot.service.common.PolymarketClobService
 import com.wrbug.polymarketbot.service.copytrading.orders.OrderSigningService
 import com.wrbug.polymarketbot.util.CryptoUtils
 import com.wrbug.polymarketbot.util.RetrofitFactory
+import com.wrbug.polymarketbot.util.createClient
 import com.wrbug.polymarketbot.util.div
 import com.wrbug.polymarketbot.util.fromJson
 import com.wrbug.polymarketbot.util.multi
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
+import com.google.gson.JsonObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
+import okhttp3.Request
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -46,18 +52,23 @@ private const val SPREAD_MAX_PRICE_ADJUSTMENT = "0.02"
 /** 数量小数位数，与 OrderSigningService 的 roundConfig.size 一致 */
 private const val SIZE_DECIMAL_SCALE = 2
 
+/** 周期上下文缓存有效期（分钟），覆盖最长 15 分钟周期 */
+private const val PERIOD_CONTEXT_EXPIRE_MINUTES = 20L
+
+/** USDC / 条件代币的链上精度 */
+private const val USDC_DECIMALS = 6
+
 /** 单笔下单最小 USDC 金额（平台限制），RATIO 模式计算值低于此值时按此值下单 */
 private val MIN_ORDER_USDC = BigDecimal("1")
 
 /**
- * 周期内预置上下文：账户、解密凭证、费率、签名类型、CLOB 客户端；不含预签订单。
+ * 周期内预置上下文：账户、API 凭证、签名类型、CLOB 客户端；不含预签订单，也不缓存明文私钥（下单时再解密）。
  * 触发时 FIXED/RATIO 均按 outcomeIndex 计算 size 并签名提交。
  */
 private data class PeriodContext(
     val strategy: CryptoTailStrategy,
     val periodStartUnix: Long,
     val account: Account,
-    val decryptedPrivateKey: String,
     val apiSecretDecrypted: String,
     val apiPassphraseDecrypted: String,
     val clobApi: PolymarketClobApi,
@@ -81,10 +92,14 @@ class CryptoTailStrategyExecutionService(
     private val orderSigningService: OrderSigningService,
     private val cryptoUtils: CryptoUtils,
     private val binanceKlineService: BinanceKlineService,
-    private val binanceKlineAutoSpreadService: BinanceKlineAutoSpreadService
+    private val binanceKlineAutoSpreadService: BinanceKlineAutoSpreadService,
+    private val triggerRecorder: CryptoTailTriggerRecorder
 ) {
 
     private val logger = LoggerFactory.getLogger(CryptoTailStrategyExecutionService::class.java)
+
+    /** 查询市场 tick 用的 HTTP 客户端（公开只读接口） */
+    private val tickSizeHttpClient by lazy { createClient().build() }
 
     /** 按 (strategyId, periodStartUnix) 加锁，避免同一周期被调度器与 WebSocket 等多路并发重复下单 */
     private val triggerMutexMap = ConcurrentHashMap<String, Mutex>()
@@ -110,7 +125,16 @@ class CryptoTailStrategyExecutionService(
     }
 
     /** 周期预置上下文缓存：(strategyId-periodStartUnix) -> PeriodContext，过期周期在读取时剔除 */
-    private val periodContextCache = ConcurrentHashMap<String, PeriodContext>()
+    private val periodContextCache: Cache<String, PeriodContext> = Caffeine.newBuilder()
+        .expireAfterWrite(PERIOD_CONTEXT_EXPIRE_MINUTES, java.util.concurrent.TimeUnit.MINUTES)
+        .maximumSize(1_000)
+        .build()
+
+    /** 告警节流：key -> 首次告警时间，1 分钟过期 */
+    private val warnThrottleCache: Cache<String, Long> = Caffeine.newBuilder()
+        .expireAfterWrite(1, java.util.concurrent.TimeUnit.MINUTES)
+        .maximumSize(1_000)
+        .build()
 
     /** 已打印「首次满足条件」日志的周期：LRU 容量 100，每周期只打一次 */
     private val conditionLoggedCache: Cache<String, Long> = Caffeine.newBuilder()
@@ -128,17 +152,13 @@ class CryptoTailStrategyExecutionService(
         marketTitle: String?
     ): PeriodContext? {
         val key = triggerLockKey(strategy.id!!, periodStartUnix)
-        periodContextCache[key]?.let { return it }
+        periodContextCache.getIfPresent(key)?.let { return it }
 
         val account = accountRepository.findById(strategy.accountId).orElse(null) ?: return null
         if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) return null
 
-        val decryptedKey = try {
-            cryptoUtils.decrypt(account.privateKey) ?: return null
-        } catch (e: Exception) {
-            logger.warn("加密价差策略周期上下文解密私钥失败: accountId=${account.id}", e)
-            return null
-        }
+        // 仅校验私钥可解密，不在缓存中保留明文
+        if (decryptPrivateKey(account) == null) return null
         val apiSecret = try {
             account.apiSecret.let { cryptoUtils.decrypt(it) }
         } catch (e: Exception) {
@@ -159,7 +179,6 @@ class CryptoTailStrategyExecutionService(
             strategy = strategy,
             periodStartUnix = periodStartUnix,
             account = account,
-            decryptedPrivateKey = decryptedKey,
             apiSecretDecrypted = apiSecret,
             apiPassphraseDecrypted = apiPassphrase,
             clobApi = clobApi,
@@ -167,8 +186,18 @@ class CryptoTailStrategyExecutionService(
             tokenIds = tokenIds,
             marketTitle = marketTitle
         )
-        periodContextCache[key] = ctx
+        periodContextCache.put(key, ctx)
         return ctx
+    }
+
+    /** 下单时再解密私钥，失败返回 null */
+    private fun decryptPrivateKey(account: Account): String? {
+        return try {
+            cryptoUtils.decrypt(account.privateKey)?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            logger.warn("加密价差策略解密私钥失败: accountId=${account.id}", e)
+            null
+        }
     }
 
     /**
@@ -183,21 +212,12 @@ class CryptoTailStrategyExecutionService(
     private fun getOrInvalidatePeriodContext(strategy: CryptoTailStrategy, periodStartUnix: Long): PeriodContext? {
         val key = triggerLockKey(strategy.id!!, periodStartUnix)
         val nowSeconds = System.currentTimeMillis() / 1000
-        val ctx = periodContextCache[key] ?: return null
+        val ctx = periodContextCache.getIfPresent(key) ?: return null
         if (periodStartUnix + strategy.intervalSeconds <= nowSeconds) {
-            periodContextCache.remove(key)
-            cleanExpiredPeriodContextCache(nowSeconds)
+            periodContextCache.invalidate(key)
             return null
         }
         return ctx
-    }
-
-    /** 清理已过期的周期上下文缓存，避免内存泄漏 */
-    private fun cleanExpiredPeriodContextCache(nowSeconds: Long) {
-        val keysToRemove = periodContextCache.entries
-            .filter { (_, ctx) -> ctx.periodStartUnix + ctx.strategy.intervalSeconds <= nowSeconds }
-            .map { it.key }
-        keysToRemove.forEach { periodContextCache.remove(it) }
     }
 
     /**
@@ -217,11 +237,7 @@ class CryptoTailStrategyExecutionService(
 
         val mutex = getTriggerMutex(strategy.id!!, periodStartUnix)
         mutex.withLock {
-            if (triggerRepository.findByStrategyIdAndPeriodStartUnix(
-                    strategy.id!!,
-                    periodStartUnix
-                ) != null
-            ) return@withLock
+            if (triggerRecorder.isTriggered(strategy.id!!, periodStartUnix)) return@withLock
             val logKey = triggerLockKey(strategy.id!!, periodStartUnix)
             if (conditionLoggedCache.getIfPresent(logKey) == null) {
                 conditionLoggedCache.put(logKey, periodStartUnix + strategy.intervalSeconds)
@@ -242,43 +258,61 @@ class CryptoTailStrategyExecutionService(
                 )
             }
             if (!passSpreadCheck(strategy, periodStartUnix, outcomeIndex)) return@withLock
-            ensurePeriodContext(strategy, periodStartUnix, tokenIds, marketTitle)
-            placeOrderForTrigger(strategy, periodStartUnix, marketTitle, tokenIds, outcomeIndex, bestBid)
+            // 下单前占位：唯一约束保证同一周期（跨进程/跨实例）只会有一次下单
+            triggerRecorder.reserve(
+                strategy.id!!, periodStartUnix, marketTitle, outcomeIndex, bestBid, BigDecimal.ZERO, "AUTO"
+            ) ?: return@withLock
+            try {
+                ensurePeriodContext(strategy, periodStartUnix, tokenIds, marketTitle)
+                placeOrderForTrigger(strategy, periodStartUnix, marketTitle, tokenIds, outcomeIndex, bestBid)
+            } catch (e: Exception) {
+                logger.error("加密价差策略触发下单流程异常: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix", e)
+                triggerRecorder.getPending(strategy.id!!, periodStartUnix)?.let {
+                    triggerRecorder.completeFail(it, "下单流程异常: ${e.message ?: e.javaClass.simpleName}")
+                }
+            }
         }
     }
 
+    /**
+     * 价差过滤：拿不到行情或有效阈值时一律不通过（fail-closed），并节流告警。
+     * 最小价差按下单方向比较，最大价差比较绝对值，见 [CryptoTailSpreadRule]。
+     */
     private fun passSpreadCheck(strategy: CryptoTailStrategy, periodStartUnix: Long, outcomeIndex: Int): Boolean {
         if (strategy.spreadMode == SpreadMode.NONE) return true
         val oc = binanceKlineService.getCurrentOpenClose(
             strategy.marketSlugPrefix,
             strategy.intervalSeconds,
             periodStartUnix
-        )
-            ?: return false
+        ) ?: run {
+            warnThrottled(
+                "oc-${strategy.id}-$periodStartUnix",
+                "加密价差策略价差校验缺少开盘/当前价，禁止下单: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix"
+            )
+            return false
+        }
         val (openP, closeP) = oc
-        val spreadAbs = closeP.subtract(openP).abs()
 
-        // 获取有效价差
-        val effectiveSpread = when (strategy.spreadMode) {
-            SpreadMode.FIXED -> {
-                strategy.spreadValue?.takeIf { it > BigDecimal.ZERO } ?: return true
-            }
-
-            SpreadMode.AUTO -> {
-                val result = computeAutoEffectiveSpread(strategy, periodStartUnix, outcomeIndex) ?: return true
-                result.effectiveSpread.takeIf { it > BigDecimal.ZERO } ?: return true
-            }
-
+        val threshold = when (strategy.spreadMode) {
+            SpreadMode.FIXED -> strategy.spreadValue
+            SpreadMode.AUTO -> computeAutoEffectiveSpread(strategy, periodStartUnix, outcomeIndex)?.effectiveSpread
             SpreadMode.NONE -> return true
         }
+        if (threshold == null || threshold < BigDecimal.ZERO) {
+            warnThrottled(
+                "th-${strategy.id}-$periodStartUnix-$outcomeIndex",
+                "加密价差策略无有效价差阈值，禁止下单: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix, " +
+                    "spreadMode=${strategy.spreadMode}, outcomeIndex=$outcomeIndex"
+            )
+            return false
+        }
+        return CryptoTailSpreadRule.passes(strategy.spreadDirection, openP, closeP, outcomeIndex, threshold)
+    }
 
-        // 根据价差方向判断
-        return if (strategy.spreadDirection == SpreadDirection.MAX) {
-            // 最大价差模式：价差 <= 配置值时触发
-            spreadAbs <= effectiveSpread
-        } else {
-            // 最小价差模式：价差 >= 配置值时触发
-            spreadAbs >= effectiveSpread
+    /** 同一 key 每分钟最多告警一次，避免 WS 高频消息刷屏 */
+    private fun warnThrottled(key: String, message: String) {
+        if (warnThrottleCache.asMap().putIfAbsent(key, System.currentTimeMillis()) == null) {
+            logger.warn(message)
         }
     }
 
@@ -301,13 +335,7 @@ class CryptoTailStrategyExecutionService(
             strategy.intervalSeconds,
             periodStartUnix,
             outcomeIndex
-        )
-            ?: binanceKlineAutoSpreadService.computeAndCache(
-                strategy.marketSlugPrefix,
-                strategy.intervalSeconds,
-                periodStartUnix
-            )?.let { if (outcomeIndex == 0) it.first else it.second }
-            ?: return null
+        ) ?: return null
         if (baseSpread <= BigDecimal.ZERO) return null
         val windowStartMs = (periodStartUnix + strategy.windowStartSeconds) * 1000L
         val windowEndMs = (periodStartUnix + strategy.windowEndSeconds) * 1000L
@@ -393,8 +421,22 @@ class CryptoTailStrategyExecutionService(
             }
             val priceStr = price.toPlainString()
             val size = computeSize(amountUsdc, price)
+            val privateKey = decryptPrivateKey(ctx.account) ?: run {
+                saveTriggerRecord(
+                    strategy,
+                    periodStartUnix,
+                    marketTitle,
+                    outcomeIndex,
+                    triggerPrice,
+                    amountUsdc,
+                    null,
+                    "fail",
+                    "解密私钥失败"
+                )
+                return
+            }
             val signedOrder = orderSigningService.createAndSignOrder(
-                privateKey = ctx.decryptedPrivateKey,
+                privateKey = privateKey,
                 makerAddress = ctx.account.proxyAddress,
                 tokenId = tokenId,
                 side = "BUY",
@@ -436,6 +478,17 @@ class CryptoTailStrategyExecutionService(
         triggerType: String = "AUTO"
     ) {
         var failReason: String? = null
+        // 加锁、解密、签名都会耗时，提交前再校验一次窗口，避免越过窗口末端才进入撮合
+        if (triggerType == "AUTO" &&
+            !CryptoTailTiming.isWithinExecutionWindow(strategy, periodStartUnix, System.currentTimeMillis())
+        ) {
+            saveTriggerRecord(
+                strategy, periodStartUnix, marketTitle, outcomeIndex, triggerPrice, amountUsdc,
+                null, "fail", "提交前已超出时间窗口", triggerType = triggerType
+            )
+            logger.warn("加密价差策略提交前已超出时间窗口，放弃下单: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix")
+            return
+        }
         try {
             val response = clobApi.createOrder(orderRequest)
             if (response.isSuccessful && response.body() != null) {
@@ -451,7 +504,8 @@ class CryptoTailStrategyExecutionService(
                         body.orderId,
                         "success",
                         null,
-                        triggerType = triggerType
+                        triggerType = triggerType,
+                        transactionHashes = body.transactionsHashes
                     )
                     logger.info("加密价差策略下单成功: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix, outcomeIndex=$outcomeIndex, orderId=${body.orderId}, triggerType=$triggerType")
                     return
@@ -572,10 +626,7 @@ class CryptoTailStrategyExecutionService(
         val priceStr = price.toPlainString()
         val size = computeSize(amountUsdc, price)
 
-        val decryptedKey = try {
-            cryptoUtils.decrypt(account.privateKey) ?: ""
-        } catch (e: Exception) {
-            logger.error("解密私钥失败: accountId=${account.id}", e)
+        val decryptedKey = decryptPrivateKey(account) ?: run {
             saveTriggerRecord(
                 strategy,
                 periodStartUnix,
@@ -649,6 +700,10 @@ class CryptoTailStrategyExecutionService(
         return parsed ?: emptyList()
     }
 
+    /**
+     * 回写本周期的占位记录（下单前已由 [CryptoTailTriggerRecorder.reserve] 插入 pending）。
+     * 成功时先打内存已下单标记再写库，写库失败不会改写成 fail。
+     */
     private fun saveTriggerRecord(
         strategy: CryptoTailStrategy,
         periodStartUnix: Long,
@@ -659,129 +714,90 @@ class CryptoTailStrategyExecutionService(
         orderId: String?,
         status: String,
         failReason: String?,
-        triggerType: String = "AUTO"
+        triggerType: String = "AUTO",
+        transactionHashes: List<String>? = null
     ) {
-        val record = CryptoTailStrategyTrigger(
-            strategyId = strategy.id!!,
-            periodStartUnix = periodStartUnix,
-            marketTitle = marketTitle,
-            outcomeIndex = outcomeIndex,
-            triggerPrice = triggerPrice,
-            amountUsdc = amountUsdc,
-            orderId = orderId,
-            status = status,
-            failReason = failReason,
-            triggerType = triggerType
-        )
-        triggerRepository.save(record)
+        val reserved = triggerRecorder.getPending(strategy.id!!, periodStartUnix)
+        if (reserved == null) {
+            logger.error(
+                "加密价差策略回写触发记录时找不到占位记录: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix, " +
+                    "status=$status, orderId=$orderId, triggerType=$triggerType"
+            )
+            return
+        }
+        if (status == CryptoTailTriggerRecorder.STATUS_SUCCESS && orderId != null) {
+            triggerRecorder.completeSuccess(reserved, orderId, transactionHashes, triggerPrice, amountUsdc)
+        } else {
+            triggerRecorder.completeFail(reserved, failReason, triggerPrice, amountUsdc)
+        }
     }
 
     /**
-     * 手动下单：用户主动触发下单，不检查任何条件，仅检查当前周期是否已下单
+     * 手动下单：用户主动触发，不检查价格/价差条件。
+     * 服务端自行按策略 slug 前缀 + 当前周期解析市场 tokenIds，拒绝非当前周期或已收盘周期的下单；
+     * 前端传入的 tokenIds 只做一致性校验。价格必须落在市场 tick 上，数量/金额按签名口径计算并返回实际签名值。
      */
     suspend fun manualOrder(request: CryptoTailManualOrderRequest): Result<CryptoTailManualOrderResponse> {
         return try {
             val strategy = strategyRepository.findById(request.strategyId).orElse(null)
                 ?: return Result.failure(IllegalArgumentException("策略不存在"))
 
-            val outcomeIndex = if (request.direction.uppercase() == "UP") 0 else 1
+            val direction = request.direction.uppercase()
+            if (direction != "UP" && direction != "DOWN") {
+                return Result.failure(CryptoTailManualOrderException("方向仅支持 UP 或 DOWN"))
+            }
+            val outcomeIndex = if (direction == "UP") 0 else 1
 
-            if (outcomeIndex < 0 || outcomeIndex >= request.tokenIds.size) {
-                return Result.failure(IllegalArgumentException("outcomeIndex 越界"))
+            val nowMs = System.currentTimeMillis()
+            val periodStartUnix = CryptoTailTiming.currentPeriodStart(strategy.intervalSeconds, nowMs)
+            if (request.periodStartUnix != periodStartUnix) {
+                return Result.failure(CryptoTailManualOrderException("非当前周期，不能下单"))
+            }
+            if (!CryptoTailTiming.isBeforeMarketClose(strategy.intervalSeconds, periodStartUnix, nowMs)) {
+                return Result.failure(CryptoTailManualOrderException("当前周期即将结束，不能下单"))
             }
 
-            val price = request.price.toSafeBigDecimal()
-            if (price <= BigDecimal.ZERO || price > BigDecimal.ONE) {
-                return Result.failure(IllegalArgumentException("价格必须在 0~1 之间"))
+            val slug = "${strategy.marketSlugPrefix}-$periodStartUnix"
+            val event = fetchEventBySlug(slug).getOrElse {
+                return Result.failure(CryptoTailManualOrderException("获取当前周期市场失败: ${it.message}"))
             }
-            val priceRounded = price.setScale(4, RoundingMode.UP)
+            val tokenIds = parseClobTokenIds(event.markets?.firstOrNull()?.clobTokenIds)
+            if (tokenIds.size < 2) {
+                return Result.failure(CryptoTailManualOrderException("当前周期市场 token 不可用"))
+            }
+            if (request.tokenIds.isNotEmpty() && request.tokenIds != tokenIds) {
+                return Result.failure(CryptoTailManualOrderException("tokenIds 与当前周期市场不一致"))
+            }
+            val tokenId = tokenIds[outcomeIndex]
+            val marketTitle = event.title?.takeIf { it.isNotBlank() } ?: request.marketTitle.ifBlank { null }
 
-            val size = request.size.toSafeBigDecimal()
-            if (size < BigDecimal.ONE) {
-                return Result.failure(IllegalArgumentException("数量不能少于 1"))
+            val price = request.price.trim().toBigDecimalOrNull()
+                ?: return Result.failure(CryptoTailManualOrderException("价格格式错误"))
+            val sizeInput = request.size.trim().toBigDecimalOrNull()
+                ?: return Result.failure(CryptoTailManualOrderException("数量格式错误"))
+            val tick = CryptoTailManualOrderPricing.effectiveTick(fetchMarketTickSize(tokenId))
+            val quote = CryptoTailManualOrderPricing.quote(price, sizeInput, tick)
+                ?: return Result.failure(
+                    CryptoTailManualOrderException("价格必须是 ${tick.toPlainString()} 的整数倍，且在 ${tick.toPlainString()}~${BigDecimal.ONE.subtract(tick).toPlainString()} 之间")
+                )
+            if (quote.size < BigDecimal.ONE) {
+                return Result.failure(CryptoTailManualOrderException("数量不能少于 1"))
+            }
+            if (quote.amountUsdc < MIN_ORDER_USDC) {
+                return Result.failure(CryptoTailManualOrderException("总金额不能少于 \$1"))
             }
 
-            val amountUsdc = priceRounded.multi(size).setScale(2, RoundingMode.HALF_UP)
-            if (amountUsdc < BigDecimal.ONE) {
-                return Result.failure(IllegalArgumentException("总金额不能少于 \$1"))
-            }
-
-            val mutex = getTriggerMutex(strategy.id!!, request.periodStartUnix)
+            val mutex = getTriggerMutex(strategy.id!!, periodStartUnix)
             mutex.withLock {
-                if (triggerRepository.findByStrategyIdAndPeriodStartUnix(
-                        strategy.id!!,
-                        request.periodStartUnix
-                    ) != null
-                ) {
-                    return@withLock Result.failure(IllegalArgumentException("当前周期已下单"))
-                }
-
-                var ctx = getOrInvalidatePeriodContext(strategy, request.periodStartUnix)
-                if (ctx == null) {
-                    ctx = ensurePeriodContext(
-                        strategy,
-                        request.periodStartUnix,
-                        request.tokenIds,
-                        request.marketTitle.ifBlank { null }
-                    )
-                }
-                if (ctx != null) {
-                    val tokenId = request.tokenIds.getOrNull(outcomeIndex)
-                        ?: return@withLock Result.failure(IllegalArgumentException("tokenIds 越界"))
-
-                    val priceStr = priceRounded.toPlainString()
-                    val sizeStr = size.toPlainString()
-
-                    val signedOrder = orderSigningService.createAndSignOrder(
-                        privateKey = ctx.decryptedPrivateKey,
-                        makerAddress = ctx.account.proxyAddress,
-                        tokenId = tokenId,
-                        side = "BUY",
-                        price = priceStr,
-                        size = sizeStr,
-                        signatureType = ctx.signatureType
-                    )
-
-                    val orderRequest = NewOrderRequest(
-                        order = signedOrder,
-                        owner = ctx.account.apiKey!!,
-                        orderType = "FAK"
-                    )
-
-                    val orderResult = submitOrderForManualOrder(
-                        ctx.clobApi,
-                        strategy,
-                        request.periodStartUnix,
-                        request.marketTitle,
-                        outcomeIndex,
-                        priceRounded,
-                        amountUsdc,
-                        orderRequest
-                    )
-
-                    orderResult.fold(
-                        onSuccess = { orderId ->
-                            Result.success(
-                                CryptoTailManualOrderResponse(
-                                    success = true,
-                                    orderId = orderId,
-                                    message = "下单成功",
-                                    orderDetails = ManualOrderDetails(
-                                        strategyId = strategy.id!!,
-                                        direction = request.direction,
-                                        price = priceStr,
-                                        size = sizeStr,
-                                        totalAmount = amountUsdc.toPlainString()
-                                    )
-                                )
-                            )
-                        },
-                        onFailure = { e ->
-                            Result.failure(e)
-                        }
-                    )
-                } else {
-                    Result.failure(IllegalArgumentException("账户未配置或凭证不足"))
+                val reserved = triggerRecorder.reserve(
+                    strategy.id!!, periodStartUnix, marketTitle, outcomeIndex, quote.price, quote.amountUsdc, "MANUAL"
+                ) ?: return@withLock Result.failure(CryptoTailManualOrderException("当前周期已下单"))
+                try {
+                    placeManualOrder(strategy, periodStartUnix, marketTitle, tokenIds, tokenId, outcomeIndex, direction, quote, reserved)
+                } catch (e: Exception) {
+                    logger.error("手动下单流程异常: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix", e)
+                    triggerRecorder.completeFail(reserved, "手动下单异常: ${e.message ?: e.javaClass.simpleName}")
+                    Result.failure(e)
                 }
             }
         } catch (e: Exception) {
@@ -790,52 +806,137 @@ class CryptoTailStrategyExecutionService(
         }
     }
 
+    /** 手动下单：签名并提交，校验签名金额与报价一致，回写占位记录 */
+    private suspend fun placeManualOrder(
+        strategy: CryptoTailStrategy,
+        periodStartUnix: Long,
+        marketTitle: String?,
+        tokenIds: List<String>,
+        tokenId: String,
+        outcomeIndex: Int,
+        direction: String,
+        quote: CryptoTailManualOrderPricing.Quote,
+        reserved: CryptoTailStrategyTrigger
+    ): Result<CryptoTailManualOrderResponse> {
+        val ctx = getOrInvalidatePeriodContext(strategy, periodStartUnix)
+            ?: ensurePeriodContext(strategy, periodStartUnix, tokenIds, marketTitle)
+        if (ctx == null) {
+            triggerRecorder.release(reserved)
+            return Result.failure(IllegalArgumentException("账户未配置或凭证不足"))
+        }
+        val privateKey = decryptPrivateKey(ctx.account)
+        if (privateKey == null) {
+            triggerRecorder.release(reserved)
+            return Result.failure(IllegalArgumentException("解密私钥失败"))
+        }
+        val priceStr = quote.price.toPlainString()
+        val sizeStr = quote.size.toPlainString()
+        val signedOrder = orderSigningService.createAndSignOrder(
+            privateKey = privateKey,
+            makerAddress = ctx.account.proxyAddress,
+            tokenId = tokenId,
+            side = "BUY",
+            price = priceStr,
+            size = sizeStr,
+            signatureType = ctx.signatureType,
+            tickSize = quote.tick,
+            strictTick = true
+        )
+        // 签名器会按自身精度处理价格/数量，这里用签名结果反算，确保展示给用户的金额就是实际签名金额
+        val signedAmount = BigDecimal(signedOrder.makerAmount).movePointLeft(USDC_DECIMALS)
+        val signedShares = BigDecimal(signedOrder.takerAmount).movePointLeft(USDC_DECIMALS)
+        if (signedAmount.compareTo(quote.amountUsdc) != 0 || signedShares.compareTo(quote.size) != 0) {
+            logger.error(
+                "手动下单签名金额与报价不一致，拒绝提交: strategyId=${strategy.id}, quote=$quote, " +
+                    "signedAmount=${signedAmount.toPlainString()}, signedShares=${signedShares.toPlainString()}"
+            )
+            triggerRecorder.release(reserved)
+            return Result.failure(CryptoTailManualOrderException("签名金额与报价不一致，已拒绝下单"))
+        }
+        if (!CryptoTailTiming.isBeforeMarketClose(strategy.intervalSeconds, periodStartUnix, System.currentTimeMillis())) {
+            triggerRecorder.release(reserved)
+            return Result.failure(CryptoTailManualOrderException("当前周期即将结束，不能下单"))
+        }
+        val orderRequest = NewOrderRequest(
+            order = signedOrder,
+            owner = ctx.account.apiKey!!,
+            orderType = "FAK"
+        )
+        return submitOrderForManualOrder(ctx.clobApi, strategy, periodStartUnix, outcomeIndex, quote, orderRequest, reserved)
+            .map { orderId ->
+                CryptoTailManualOrderResponse(
+                    success = true,
+                    orderId = orderId,
+                    message = "下单成功",
+                    orderDetails = ManualOrderDetails(
+                        strategyId = strategy.id!!,
+                        direction = direction,
+                        price = priceStr,
+                        size = signedShares.stripTrailingZeros().toPlainString(),
+                        totalAmount = signedAmount.setScale(CryptoTailManualOrderPricing.AMOUNT_SCALE).toPlainString()
+                    )
+                )
+            }
+    }
+
+    /**
+     * 提交手动订单。CLOB 明确拒绝（2xx 且 success=false，或 4xx）时释放占位允许重试；
+     * 结果未知（5xx、异常、无 orderId）时记为 fail 并保留占位，避免重复下单。
+     */
     private suspend fun submitOrderForManualOrder(
         clobApi: PolymarketClobApi,
         strategy: CryptoTailStrategy,
         periodStartUnix: Long,
-        marketTitle: String?,
         outcomeIndex: Int,
-        price: BigDecimal,
-        amountUsdc: BigDecimal,
-        orderRequest: NewOrderRequest
+        quote: CryptoTailManualOrderPricing.Quote,
+        orderRequest: NewOrderRequest,
+        reserved: CryptoTailStrategyTrigger
     ): Result<String> {
         return try {
             val response = clobApi.createOrder(orderRequest)
-            if (response.isSuccessful && response.body() != null) {
-                val body = response.body()!!
-                if (body.success && body.orderId != null) {
-                    saveTriggerRecord(
-                        strategy,
-                        periodStartUnix,
-                        marketTitle,
-                        outcomeIndex,
-                        price,
-                        amountUsdc,
-                        body.orderId,
-                        "success",
-                        null,
-                        triggerType = "MANUAL"
-                    )
-                    logger.info("手动下单成功: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix, outcomeIndex=$outcomeIndex, orderId=${body.orderId}")
-                    Result.success(body.orderId)
-                } else {
-                    Result.failure(Exception(body.errorMsg ?: "unknown"))
-                }
-            } else {
-                val errorBody = response.errorBody()?.string().orEmpty()
-                Result.failure(Exception(errorBody.ifEmpty { "请求失败" }))
+            val body = response.body()
+            if (response.isSuccessful && body != null && body.success && body.orderId != null) {
+                triggerRecorder.completeSuccess(reserved, body.orderId, body.transactionsHashes, quote.price, quote.amountUsdc)
+                logger.info("手动下单成功: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix, outcomeIndex=$outcomeIndex, orderId=${body.orderId}")
+                return Result.success(body.orderId)
             }
+            val reason = if (body != null) body.getErrorMessage() else response.errorBody()?.string().orEmpty().ifEmpty { "请求失败 code=${response.code()}" }
+            val safeReason = CryptoTailTriggerRecorder.truncate(reason, CryptoTailTriggerRecorder.FAIL_REASON_MAX_LENGTH)
+            val definitelyRejected = (response.isSuccessful && body != null && !body.success) || response.code() in 400..499
+            if (definitelyRejected) {
+                triggerRecorder.release(reserved)
+            } else {
+                triggerRecorder.completeFail(reserved, safeReason)
+            }
+            logger.error("手动下单失败: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix, code=${response.code()}, reason=$safeReason")
+            Result.failure(Exception(safeReason))
         } catch (e: Exception) {
             logger.error("手动下单异常: strategyId=${strategy.id}, periodStartUnix=$periodStartUnix", e)
+            triggerRecorder.completeFail(reserved, e.message ?: e.javaClass.simpleName)
             Result.failure(e)
+        }
+    }
+
+    /** 查询市场 tick（CLOB /tick-size 公开接口）；失败返回 null，由调用方使用默认 0.01 */
+    private suspend fun fetchMarketTickSize(tokenId: String): BigDecimal? = withContext(Dispatchers.IO) {
+        try {
+            val url = "${PolymarketConstants.CLOB_BASE_URL}/tick-size?token_id=$tokenId"
+            tickSizeHttpClient.newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val json = resp.body?.string()?.fromJson<JsonObject>() ?: return@withContext null
+                json.get("minimum_tick_size")?.takeIf { !it.isJsonNull }?.asString?.toBigDecimalOrNull()
+                    ?.takeIf { it > BigDecimal.ZERO }
+            }
+        } catch (e: Exception) {
+            logger.warn("查询市场 tick 失败，使用默认 0.01: tokenId=$tokenId, ${e.message}")
+            null
         }
     }
 
     @PreDestroy
     fun destroy() {
         // 清理所有周期上下文缓存，避免敏感信息（明文私钥、API Secret）在内存中保留
-        periodContextCache.clear()
+        periodContextCache.invalidateAll()
         // 清理所有锁，避免内存泄漏
         triggerMutexMap.clear()
         logger.debug("加密价差策略执行服务已清理缓存和锁")

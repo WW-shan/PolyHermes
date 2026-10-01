@@ -48,6 +48,21 @@ data class SellMatchRecord(
     var priceUpdated: Boolean = false,  // 共用字段：false 表示未处理（未查询订单详情，未发送通知），true 表示已处理（已查询订单详情，已发送通知）
     
     @Column(name = "created_at", nullable = false)
-    val createdAt: Long = System.currentTimeMillis()
-)
+    val createdAt: Long = System.currentTimeMillis(),
+
+    @Column(name = "fill_status", nullable = false, length = 20)
+    val fillStatus: String = FILL_STATUS_FILLED,  // PENDING=卖单成交待确认（已预占 tracking 数量），FILLED=已按实际成交核销
+
+    @Column(name = "price_query_attempts", nullable = false)
+    val priceQueryAttempts: Int = 0,  // 成交价查询失败次数（用于退避与上限）
+
+    @Column(name = "last_price_query_at", nullable = true)
+    val lastPriceQueryAt: Long? = null  // 最近一次成交价查询时间（毫秒）
+) {
+    companion object {
+        const val FILL_STATUS_PENDING = "PENDING"
+        const val FILL_STATUS_FILLED = "FILLED"
+        const val FILL_STATUS_UNCONFIRMED = "UNCONFIRMED"
+    }
+}
 

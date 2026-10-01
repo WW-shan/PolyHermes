@@ -65,34 +65,35 @@ class LeaderActivityIngestionServiceTest {
     }
 
     @Test
-    fun `dedupes by source event id`() {
+    fun `dedupes the same fill by fill level stable key`() {
+        val activity = validActivity(transactionHash = "tx-1")
+        val key = service.fillStableKey(
+            wallet = "0x1111111111111111111111111111111111111111", txHash = "tx-1", asset = "asset-1",
+            side = "BUY", size = java.math.BigDecimal("10"), price = java.math.BigDecimal("0.45")
+        )!!
         val existing = LeaderActivityEvent(
             source = "ACTIVITY_DERIVED",
             sourceEventId = "tx-1",
-            stableEventKey = "tx-1",
+            stableEventKey = key,
             normalizedWallet = "0x1111111111111111111111111111111111111111",
             eventTime = 1_700_000_000_000,
             rawPayloadHash = "hash"
         )
-        Mockito.`when`(repository.findByStableEventKey("tx-1")).thenReturn(null)
-        Mockito.`when`(repository.findBySourceAndSourceEventId("ACTIVITY_DERIVED", "tx-1")).thenReturn(existing)
+        Mockito.`when`(repository.findByStableEventKey(key)).thenReturn(existing)
 
-        val event = service.ingestUserActivity(
-            UserActivityResponse(
-                proxyWallet = "0x1111111111111111111111111111111111111111",
-                timestamp = 1_700_000_000,
-                conditionId = "condition-1",
-                type = "TRADE",
-                size = 10.0,
-                transactionHash = "tx-1",
-                price = 0.45,
-                asset = "asset-1",
-                side = "BUY"
-            )
-        )
+        val event = service.ingestUserActivity(activity)
 
         assertEquals(existing, event)
         Mockito.verify(repository, Mockito.never()).save(Mockito.any(LeaderActivityEvent::class.java))
+    }
+
+    @Test
+    fun `multiple fills in the same tx get distinct stable keys`() {
+        val first = service.fillStableKey("0x1", "tx-1", "asset-1", "BUY", java.math.BigDecimal("10"), java.math.BigDecimal("0.45"))
+        val second = service.fillStableKey("0x1", "tx-1", "asset-1", "BUY", java.math.BigDecimal("12"), java.math.BigDecimal("0.46"))
+        val sameAsFirst = service.fillStableKey("0x1", "TX-1", "asset-1", "buy", java.math.BigDecimal("10.00"), java.math.BigDecimal("0.450"))
+        assertTrue(first != second)
+        assertEquals(first, sameAsFirst)
     }
 
     @Test

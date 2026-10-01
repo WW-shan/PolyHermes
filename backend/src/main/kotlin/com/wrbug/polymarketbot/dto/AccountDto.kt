@@ -4,7 +4,7 @@ package com.wrbug.polymarketbot.dto
  * 账户导入请求
  */
 data class AccountImportRequest(
-    val privateKey: String,  // 私钥（前端加密后传输）
+    val privateKey: String,  // 私钥（明文传输，仅在后端加密存储；必须通过 HTTPS 部署）
     val walletAddress: String,  // 钱包地址（前端从私钥推导，用于验证）
     val accountName: String? = null,
     val isEnabled: Boolean = true,  // 是否启用（用于订单推送等功能的开关）
@@ -16,8 +16,10 @@ data class AccountImportRequest(
  */
 data class CheckProxyOptionsRequest(
     val walletAddress: String,  // EOA 地址（必需）
-    val privateKey: String? = null,  // 私钥（加密，私钥导入时提供）
-    val mnemonic: String? = null  // 助记词（加密，助记词导入时提供）
+    val importMethod: String? = null,  // 导入方式：PRIVATE_KEY / MNEMONIC，决定候选钱包类型
+    // 以下两个字段仅为兼容旧前端：后端只判断是否非空以推断导入方式，绝不记录或使用其内容
+    val privateKey: String? = null,
+    val mnemonic: String? = null
 )
 
 /**
@@ -57,9 +59,9 @@ data class AccountUpdateRequest(
  * 系统配置更新请求
  */
 data class SystemConfigUpdateRequest(
-    val builderApiKey: String? = null,  // Builder API Key（前端加密后传输）
-    val builderSecret: String? = null,  // Builder Secret（前端加密后传输）
-    val builderPassphrase: String? = null,  // Builder Passphrase（前端加密后传输）
+    val builderApiKey: String? = null,  // Builder API Key（明文传输，必须通过 HTTPS 部署）
+    val builderSecret: String? = null,  // Builder Secret（明文传输，必须通过 HTTPS 部署）
+    val builderPassphrase: String? = null,  // Builder Passphrase（明文传输，必须通过 HTTPS 部署）
     val autoRedeem: Boolean? = null  // 自动赎回（系统级别配置）
 )
 
@@ -187,7 +189,9 @@ data class AccountPositionDto(
     val redeemable: Boolean,
     val mergeable: Boolean,
     val endDate: String?,
-    val isCurrent: Boolean = true  // true: 当前仓位（有持仓），false: 历史仓位（已平仓）
+    val isCurrent: Boolean = true,  // true: 当前仓位（有持仓），false: 历史仓位（已平仓）
+    val tokenId: String? = null,  // CTF positionId（Data API asset），卖出时优先使用
+    val negativeRisk: Boolean? = null  // 是否 Neg Risk 市场（Data API negativeRisk），null 表示未知
 )
 
 /**
@@ -195,7 +199,8 @@ data class AccountPositionDto(
  */
 data class PositionListResponse(
     val currentPositions: List<AccountPositionDto>,
-    val historyPositions: List<AccountPositionDto>
+    val historyPositions: List<AccountPositionDto>,
+    val failedAccountIds: List<Long> = emptyList()  // 仓位获取失败的账户（核对/卖出逻辑必须跳过这些账户）
 )
 
 /**
@@ -209,7 +214,9 @@ data class PositionSellRequest(
     val orderType: String,         // 订单类型：MARKET（市价）或 LIMIT（限价）（必需）
     val quantity: String? = null,  // 卖出数量（可选，BigDecimal字符串，手动输入时使用）
     val percent: String? = null,   // 卖出百分比（可选，BigDecimal字符串，支持小数，0-100之间，选择百分比按钮时使用）
-    val price: String? = null      // 限价价格（限价订单必需，市价订单不需要）
+    val price: String? = null,     // 限价价格（限价订单必需，市价订单不需要）
+    val tokenId: String? = null,   // 仓位 tokenId（前端从仓位列表传入，后端与实时仓位 asset 核对）
+    val expectedQuantity: String? = null  // 前端看到的持仓数量（百分比卖出时与实时持仓核对，偏差过大则拒绝）
 )
 
 /**

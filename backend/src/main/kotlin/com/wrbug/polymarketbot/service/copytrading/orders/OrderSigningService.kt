@@ -71,9 +71,64 @@ class OrderSigningService {
         amount = 4
     )
 
-    // 价格有效范围（Polymarket API 要求）
-    private val MIN_PRICE = BigDecimal("0.01")
-    private val MAX_PRICE = BigDecimal("0.99")
+    /**
+     * 按 tick size 返回舍入配置（与官方 SDK @polymarket/clob-client-v2 ROUNDING_CONFIG 一致）
+     * 0.1→price 1/size 2/amount 3；0.01→2/2/4；0.001→3/2/5；0.0001→4/2/6
+     */
+    fun roundConfigForTickSize(tickSize: BigDecimal?): RoundConfig {
+        if (tickSize == null) return DEFAULT_ROUND_CONFIG
+        return when (tickSize.stripTrailingZeros().toPlainString()) {
+            "0.1" -> RoundConfig(price = 1, size = 2, amount = 3)
+            "0.01" -> RoundConfig(price = 2, size = 2, amount = 4)
+            "0.001" -> RoundConfig(price = 3, size = 2, amount = 5)
+            "0.0001" -> RoundConfig(price = 4, size = 2, amount = 6)
+            else -> throw IllegalArgumentException("不支持的 tick size: ${tickSize.toPlainString()}")
+        }
+    }
+
+    /** 价格是否在 tick 上且位于 [tick, 1 - tick] */
+    fun isValidTickPrice(price: BigDecimal, tickSize: BigDecimal): Boolean {
+        if (price < tickSize || price > BigDecimal.ONE.subtract(tickSize)) return false
+        return price.remainder(tickSize).signum() == 0
+    }
+
+    /**
+     * 将价格对齐到 tick：BUY 向下取整（不超过可接受上限），SELL 向上取整（不低于可接受下限），
+     * 并限制在 [tick, 1 - tick]
+     */
+    fun alignPriceToTick(price: BigDecimal, tickSize: BigDecimal, isBuy: Boolean): BigDecimal {
+        val mode = if (isBuy) RoundingMode.FLOOR else RoundingMode.CEILING
+        val aligned = price.divide(tickSize, 0, mode).multiply(tickSize)
+        val maxPrice = BigDecimal.ONE.subtract(tickSize)
+        return aligned.max(tickSize).min(maxPrice).setScale(tickSize.stripTrailingZeros().scale(), RoundingMode.UNNECESSARY)
+    }
+
+    /**
+     * 本地计算订单 hash（= CLOB orderID = 交易所 hashOrder 返回值）
+     * hash = keccak256(0x1901 ++ exchangeDomainSeparator ++ hashStruct(Order))
+     */
+    fun computeOrderHash(order: SignedOrderObject, exchangeContract: String? = null): String {
+        val contract = exchangeContract?.takeIf { it.isNotBlank() } ?: EXCHANGE_CONTRACT
+        val domainSeparator = com.wrbug.polymarketbot.util.Eip712Encoder.encodeExchangeDomain(
+            chainId = CHAIN_ID,
+            verifyingContract = contract.lowercase()
+        )
+        val structHash = com.wrbug.polymarketbot.util.Eip712Encoder.encodeExchangeOrder(
+            salt = order.salt,
+            maker = order.maker,
+            signer = order.signer,
+            tokenId = order.tokenId,
+            makerAmount = order.makerAmount,
+            takerAmount = order.takerAmount,
+            side = order.side,
+            signatureType = order.signatureType,
+            timestamp = order.timestamp,
+            metadata = order.metadata,
+            builder = order.builder
+        )
+        val digest = com.wrbug.polymarketbot.util.Eip712Encoder.hashStructuredData(domainSeparator, structHash)
+        return org.web3j.utils.Numeric.toHexString(digest)
+    }
 
     /**
      * 订单金额计算结果
@@ -107,37 +162,37 @@ class OrderSigningService {
         side: String,
         size: String,
         price: String,
-        roundConfig: RoundConfig = DEFAULT_ROUND_CONFIG
+        roundConfig: RoundConfig = DEFAULT_ROUND_CONFIG,
+        strictTick: Boolean = false
     ): OrderAmounts {
         val sizeDecimal = size.toSafeBigDecimal()
         val priceDecimal = price.toSafeBigDecimal()
+        val tick = BigDecimal.ONE.movePointLeft(roundConfig.price)
+        val isBuy = side.uppercase() == "BUY"
 
-        // 对价格进行 roundNormal 处理（与 clob-client 保持一致）
-        var rawPrice = roundNormal(priceDecimal, roundConfig.price)
-
-        // 验证价格范围，如果超出则调整到最接近的有效值
-        // Polymarket API 要求: 0.01 <= price <= 0.99
-        if (rawPrice > MAX_PRICE) {
-            logger.warn("价格超出最大限制，已调整: $priceDecimal -> $MAX_PRICE")
-            rawPrice = MAX_PRICE
-        } else if (rawPrice < MIN_PRICE) {
-            logger.warn("价格低于最小限制，已调整: $priceDecimal -> $MIN_PRICE")
-            rawPrice = MIN_PRICE
+        // 价格必须落在 tick 上且在 [tick, 1 - tick] 范围内
+        // 严格模式：不在 tick 上直接拒绝；默认模式：BUY 向下、SELL 向上取整到 tick（不突破用户可接受价格）
+        var rawPrice = priceDecimal
+        if (!isValidTickPrice(rawPrice, tick)) {
+            if (strictTick) {
+                throw OrderPriceNotOnTickException(
+                    "订单价格不符合 tick size 要求: price=${priceDecimal.toPlainString()}, tickSize=${tick.toPlainString()}"
+                )
+            }
+            rawPrice = alignPriceToTick(priceDecimal, tick, isBuy)
+            logger.warn("价格不在 tick 上或超出范围，已调整: $priceDecimal -> $rawPrice (tick=$tick)")
         }
 
-        if (side.uppercase() == "BUY") {
+        if (isBuy) {
             // BUY: makerAmount = price * size (USDC), takerAmount = size (shares)
-            // 参考 clob-client/src/order-builder/helpers.ts 第 73-89 行
-            // 注意：Polymarket API 要求市场买入订单的 makerAmount 最多 2 位小数，takerAmount 最多 4 位小数
-            // takerAmount (shares) 使用 4 位小数
-            val rawTakerAmt = roundDown(sizeDecimal, 4)
+            // 参考官方 SDK ROUNDING_CONFIG：makerAmount(USDC) 最多 size 位（2 位），takerAmount(shares) 最多 amount 位
+            val rawTakerAmt = roundDown(sizeDecimal, roundConfig.amount)
 
             var rawMakerAmt = rawTakerAmt.multiply(rawPrice)
-            // makerAmount (USDC) 使用 2 位小数
-            if (decimalPlaces(rawMakerAmt) > 2) {
-                rawMakerAmt = roundUp(rawMakerAmt, 2 + 4)
-                if (decimalPlaces(rawMakerAmt) > 2) {
-                    rawMakerAmt = roundDown(rawMakerAmt, 2)
+            if (decimalPlaces(rawMakerAmt) > roundConfig.size) {
+                rawMakerAmt = roundUp(rawMakerAmt, roundConfig.size + 4)
+                if (decimalPlaces(rawMakerAmt) > roundConfig.size) {
+                    rawMakerAmt = roundDown(rawMakerAmt, roundConfig.size)
                 }
             }
 
@@ -179,6 +234,8 @@ class OrderSigningService {
      * @param size 数量
      * @param signatureType 签名类型（0: EOA, 1: Email/Magic, 2: Browser Wallet/Safe, 3: Deposit Wallet，见 [SIGNATURE_TYPE_POLY_1271]）
      * @param exchangeContract 签约用 exchange 合约地址；null 时用标准 CTF Exchange，neg risk 市场需传 Neg Risk Exchange
+     * @param tickSize 市场 tick size；null 时按 0.01 处理（兼容旧调用）
+     * @param strictTick true 时价格不在 tick 上直接抛出 [OrderPriceNotOnTickException]，不静默改价（手动下单使用）
      * @return 签名的订单对象
      */
     fun createAndSignOrder(
@@ -189,7 +246,9 @@ class OrderSigningService {
         price: String,
         size: String,
         signatureType: Int = 2,
-        exchangeContract: String? = null
+        exchangeContract: String? = null,
+        tickSize: BigDecimal? = null,
+        strictTick: Boolean = false
     ): SignedOrderObject {
         try {
             // 1. 从私钥获取签名地址
@@ -214,7 +273,7 @@ class OrderSigningService {
             }
 
             // 2. 计算订单金额
-            val amounts = calculateOrderAmounts(side, size, price)
+            val amounts = calculateOrderAmounts(side, size, price, roundConfigForTickSize(tickSize), strictTick)
 
             // 3. 生成 salt 和 timestamp（V2: timestamp 替代 nonce 保证唯一性）
             val salt = generateSalt()
@@ -272,6 +331,8 @@ class OrderSigningService {
                 builder = builder,
                 signature = signature
             )
+        } catch (e: OrderPriceNotOnTickException) {
+            throw e
         } catch (e: Exception) {
             logger.error("创建并签名订单失败 (V2)", e)
             throw RuntimeException("创建并签名订单失败 (V2): ${e.message}", e)
@@ -473,4 +534,10 @@ class OrderSigningService {
         return value.stripTrailingZeros().scale()
     }
 }
+
+/**
+ * 严格 tick 模式下价格不在 tick 上（或超出 [tick, 1 - tick]）时抛出
+ * 调用方可映射为 ErrorCode.ORDER_PRICE_INVALID 返回给前端
+ */
+class OrderPriceNotOnTickException(message: String) : IllegalArgumentException(message)
 

@@ -42,4 +42,31 @@ interface SellMatchRecordRepository : JpaRepository<SellMatchRecord, Long> {
      * 注意：priceUpdated 现在同时表示价格已更新和通知已发送（共用字段）
      */
     fun findByPriceUpdatedFalse(): List<SellMatchRecord>
+
+    /**
+     * 幂等判断：该跟单配置是否已为该 Leader 卖出交易创建过卖出记录（重试处理同一笔交易时避免重复卖出）
+     */
+    fun existsByCopyTradingIdAndLeaderSellTradeId(copyTradingId: Long, leaderSellTradeId: String): Boolean
+
+    /**
+     * 有界查询待处理（未更新价格/未通知）且查询失败次数未达上限的卖出记录
+     */
+    fun findTop200ByPriceUpdatedFalseAndPriceQueryAttemptsLessThanOrderByIdAsc(maxAttempts: Int): List<SellMatchRecord>
+
+    /**
+     * 有界查询指定成交状态、创建时间早于阈值的卖出记录（待确认卖单轮询）
+     */
+    fun findTop200ByFillStatusAndCreatedAtBeforeOrderByIdAsc(fillStatus: String, createdAt: Long): List<SellMatchRecord>
+
+    /**
+     * 查询关联跟单配置已不存在的卖出记录（清理用，避免逐条 findById）
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT r FROM SellMatchRecord r WHERE NOT EXISTS (SELECT c.id FROM CopyTrading c WHERE c.id = r.copyTradingId)")
+    fun findOrphanRecords(): List<SellMatchRecord>
+
+    /**
+     * 批量按卖出订单ID查询（链上 OrderFilled 的 orderHash 即 CLOB orderID），
+     * 用于识别账户链上成交是否为本系统下的跟单卖单
+     */
+    fun findBySellOrderIdIn(sellOrderIds: Collection<String>): List<SellMatchRecord>
 }

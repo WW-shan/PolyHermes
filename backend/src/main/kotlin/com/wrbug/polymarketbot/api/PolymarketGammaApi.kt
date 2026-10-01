@@ -19,13 +19,15 @@ interface PolymarketGammaApi {
      * @param conditionIds condition ID 数组（16 进制字符串，如 "0x..."）
      * @param clobTokenIds CLOB token ID 数组（用于通过 tokenId 查询市场）
      * @param includeTag 是否包含标签信息
+     * @param closed 是否查询已结束市场（已结束市场默认查询返回 []，必须传 true 才能查到）
      * @return 市场信息数组
      */
     @GET("/markets")
     suspend fun listMarkets(
         @Query("condition_ids") conditionIds: List<String>? = null,
         @Query("clob_token_ids") clobTokenIds: List<String>? = null,
-        @Query("include_tag") includeTag: Boolean? = null
+        @Query("include_tag") includeTag: Boolean? = null,
+        @Query("closed") closed: Boolean? = null
     ): Response<List<MarketResponse>>
 
     /**

@@ -22,6 +22,7 @@ import com.wrbug.polymarketbot.service.binance.BinanceKlineAutoSpreadService
 import com.wrbug.polymarketbot.service.cryptotail.CryptoTailStrategyService
 import com.wrbug.polymarketbot.service.cryptotail.CryptoTailMonitorService
 import com.wrbug.polymarketbot.service.cryptotail.CryptoTailStrategyExecutionService
+import com.wrbug.polymarketbot.service.cryptotail.CryptoTailManualOrderException
 import org.slf4j.LoggerFactory
 import org.springframework.context.MessageSource
 import org.springframework.http.ResponseEntity
@@ -73,6 +74,7 @@ class CryptoTailStrategyController(
                         ErrorCode.CRYPTO_TAIL_STRATEGY_WINDOW_EXCEED.messageKey -> ErrorCode.CRYPTO_TAIL_STRATEGY_WINDOW_EXCEED
                         ErrorCode.CRYPTO_TAIL_STRATEGY_INTERVAL_INVALID.messageKey -> ErrorCode.CRYPTO_TAIL_STRATEGY_INTERVAL_INVALID
                         ErrorCode.CRYPTO_TAIL_STRATEGY_AMOUNT_MODE_INVALID.messageKey -> ErrorCode.CRYPTO_TAIL_STRATEGY_AMOUNT_MODE_INVALID
+                        ErrorCode.PARAM_ERROR.messageKey -> ErrorCode.PARAM_ERROR
                         else -> ErrorCode.SERVER_CRYPTO_TAIL_STRATEGY_CREATE_FAILED
                     }
                     ResponseEntity.ok(ApiResponse.error(code, messageSource = messageSource))
@@ -100,6 +102,7 @@ class CryptoTailStrategyController(
                         ErrorCode.CRYPTO_TAIL_STRATEGY_WINDOW_INVALID.messageKey -> ErrorCode.CRYPTO_TAIL_STRATEGY_WINDOW_INVALID
                         ErrorCode.CRYPTO_TAIL_STRATEGY_WINDOW_EXCEED.messageKey -> ErrorCode.CRYPTO_TAIL_STRATEGY_WINDOW_EXCEED
                         ErrorCode.CRYPTO_TAIL_STRATEGY_AMOUNT_MODE_INVALID.messageKey -> ErrorCode.CRYPTO_TAIL_STRATEGY_AMOUNT_MODE_INVALID
+                        ErrorCode.PARAM_ERROR.messageKey -> ErrorCode.PARAM_ERROR
                         else -> ErrorCode.SERVER_CRYPTO_TAIL_STRATEGY_UPDATE_FAILED
                     }
                     ResponseEntity.ok(ApiResponse.error(code, messageSource = messageSource))
@@ -207,7 +210,7 @@ class CryptoTailStrategyController(
                 ?: ((System.currentTimeMillis() / 1000 / intervalSeconds) * intervalSeconds)
             // 默认使用 BTC 市场（向后兼容）
             val marketSlugPrefix = (request["marketSlugPrefix"] as? String) ?: "btc-updown"
-            val pair = binanceKlineAutoSpreadService.computeAndCache(marketSlugPrefix, intervalSeconds, periodStartUnix)
+            val pair = binanceKlineAutoSpreadService.computeReadOnly(marketSlugPrefix, intervalSeconds, periodStartUnix)
                 ?: return ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, "fetch_failed", messageSource))
             val body = CryptoTailAutoMinSpreadResponse(
                 minSpreadUp = pair.first.toPlainString(),
@@ -246,7 +249,7 @@ class CryptoTailStrategyController(
 
     /**
      * 手动下单
-     * 用户主动触发下单，不检查任何条件，仅检查当前周期是否已下单
+     * 用户主动触发下单，不检查价格/价差条件；服务端校验当前周期、自行解析 tokenIds，并按市场 tick 校验价格
      */
     @PostMapping("/manual-order")
     fun manualOrder(@RequestBody request: CryptoTailManualOrderRequest): ResponseEntity<ApiResponse<CryptoTailManualOrderResponse>> {
@@ -262,13 +265,9 @@ class CryptoTailStrategyController(
                     onSuccess = { ResponseEntity.ok(ApiResponse.success(it)) },
                     onFailure = { e ->
                         logger.error("手动下单失败: ${e.message}", e)
-                        val code = when (e.message) {
-                            "策略不存在" -> ErrorCode.CRYPTO_TAIL_STRATEGY_NOT_FOUND
-                            "当前周期已下单" -> ErrorCode.PARAM_ERROR
-                            "价格必须在 0~1 之间" -> ErrorCode.PARAM_ERROR
-                            "数量不能少于 1" -> ErrorCode.PARAM_ERROR
-                            "总金额不能少于 $1" -> ErrorCode.PARAM_ERROR
-                            "总金额超过策略配置的投入金额" -> ErrorCode.PARAM_ERROR
+                        val code = when {
+                            e is CryptoTailManualOrderException -> ErrorCode.PARAM_ERROR
+                            e.message == "策略不存在" -> ErrorCode.CRYPTO_TAIL_STRATEGY_NOT_FOUND
                             else -> ErrorCode.SERVER_ERROR
                         }
                         ResponseEntity.ok(ApiResponse.error(code, e.message, messageSource))

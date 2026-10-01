@@ -54,6 +54,14 @@ class AccountService(
     // 协程作用域（用于异步发送通知）
     private val notificationScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /** 在途赎回（accountId_conditionId），防止同一 condition 在上一笔未完成时重复提交 */
+    private val inFlightRedeems: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** 账户链上监听（删除账户时同步移除监听；延迟注入避免循环依赖） */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private var accountOnChainMonitorService: com.wrbug.polymarketbot.service.copytrading.monitor.AccountOnChainMonitorService? = null
+
     // 市价单价格调整系数（在最优价基础上调整，确保更快成交）
     // 市价买单：bestAsk + BUY_PRICE_ADJUSTMENT（加价，确保能立即成交）
     // 市价卖单：bestBid - SELL_PRICE_ADJUSTMENT（减价，确保能立即成交）
@@ -206,13 +214,10 @@ class AccountService(
                 return Result.failure(IllegalArgumentException("无效的钱包地址格式"))
             }
 
-            // 2. 验证至少提供了私钥或助记词之一
-            if (request.privateKey.isNullOrBlank() && request.mnemonic.isNullOrBlank()) {
-                return Result.failure(IllegalArgumentException("必须提供私钥或助记词"))
-            }
-
-            // 3. 判断导入类型：私钥导入可选 Magic，助记词导入不可
-            val isPrivateKeyImport = !request.privateKey.isNullOrBlank()
+            // 2. 判断导入类型：私钥导入可选 Magic，助记词导入不可
+            // 优先使用 importMethod；旧前端未传时仅按私钥/助记词字段是否非空推断（绝不读取或记录其内容）
+            val isPrivateKeyImport = resolveIsPrivateKeyImport(request)
+                .getOrElse { return Result.failure(it) }
             val candidateTypes = if (isPrivateKeyImport) {
                 listOf(WalletType.DEPOSIT, WalletType.SAFE, WalletType.MAGIC)
             } else {
@@ -243,6 +248,19 @@ class AccountService(
     }
 
     /**
+     * 解析导入方式：PRIVATE_KEY → true，MNEMONIC → false；
+     * 未传 importMethod 时兼容旧前端：助记词字段非空且私钥为空 → 助记词导入，其余按私钥导入（返回全部候选）
+     */
+    internal fun resolveIsPrivateKeyImport(request: CheckProxyOptionsRequest): Result<Boolean> {
+        return when (request.importMethod?.trim()?.uppercase()) {
+            "PRIVATE_KEY" -> Result.success(true)
+            "MNEMONIC" -> Result.success(false)
+            null, "" -> Result.success(!(request.privateKey.isNullOrBlank() && !request.mnemonic.isNullOrBlank()))
+            else -> Result.failure(IllegalArgumentException("importMethod 无效，应为 PRIVATE_KEY 或 MNEMONIC"))
+        }
+    }
+
+    /**
      * 构建单个代理地址选项（地址 + 资产 + 部署状态），失败时返回带 error 的选项而不抛异常
      */
     private suspend fun buildProxyOption(walletAddress: String, walletType: WalletType): ProxyOptionDto {
@@ -258,10 +276,18 @@ class AccountService(
             hasAssets = false
         )
         return try {
-            val proxyAddress = blockchainService.getProxyAddress(walletAddress, walletType).getOrNull()
-                ?: return emptyOption.copy(error = "获取 ${walletType.name} 代理地址失败")
-            val balance = blockchainService.getWalletBalance(proxyAddress).getOrNull()
-            val deployed = blockchainService.isProxyDeployed(proxyAddress)
+            val proxyAddress = blockchainService.getProxyAddress(walletAddress, walletType).getOrElse {
+                return emptyOption.copy(error = "获取 ${walletType.name} 代理地址失败: ${it.message}")
+            }
+            // 余额 / 部署状态查询失败时在 error 中标注，前端显示“查询失败”，不把失败当作 0 / 未部署
+            val balanceResult = blockchainService.getWalletBalance(proxyAddress)
+            val deployedResult = blockchainService.checkProxyDeployed(proxyAddress)
+            val balance = balanceResult.getOrNull()
+            val deployed = deployedResult.getOrDefault(false)
+            val queryError = listOfNotNull(
+                balanceResult.exceptionOrNull()?.let { "资产查询失败: ${it.message}" },
+                deployedResult.exceptionOrNull()?.let { "部署状态查询失败: ${it.message}" }
+            ).joinToString("; ").ifBlank { null }
             ProxyOptionDto(
                 walletType = walletType.value,
                 proxyAddress = proxyAddress,
@@ -273,7 +299,8 @@ class AccountService(
                 hasAssets = (balance?.availableBalance?.toSafeBigDecimal()?.gt(BigDecimal.ZERO) == true) ||
                         (balance?.positionBalance?.toSafeBigDecimal()?.gt(BigDecimal.ZERO) == true) ||
                         (balance?.positions?.isNotEmpty() == true),
-                deployed = deployed
+                deployed = deployed,
+                error = queryError
             )
         } catch (e: Exception) {
             logger.warn("获取 ${walletType.name} 代理地址或资产失败: ${e.message}", e)
@@ -304,7 +331,11 @@ class AccountService(
      * @return 不匹配时返回错误信息，匹配或未部署返回 null
      */
     private suspend fun checkDepositWalletOwnerMismatch(walletAddress: String, depositWallet: String): String? {
-        if (!blockchainService.isProxyDeployed(depositWallet)) return null
+        // 部署状态查询失败时 fail-closed，不能当作“未部署”跳过 owner 校验
+        val deployed = blockchainService.checkProxyDeployed(depositWallet).getOrElse {
+            return "无法查询 Deposit Wallet $depositWallet 的部署状态，请确认 RPC 节点可用后重试"
+        }
+        if (!deployed) return null
         // 已部署但读不到 owner 时 fail-closed：不能把 RPC 失败当成 owner 匹配
         val owner = blockchainService.getDepositWalletOwner(depositWallet)
             ?: return "无法读取 Deposit Wallet $depositWallet 的 owner，请确认 RPC 节点可用后重试"
@@ -316,18 +347,58 @@ class AccountService(
     }
 
     /**
-     * Polymarket 代币批准检查：pUSD 需授权的 spender 合约地址（Polygon 主网）
-     * 来源：Polymarket/magic-safe-builder-example README §6 Token Approvals
-     * 及 polymarket-ts-sdk setupTradingApprovals。
-     *
-     * 注意：0xd91E80... 是已退役的 CLOB v1 Neg Risk Adapter，官方 SDK 已不再要求
-     * 对它授予 pUSD allowance；继续检查/授权会让健康账户被误报为未完成设置。
+     * 交易授权项
+     * @param key approvalDetails 中的 key（前端按 accountSetup.approvalDetails.<key> 显示）
+     * @param erc1155 true: ERC1155 setApprovalForAll；false: ERC20 approve(MAX)
+     * @param token 代币合约
+     * @param spender ERC20 spender / ERC1155 operator
      */
-    private val setupApprovalSpenders = mapOf(
-        "CTF_CONTRACT" to "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",           // Conditional Tokens
-        "CTF_EXCHANGE" to "0xE111180000d2663C0091e4f400237545B87B996B",             // 普通市场交易所
-        "NEG_RISK_EXCHANGE" to "0xe2222d279d744050d28e00520010520000310F59"          // 负风险市场交易所
+    internal data class TradingApproval(
+        val key: String = "",
+        val erc1155: Boolean = false,
+        val token: String = "",
+        val spender: String = ""
     )
+
+    /**
+     * 官方交易授权清单（与 Polymarket ts-sdk actions/approvals.ts getRequiredTradingApprovals 一致）：
+     * pUSD 对 7 个 spender 无限授权；CTF 对 7 个 operator、PositionManager 对 3 个 operator setApprovalForAll。
+     * 注意：0xd91E80...（CLOB v1 NegRiskAdapter）不在官方清单中，不再要求。
+     */
+    internal val requiredTradingApprovals: List<TradingApproval> = run {
+        val pusd = RelayClientService.PUSD_ADDRESS
+        val ctf = RelayClientService.CONDITIONAL_TOKENS_ADDRESS
+        val positionManager = "0x006F54F7f9A22e0000CC2AB60031000000ae9fEF"
+        val exchange = "0xE111180000d2663C0091e4f400237545B87B996B"
+        val negRiskExchange = "0xe2222d279d744050d28e00520010520000310F59"
+        val adapter = RelayClientService.CTF_COLLATERAL_ADAPTER
+        val negRiskAdapter = RelayClientService.NEG_RISK_CTF_COLLATERAL_ADAPTER
+        val router = "0x12121212006e4CD160D18e3f00711DA5c3372600"
+        val exchangeV3 = "0xe3333700cA9d93003F00f0F71f8515005F6c00Aa"
+        val perps = "0xDCa4af75705dbB50f62437045afF9921947917d2"
+        val autoRedeem = "0xa1200000d0002264C9a1698e001292D00E1b00af"
+        val binaryModule = "0x1000008dD9001B968442c1000017eaE6E0dA00Ba"
+        val negRiskModule = "0x200000900045e3B6259600682756002200028933"
+        listOf(
+            TradingApproval("CTF_EXCHANGE", false, pusd, exchange),
+            TradingApproval("NEG_RISK_EXCHANGE", false, pusd, negRiskExchange),
+            TradingApproval("COLLATERAL_ADAPTER", false, pusd, adapter),
+            TradingApproval("NEG_RISK_COLLATERAL_ADAPTER", false, pusd, negRiskAdapter),
+            TradingApproval("PROTOCOL_V2_ROUTER", false, pusd, router),
+            TradingApproval("EXCHANGE_V3", false, pusd, exchangeV3),
+            TradingApproval("PERPS_DEPOSIT", false, pusd, perps),
+            TradingApproval("CTF_APPROVAL_CTF_EXCHANGE", true, ctf, exchange),
+            TradingApproval("CTF_APPROVAL_NEG_RISK_EXCHANGE", true, ctf, negRiskExchange),
+            TradingApproval("CTF_APPROVAL_COLLATERAL_ADAPTER", true, ctf, adapter),
+            TradingApproval("CTF_APPROVAL_NEG_RISK_COLLATERAL_ADAPTER", true, ctf, negRiskAdapter),
+            TradingApproval("CTF_APPROVAL_AUTO_REDEEM", true, ctf, autoRedeem),
+            TradingApproval("CTF_APPROVAL_BINARY_MODULE", true, ctf, binaryModule),
+            TradingApproval("CTF_APPROVAL_NEG_RISK_MODULE", true, ctf, negRiskModule),
+            TradingApproval("POSITION_MANAGER_APPROVAL_PROTOCOL_V2_ROUTER", true, positionManager, router),
+            TradingApproval("POSITION_MANAGER_APPROVAL_EXCHANGE_V3", true, positionManager, exchangeV3),
+            TradingApproval("POSITION_MANAGER_APPROVAL_AUTO_REDEEM", true, positionManager, autoRedeem)
+        )
+    }
 
     /** USDC 精度（6 位小数） */
     private val usdcDecimals = java.math.BigDecimal("1000000")
@@ -361,30 +432,22 @@ class AccountService(
                 )
             }
 
-            // 步骤1：代理钱包是否已部署
-            val proxyDeployed = blockchainService.isProxyDeployed(proxyAddress)
+            // 步骤1：代理钱包是否已部署（查询失败不当作“未部署”，在 error 中提示）
+            val deployedResult = blockchainService.checkProxyDeployed(proxyAddress)
+            val proxyDeployed = deployedResult.getOrDefault(false)
 
             // 步骤2：交易是否已启用（API 凭证是否已配置）
             val tradingEnabled = account.apiKey != null &&
                     account.apiSecret != null &&
                     account.apiPassphrase != null
 
-            // 步骤3：代币是否已批准（USDC 对各 spender 的 allowance，默认无限授权）
-            val approvalDetails = mutableMapOf<String, String>()
-            var tokensApproved = true
-            for ((name, spender) in setupApprovalSpenders) {
-                val allowanceResult = blockchainService.getUsdcAllowance(proxyAddress, spender)
-                val allowance = allowanceResult.getOrNull() ?: BigInteger.ZERO
-                val displayAmount = if (allowance >= unlimitedAllowance) {
-                    "unlimited"
-                } else {
-                    java.math.BigDecimal(allowance).divide(usdcDecimals, 6, java.math.RoundingMode.DOWN).toPlainString()
-                }
-                approvalDetails[name] = displayAmount
-                if (allowance <= BigInteger.ZERO) {
-                    tokensApproved = false
-                }
-            }
+            // 步骤3：官方授权清单（ERC20 allowance + ERC1155 isApprovedForAll），任一缺失即未完成
+            val (approvalDetails, missing, queryFailed) = queryTradingApprovals(proxyAddress)
+            val tokensApproved = missing.isEmpty() && queryFailed.isEmpty()
+
+            val errors = mutableListOf<String>()
+            deployedResult.exceptionOrNull()?.let { errors.add("代理部署状态查询失败: ${it.message}") }
+            if (queryFailed.isNotEmpty()) errors.add("部分授权状态查询失败: ${queryFailed.joinToString(",")}")
 
             Result.success(
                 AccountSetupStatusDto(
@@ -392,13 +455,51 @@ class AccountService(
                     tradingEnabled = tradingEnabled,
                     tokensApproved = tokensApproved,
                     approvalDetails = approvalDetails,
-                    error = null
+                    error = errors.takeIf { it.isNotEmpty() }?.joinToString("; ")
                 )
             )
         } catch (e: Exception) {
             logger.error("检查账户设置状态失败: accountId=$accountId, ${e.message}", e)
             Result.failure(e)
         }
+    }
+
+    /**
+     * 查询官方授权清单每一项的状态
+     * @return Triple(approvalDetails, 缺失项, 查询失败项)；
+     *   approvalDetails 值：ERC20 为 "unlimited" 或额度（6 位小数），ERC1155 为 "approved" / "0"，查询失败为 "queryFailed"
+     */
+    internal suspend fun queryTradingApprovals(
+        proxyAddress: String
+    ): Triple<Map<String, String>, List<TradingApproval>, List<TradingApproval>> {
+        val details = linkedMapOf<String, String>()
+        val missing = mutableListOf<TradingApproval>()
+        val failed = mutableListOf<TradingApproval>()
+        for (approval in requiredTradingApprovals) {
+            if (approval.erc1155) {
+                blockchainService.isErc1155ApprovedForAll(proxyAddress, approval.spender, approval.token).fold(
+                    onSuccess = { approved ->
+                        details[approval.key] = if (approved) "approved" else "0"
+                        if (!approved) missing.add(approval)
+                    },
+                    onFailure = { details[approval.key] = "queryFailed"; failed.add(approval) }
+                )
+            } else {
+                blockchainService.getErc20Allowance(approval.token, proxyAddress, approval.spender).fold(
+                    onSuccess = { allowance ->
+                        details[approval.key] = if (allowance >= unlimitedAllowance) {
+                            "unlimited"
+                        } else {
+                            java.math.BigDecimal(allowance).divide(usdcDecimals, 6, java.math.RoundingMode.DOWN).toPlainString()
+                        }
+                        // 与官方一致：额度低于 MAX 视为需要重新授权
+                        if (allowance < unlimitedAllowance) missing.add(approval)
+                    },
+                    onFailure = { details[approval.key] = "queryFailed"; failed.add(approval) }
+                )
+            }
+        }
+        return Triple(details, missing, failed)
     }
 
     /** 步骤1 跳转 URL（代理部署需在 Polymarket 完成） */
@@ -433,7 +534,10 @@ class AccountService(
                         if (proxyAddress.isBlank()) {
                             return Result.failure(IllegalArgumentException("代理地址为空"))
                         }
-                        val alreadyDeployed = blockchainService.isProxyDeployed(proxyAddress)
+                        // getCode 查询失败时不能当作“未部署”而重复部署
+                        val alreadyDeployed = blockchainService.checkProxyDeployed(proxyAddress).getOrElse {
+                            return Result.failure(IllegalStateException("查询代理钱包部署状态失败，请稍后重试: ${it.message}"))
+                        }
                         if (alreadyDeployed) {
                             Result.success(ExecuteSetupStepResponse(success = true))
                         } else {
@@ -500,15 +604,37 @@ class AccountService(
                     }
                     val privateKey = decryptPrivateKey(account)
                     val walletType = WalletType.fromStringOrDefault(account.walletType, WalletType.SAFE)
-                    val approveTxs = setupApprovalSpenders.values.map { spender ->
-                        relayClientService.createUsdcApproveTx(spender, unlimitedAllowance)
+                    // 代理钱包未部署时 eth_call 返回 0x，直接提示先完成步骤1（Magic 代理由 Polymarket 首次交易时部署）
+                    val deployed = blockchainService.checkProxyDeployed(proxyAddress).getOrElse {
+                        return Result.failure(IllegalStateException("查询代理钱包部署状态失败，请稍后重试: ${it.message}"))
                     }
-                    // Safe 走 MultiSend，Deposit Wallet 走原生批量调用，Magic 逐笔执行
+                    if (!deployed) {
+                        return Result.failure(IllegalStateException("代理钱包尚未部署，请先完成步骤1"))
+                    }
+                    // Magic / Safe / Deposit Wallet 的授权都通过 Builder Relayer（Gasless）执行
+                    if (!relayClientService.isBuilderApiKeyConfigured()) {
+                        return Result.failure(RelayClientService.BuilderApiKeyNotConfiguredException("代币授权（Gasless）"))
+                    }
+                    // 只提交缺失的授权项；查询失败的项也一并提交（授权幂等，重复授权无副作用）
+                    val (_, missing, queryFailed) = queryTradingApprovals(proxyAddress)
+                    val toApprove = missing + queryFailed
+                    if (toApprove.isEmpty()) {
+                        return Result.success(ExecuteSetupStepResponse(success = true))
+                    }
+                    val approveTxs = toApprove.map { approval ->
+                        if (approval.erc1155) {
+                            relayClientService.createErc1155SetApprovalForAllTx(approval.token, approval.spender)
+                        } else {
+                            relayClientService.createUsdcApproveTx(approval.spender, unlimitedAllowance)
+                        }
+                    }
+                    // Safe 走 MultiSend，Deposit Wallet 走原生批量调用，Magic 走 proxy(calls[]) 批量调用
                     val executeResult = relayClientService.executeCalls(
                         privateKey = privateKey,
                         proxyAddress = proxyAddress,
                         txs = approveTxs,
-                        walletType = walletType
+                        walletType = walletType,
+                        metadata = "PolyHermes token approvals"
                     )
                     executeResult.fold(
                         onSuccess = { txHash ->
@@ -580,6 +706,13 @@ class AccountService(
             // 前端会显示确认提示框，由用户决定是否删除
 
             accountRepository.delete(account)
+
+            // 同步移除该账户的链上监听，避免资源泄漏
+            try {
+                accountOnChainMonitorService?.removeAccount(accountId)
+            } catch (e: Exception) {
+                logger.warn("移除账户链上监听失败: accountId=$accountId, ${e.message}")
+            }
 
             // 刷新订单推送订阅（账户删除时）
             orderPushService.refreshSubscriptions()
@@ -982,6 +1115,8 @@ class AccountService(
             val accounts = accountRepository.findAll()
             val currentPositions = mutableListOf<AccountPositionDto>()
             val historyPositions = mutableListOf<AccountPositionDto>()
+            // 获取失败的账户：调用方（持仓核对、卖出）必须跳过，不能把“拉不到”当成“没有仓位”
+            val failedAccountIds = mutableListOf<Long>()
 
             // 遍历所有账户，查询每个账户的仓位
             accounts.forEach { account ->
@@ -1035,7 +1170,9 @@ class AccountService(
                                     redeemable = pos.redeemable ?: false,
                                     mergeable = pos.mergeable ?: false,
                                     endDate = pos.endDate,
-                                    isCurrent = isCurrent  // 标识是当前仓位还是历史仓位
+                                    isCurrent = isCurrent,  // 标识是当前仓位还是历史仓位
+                                    tokenId = pos.asset?.takeIf { it.isNotBlank() },
+                                    negativeRisk = pos.negativeRisk
                                 )
 
                                 // 根据 isCurrent 分别添加到对应的列表
@@ -1045,8 +1182,12 @@ class AccountService(
                                     historyPositions.add(positionDto)
                                 }
                             }
+                        } else {
+                            failedAccountIds.add(account.id!!)
+                            logger.warn("查询账户 ${account.id} 仓位失败: ${positionsResult.exceptionOrNull()?.message}")
                         }
                     } catch (e: Exception) {
+                        failedAccountIds.add(account.id!!)
                         logger.warn("查询账户 ${account.id} 仓位失败: ${e.message}", e)
                     }
                 }
@@ -1057,7 +1198,8 @@ class AccountService(
             Result.success(
                 PositionListResponse(
                     currentPositions = currentPositions,
-                    historyPositions = historyPositions
+                    historyPositions = historyPositions,
+                    failedAccountIds = failedAccountIds
                 )
             )
         } catch (e: Exception) {
@@ -1106,130 +1248,86 @@ class AccountService(
                 null
             }
 
-            // 3. 验证仓位是否存在并获取原始数量
-            val positionsResult = getAllPositions()
-            val (_, originalQuantity) = positionsResult.fold(
-                onSuccess = { positionListResponse ->
-                    val position = positionListResponse.currentPositions.find {
-                        it.accountId == request.accountId &&
-                                it.marketId == request.marketId &&
-                                it.side == request.side
-                    }
+            // 3. 从实时仓位中定位要卖的仓位（获取失败的账户直接报错，不能当作“仓位不存在”）
+            val positionList = getAllPositions().getOrElse {
+                return Result.failure(Exception("查询仓位失败: ${it.message}"))
+            }
+            if (request.accountId in positionList.failedAccountIds) {
+                return Result.failure(IllegalStateException("账户仓位获取失败，请稍后刷新重试"))
+            }
+            val position = positionList.currentPositions.find {
+                it.accountId == request.accountId && it.marketId == request.marketId &&
+                        (if (request.outcomeIndex != null) it.outcomeIndex == request.outcomeIndex else it.side == request.side)
+            } ?: return Result.failure(IllegalArgumentException("仓位不存在"))
+            val originalQuantity = (position.originalQuantity ?: position.quantity).toSafeBigDecimal()
 
-                    if (position == null) {
-                        return Result.failure(IllegalArgumentException("仓位不存在"))
-                    }
-
-                    // 获取原始数量：如果有 originalQuantity 使用它，否则从 API 重新获取
-                    val originalQty = if (position.originalQuantity != null) {
-                        position.originalQuantity.toSafeBigDecimal()
-                    } else {
-                        // 如果没有 originalQuantity，从区块链服务重新获取原始数据
-                        val blockchainPositionsResult = blockchainService.getPositions(account.proxyAddress)
-                        if (blockchainPositionsResult.isSuccess) {
-                            val blockchainPos = blockchainPositionsResult.getOrNull()?.find {
-                                it.conditionId == request.marketId && it.outcome == request.side
-                            }
-                            blockchainPos?.size?.let { BigDecimal.valueOf(it) } ?: position.quantity.toSafeBigDecimal()
-                        } else {
-                            position.quantity.toSafeBigDecimal()
-                        }
-                    }
-                    
-                    Pair(position, originalQty)
-                },
-                onFailure = { e ->
-                    return Result.failure(Exception("查询仓位失败: ${e.message}"))
+            // 4. 确定 tokenId：优先实时仓位的 asset；前端传入的 tokenId 必须与之一致
+            val positionTokenId = position.tokenId
+            if (!request.tokenId.isNullOrBlank() && positionTokenId != null && request.tokenId != positionTokenId) {
+                return Result.failure(IllegalArgumentException("tokenId 与实时仓位不一致，请刷新后重试"))
+            }
+            val negRisk = position.negativeRisk ?: marketService.getNegRiskByConditionId(request.marketId)
+                ?: return Result.failure(IllegalStateException("无法确定市场是否为 Neg Risk，已拒绝下单，请稍后重试"))
+            val tokenId = positionTokenId ?: run {
+                val outcomeIndex = position.outcomeIndex ?: request.outcomeIndex
+                    ?: return Result.failure(IllegalArgumentException("缺少 outcomeIndex，无法确定 tokenId"))
+                blockchainService.getTokenId(request.marketId, outcomeIndex, negRisk).getOrElse {
+                    return Result.failure(IllegalStateException("无法获取 tokenId: ${it.message}"))
                 }
-            )
+            }
 
-            // 4. 计算实际卖出数量
-            val sellQuantity = if (percentDecimal != null) {
-                // 使用百分比计算：原始数量 * 百分比 / 100
-                originalQuantity.multiply(percentDecimal)
-                    .divide(BigDecimal.valueOf(100), 8, java.math.RoundingMode.DOWN)
+            // 5. 百分比卖出：前端看到的持仓与实时持仓偏差过大时拒绝，提示刷新
+            if (percentDecimal != null && !request.expectedQuantity.isNullOrBlank()) {
+                val expected = request.expectedQuantity.toBigDecimalOrNull()
+                    ?: return Result.failure(IllegalArgumentException("expectedQuantity 格式不正确"))
+                if (!isExpectedQuantityConsistent(expected, originalQuantity)) {
+                    return Result.failure(IllegalStateException("持仓已变化（当前 ${originalQuantity.toPlainString()}），请刷新后重试"))
+                }
+            }
+
+            // 6. 计算卖出数量：按 2 位小数向下取整，且不超过持仓
+            val rawQuantity = if (percentDecimal != null) {
+                originalQuantity.multiply(percentDecimal).divide(BigDecimal.valueOf(100), 8, java.math.RoundingMode.DOWN)
             } else {
-                // 使用手动输入的数量
-                request.quantity!!.toSafeBigDecimal()
+                request.quantity!!.toBigDecimalOrNull()
+                    ?: return Result.failure(IllegalArgumentException("卖出数量格式不正确"))
             }
-
-            // 5. 验证卖出数量
+            val sellQuantity = normalizeSellQuantity(rawQuantity)
             if (sellQuantity <= BigDecimal.ZERO) {
-                return Result.failure(IllegalArgumentException("卖出数量必须大于0"))
+                return Result.failure(IllegalArgumentException("卖出数量必须大于0（最小 0.01）"))
             }
-
             if (sellQuantity > originalQuantity) {
                 return Result.failure(IllegalArgumentException("卖出数量不能超过持仓数量"))
             }
 
-            // 6. 获取 tokenId（从 conditionId 和 outcomeIndex 计算）
-            // 需要先获取 tokenId，以便后续通过 CLOB API 获取三元及以上市场的价格
-            // 优先使用 outcomeIndex，如果没有则返回错误（不再通过 side 字符串推断）
-            val tokenIdResult = if (request.outcomeIndex != null) {
-                blockchainService.getTokenId(request.marketId, request.outcomeIndex)
-            } else {
-                logger.warn("缺少 outcomeIndex 参数，无法计算 tokenId: marketId=${request.marketId}, side=${request.side}")
-                Result.failure<String>(IllegalArgumentException("缺少 outcomeIndex 参数，无法计算 tokenId。请提供 outcomeIndex 参数"))
+            // 7. 价格：按市场 tick 校验 / 计算（签名前自行校验，不依赖签名服务）
+            val tick = fetchTickSize(tokenId).getOrElse {
+                return Result.failure(IllegalStateException("获取市场最小价格单位失败: ${it.message}"))
             }
-            val tokenId = tokenIdResult.getOrNull()
-
-            if (tokenId == null) {
-                logger.warn("无法获取 tokenId，将使用 market 参数: conditionId=${request.marketId}, side=${request.side}, outcomeIndex=${request.outcomeIndex}, error=${tokenIdResult.exceptionOrNull()?.message}")
-            }
-
-            // 7. 验证 tokenId
-            if (tokenId == null) {
-                return Result.failure(IllegalStateException("无法获取 tokenId，无法创建订单。请确保已配置 Ethereum RPC URL 或提供 outcomeIndex 参数"))
-            }
-
-            // 8. 确定卖出价格
-            // 市价单：从订单表获取最优价（通过 tokenId 获取对应 outcome 的订单表）
-            // - 市价卖单：从订单表获取 bestBid（最高买入价），然后减去 SELL_PRICE_ADJUSTMENT
-            // - 市价买单：从订单表获取 bestAsk（最低卖出价），然后加上 BUY_PRICE_ADJUSTMENT
-            // 限价订单：使用用户输入的价格
-            // 注意：使用 outcomeIndex 和 tokenId 支持多元市场（二元、三元及以上）
-            // 如果无法获取订单表，将抛出异常
             val sellPrice = if (request.orderType == "MARKET") {
-                try {
-                    // 市价单：从订单表获取最优价（卖出订单，需要 bestBid）
-                    // 通过 tokenId 获取对应 outcome 的订单表，支持多元市场
-                    getOptimalPriceFromOrderbook(tokenId, isSellOrder = true)
-                } catch (e: IllegalStateException) {
-                    logger.error("无法获取订单表最优价: ${e.message}", e)
-                    return Result.failure(IllegalStateException("无法获取订单表最优价: ${e.message}"))
+                val bestBid = fetchBestBid(tokenId).getOrElse {
+                    return Result.failure(IllegalStateException("无法获取订单表最优价: ${it.message}"))
                 }
+                marketSellPrice(bestBid, SELL_PRICE_ADJUSTMENT, tick).toPlainString()
             } else {
-                // 限价订单：使用用户输入的价格
-                request.price ?: return Result.failure(IllegalArgumentException("限价订单必须提供价格"))
+                val limit = request.price?.toBigDecimalOrNull()
+                    ?: return Result.failure(IllegalArgumentException("限价订单必须提供有效价格"))
+                validateLimitPrice(limit, tick)?.let { return Result.failure(IllegalArgumentException(it)) }
+                limit.stripTrailingZeros().toPlainString()
             }
 
-            // 9. 验证价格
-            val priceDecimal = sellPrice.toSafeBigDecimal()
-            if (priceDecimal <= BigDecimal.ZERO) {
-                return Result.failure(IllegalArgumentException("价格必须大于0"))
-            }
-
-            // 10. 确定订单类型和过期时间
-            // 根据官方文档：
-            // - GTC (Good-Til-Cancelled): expiration 必须为 "0"
-            // - GTD (Good-Til-Date): expiration 为具体的 Unix 时间戳（秒）
-            // - FOK (Fill-Or-Kill): expiration 必须为 "0"
-            // - FAK (Fill-And-Kill): expiration 必须为 "0"
+            // 8. 确定订单类型和过期时间（GTC/FOK/FAK 的 expiration 均为 "0"）
             val orderType = when (request.orderType) {
                 "MARKET" -> "FAK"  // Fill-And-Kill（与官方市价单一致，允许部分成交）
                 "LIMIT" -> "GTC"   // Good-Til-Cancelled
                 else -> "GTC"
             }
 
-            // 7. 解密私钥
+            // 9. 解密私钥
             val decryptedPrivateKey = decryptPrivateKey(account)
 
-            // 11. 检查市场是否为 Neg Risk 市场，获取正确的 Exchange 合约地址
-            val negRisk = marketService.getNegRiskByConditionId(request.marketId) == true
+            // 10. Neg Risk 市场使用 Neg Risk Exchange 签约
             val exchangeContract = exchangeContractForMarket(negRisk)
-            if (negRisk) {
-                logger.debug("市场为 Neg Risk，使用 Neg Risk Exchange 签约: conditionId=${request.marketId}")
-            }
 
             // 12. 创建并签名订单（使用计算后的卖出数量，按账户钱包类型使用对应 signatureType）
             val signedOrder = try {
@@ -1241,7 +1339,9 @@ class AccountService(
                     price = sellPrice,
                     size = sellQuantity.toPlainString(),  // 使用计算后的卖出数量
                     signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType),
-                    exchangeContract = exchangeContract
+                    exchangeContract = exchangeContract,
+                    tickSize = tick,
+                    strictTick = true
                 )
             } catch (e: Exception) {
                 logger.error("创建并签名订单失败", e)
@@ -1453,6 +1553,75 @@ class AccountService(
     }
 
     /**
+     * 限价校验：价格必须在 [tick, 1 - tick] 且是 tick 的整数倍；不合法返回错误信息
+     */
+    internal fun validateLimitPrice(price: BigDecimal, tick: BigDecimal): String? {
+        if (price < tick || price > BigDecimal.ONE.subtract(tick)) {
+            return "限价必须在 [$tick, ${BigDecimal.ONE.subtract(tick).toPlainString()}] 之间"
+        }
+        if (price.remainder(tick).compareTo(BigDecimal.ZERO) != 0) {
+            return "限价必须是最小价格单位 $tick 的整数倍"
+        }
+        return null
+    }
+
+    /**
+     * 市价卖出价格 = max(bestBid − 滑点, tick)，按 tick 向下取整（bestBid 为最高买价）
+     */
+    internal fun marketSellPrice(bestBid: BigDecimal, slippage: BigDecimal, tick: BigDecimal): BigDecimal {
+        val raw = bestBid.subtract(slippage)
+        val floored = raw.divide(tick, 0, java.math.RoundingMode.DOWN).multiply(tick)
+        return maxOf(floored, tick).stripTrailingZeros()
+    }
+
+    /**
+     * 卖出数量按 2 位小数向下取整（与官方 SDK SELL makerAmount 精度一致）
+     */
+    internal fun normalizeSellQuantity(quantity: BigDecimal): BigDecimal =
+        quantity.setScale(2, java.math.RoundingMode.DOWN)
+
+    /**
+     * 前端看到的持仓与实时持仓偏差是否在允许范围内：max(1% × 实时持仓, 0.01 份)
+     */
+    internal fun isExpectedQuantityConsistent(expected: BigDecimal, actual: BigDecimal): Boolean {
+        val tolerance = maxOf(actual.abs().multiply(BigDecimal("0.01")), BigDecimal("0.01"))
+        return expected.subtract(actual).abs() <= tolerance
+    }
+
+    /**
+     * 查询 CLOB 最小价格单位（GET /tick-size?token_id=，返回 minimum_tick_size）；失败返回 Result.failure
+     */
+    private suspend fun fetchTickSize(tokenId: String): Result<BigDecimal> = withContext(Dispatchers.IO) {
+        try {
+            val url = "${com.wrbug.polymarketbot.constants.PolymarketConstants.CLOB_BASE_URL}/tick-size?token_id=$tokenId"
+            val request = okhttp3.Request.Builder().url(url).get().build()
+            com.wrbug.polymarketbot.util.createClient().build().newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!response.isSuccessful || body.isNullOrBlank()) {
+                    return@withContext Result.failure(Exception("查询 tick size 失败: HTTP ${response.code}"))
+                }
+                val tick = body.fromJson<JsonObject>()?.get("minimum_tick_size")?.asString?.toSafeBigDecimal()
+                if (tick == null || tick <= BigDecimal.ZERO || tick >= BigDecimal.ONE) {
+                    return@withContext Result.failure(Exception("tick size 无效: $body"))
+                }
+                Result.success(tick.stripTrailingZeros())
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 查询订单簿最高买价（bids 按价格升序返回，最优价为最大值）
+     */
+    private suspend fun fetchBestBid(tokenId: String): Result<BigDecimal> {
+        val orderbook = clobService.getOrderbookByTokenId(tokenId).getOrElse { return Result.failure(it) }
+        val bestBid = orderbook.bids.mapNotNull { it.price.toBigDecimalOrNull() }.maxOrNull()
+            ?: return Result.failure(IllegalStateException("订单簿没有买单，无法市价卖出"))
+        return Result.success(bestBid)
+    }
+
+    /**
      * 从订单表获取最优价（用于市价单）
      * 支持多元市场（二元、三元及以上）
      * 委托给 com.wrbug.polymarketbot.service.common.PolymarketClobService.getOptimalPrice 方法
@@ -1481,7 +1650,11 @@ class AccountService(
         return try {
             // 使用 Gamma API 获取市场信息（支持 condition_ids 参数）
             val gammaApi = retrofitFactory.createGammaApi()
-            val response = gammaApi.listMarkets(conditionIds = listOf(marketId))
+            var response = gammaApi.listMarkets(conditionIds = listOf(marketId))
+            // Gamma 对已结束市场默认返回 []，需加 closed=true 才能查到
+            if (response.isSuccessful && response.body().isNullOrEmpty()) {
+                response = gammaApi.listMarkets(conditionIds = listOf(marketId), closed = true)
+            }
 
             if (response.isSuccessful && response.body() != null) {
                 val markets = response.body()!!
@@ -1631,15 +1804,9 @@ class AccountService(
                 accounts[accountId] = account
             }
 
-            // 4. 若涉及 Magic / Deposit Wallet 账户，必须已配置 Builder API Key（提前判断，避免执行到深层再报错）
-            val requiresBuilderRelayer = accounts.values.any {
-                val type = WalletType.fromStringOrDefault(it.walletType, WalletType.SAFE)
-                type == WalletType.MAGIC || type == WalletType.DEPOSIT
-            }
-            if (requiresBuilderRelayer && !relayClientService.isBuilderApiKeyConfigured()) {
-                return Result.failure(
-                    IllegalStateException("Builder API Key 未配置，无法执行 Magic / Deposit Wallet 账户赎回（Gasless）。请前往系统设置页面配置 Builder API Key。")
-                )
+            // 4. 所有钱包类型（Safe / Magic / Deposit Wallet）的赎回都通过 Builder Relayer 执行，必须已配置 Builder API Key
+            if (!relayClientService.isBuilderApiKeyConfigured()) {
+                return Result.failure(RelayClientService.BuilderApiKeyNotConfiguredException("赎回（Gasless）"))
             }
 
             // 5. 验证并收集要赎回的仓位信息（按账户分组）
@@ -1676,7 +1843,8 @@ class AccountService(
                             side = position.side,
                             outcomeIndex = requestItem.outcomeIndex,
                             quantity = position.quantity,
-                            value = position.quantity  // 赎回价值等于数量（1:1）
+                            // 预估赎回价值 = 当前价值（赢方 1×数量，输方 0）；实际到账以链上回执为准
+                            value = position.currentValue.toSafeBigDecimal().toPlainString()
                         )
                     )
                 }
@@ -1702,70 +1870,62 @@ class AccountService(
                 // 解密私钥（只需解密一次）
                 val decryptedPrivateKey = decryptPrivateKey(account)
 
-                // 执行赎回
+                // 执行赎回（以链上回执为准）
+                // negRisk 取自 Data API 仓位自带的 negativeRisk 字段；缺失时 fail-closed，不猜测 adapter
+                val marketsWithNegRisk = mutableListOf<Pair<String, Boolean>>()
+                for ((marketId, marketPositions) in positionsByMarket) {
+                    val negRisk = marketPositions.firstNotNullOfOrNull { it.first.negativeRisk }
+                        ?: return Result.failure(IllegalStateException("无法确定市场 $marketId 是否为 Neg Risk 市场（仓位缺少 negativeRisk），已拒绝赎回"))
+                    marketsWithNegRisk.add(marketId to negRisk)
+                }
+
+                // 同一 condition 有在途赎回时不重复提交
+                val redeemKeys = marketsWithNegRisk.map { "${accountId}_${it.first.lowercase()}" }
+                val conflict = redeemKeys.firstOrNull { !inFlightRedeems.add(it) }
+                if (conflict != null) {
+                    redeemKeys.takeWhile { it != conflict }.forEach { inFlightRedeems.remove(it) }
+                    return Result.failure(IllegalStateException("REDEEM_IN_PROGRESS: 账户 $accountId 的市场赎回正在处理中，请勿重复提交"))
+                }
+
                 var lastTxHash: String? = null
-
-                // Safe / Deposit Wallet 且有多个市场：合并为一笔批量赎回（Safe 用 MultiSend，Deposit Wallet 用原生批量调用）
-                if ((walletTypeEnum == WalletType.SAFE || walletTypeEnum == WalletType.DEPOSIT) && positionsByMarket.size > 1) {
-                    val redeemRequests = mutableListOf<Triple<String, List<BigInteger>, Boolean>>()
-                    for ((marketId, marketPositions) in positionsByMarket) {
-                        val indexSets = marketPositions.map { it.second }
-                        val isNegRisk = marketService.getNegRiskByConditionId(marketId) == true
-                        redeemRequests.add(Triple(marketId, indexSets, isNegRisk))
+                var accountPayout = BigDecimal.ZERO
+                try {
+                    // Safe / Deposit Wallet：多个市场合并为一笔（MultiSend / 原生批量）；Magic 不支持批量，逐市场执行
+                    val batches = if (walletTypeEnum == WalletType.MAGIC) {
+                        marketsWithNegRisk.map { listOf(it) }
+                    } else {
+                        listOf(marketsWithNegRisk)
                     }
-
-                    logger.info("账户 $accountId: 使用 MultiSend 批量赎回 ${redeemRequests.size} 个市场")
-
-                    val redeemResult = blockchainService.redeemPositionsBatch(
-                        privateKey = decryptedPrivateKey,
-                        proxyAddress = account.proxyAddress,
-                        redeemRequests = redeemRequests,
-                        walletType = walletTypeEnum
-                    )
-
-                    redeemResult.fold(
-                        onSuccess = { txHash ->
-                            lastTxHash = txHash
-                        },
-                        onFailure = { e ->
-                            logger.error("账户 $accountId MultiSend 批量赎回失败: ${e.message}", e)
-                            return Result.failure(Exception("赎回失败: 账户 $accountId - ${e.message}"))
-                        }
-                    )
-                } else {
-                    // Magic 钱包或单个市场：逐笔赎回
-                    for ((marketId, marketPositions) in positionsByMarket) {
-                        val indexSets = marketPositions.map { it.second }
-                        val isNegRisk = marketService.getNegRiskByConditionId(marketId) == true
-
-                        val redeemResult = blockchainService.redeemPositions(
+                    for (batch in batches) {
+                        val result = blockchainService.redeemMarkets(
                             privateKey = decryptedPrivateKey,
                             proxyAddress = account.proxyAddress,
-                            conditionId = marketId,
-                            indexSets = indexSets,
-                            isNegRisk = isNegRisk,
+                            markets = batch,
                             walletType = walletTypeEnum
-                        )
+                        ).getOrElse { e ->
+                            logger.error("账户 $accountId 赎回失败: markets=${batch.map { it.first }}, ${e.message}", e)
+                            return Result.failure(e)
+                        }
+                        lastTxHash = result.transactionHash
+                        accountPayout = accountPayout.add(result.payout)
+                    }
+                } finally {
+                    redeemKeys.forEach { inFlightRedeems.remove(it) }
+                }
 
-                        redeemResult.fold(
-                            onSuccess = { txHash ->
-                                lastTxHash = txHash
-                            },
-                            onFailure = { e ->
-                                logger.error("账户 $accountId 市场 $marketId 赎回失败: ${e.message}", e)
-                                return Result.failure(Exception("赎回失败: 账户 $accountId 市场 $marketId - ${e.message}"))
-                            }
+                // 以链上到账校验：预期有收益（赢方仓位当前价值 > 0）却到账为 0，视为失败（赎回未生效）
+                val expectedValue = positions.fold(BigDecimal.ZERO) { sum, p ->
+                    sum.add(p.first.currentValue.toSafeBigDecimal())
+                }
+                if (expectedValue.gt(BigDecimal("0.01")) && accountPayout.compareTo(BigDecimal.ZERO) == 0) {
+                    logger.error("赎回交易已上链但 pUSD 到账为 0（预期约 $expectedValue）: accountId=$accountId, txHash=$lastTxHash")
+                    return Result.failure(
+                        IllegalStateException("赎回交易已上链但未到账（payout=0，预期约 $expectedValue），请检查: txHash=$lastTxHash")
                     )
                 }
-                }
 
-                // WCOL 解包由 WcolUnwrapJobService 每 20 秒轮询统一处理，赎回流程不再等待确认与解包
-
-                // 计算该账户的赎回总价值
-                val accountTotalValue = redeemedInfo.fold(BigDecimal.ZERO) { sum, info ->
-                    sum.add(info.value.toSafeBigDecimal())
-                }
-                totalRedeemedValue = totalRedeemedValue.add(accountTotalValue)
+                // WCOL 历史余额解包由 WcolUnwrapJobService 处理；adapter 赎回直接得到 pUSD
+                totalRedeemedValue = totalRedeemedValue.add(accountPayout)
 
                 // 添加到交易列表
                 accountTransactions.add(

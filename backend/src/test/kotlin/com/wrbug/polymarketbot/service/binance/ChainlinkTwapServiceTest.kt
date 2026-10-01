@@ -94,6 +94,24 @@ class ChainlinkTwapServiceTest {
     }
 
     @Test
+    fun `unfiltered subscription stores increments for every symbol`() {
+        val service = ChainlinkTwapService { 1_790_102_125_000L }
+        for ((symbol, value) in listOf("btc/usd" to "65000", "ETH/USD" to "3000")) {
+            service.ingestMessage(
+                """
+                {
+                  "topic": "crypto_prices_twap_sixty",
+                  "type": "update",
+                  "payload": {"symbol": "$symbol", "timestamp": 1790102120000, "value": $value}
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(0, BigDecimal("65000").compareTo(service.getOpenClose("btc-updown-5m", 1_790_102_120L)!!.second))
+        assertEquals(0, BigDecimal("3000").compareTo(service.getOpenClose("eth-updown-15m", 1_790_102_120L)!!.second))
+    }
+
+    @Test
     fun `maps supported market slugs to Chainlink symbols`() {
         val service = ChainlinkTwapService()
         assertEquals("btc/usd", service.marketToSymbol("btc-updown-5m"))

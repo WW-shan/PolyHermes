@@ -1,6 +1,8 @@
 package com.wrbug.polymarketbot.service.system
 
 import com.wrbug.polymarketbot.api.EthereumRpcApi
+import com.wrbug.polymarketbot.api.ChainIdCheckedRpcApi
+import com.wrbug.polymarketbot.api.FailoverEthereumRpcApi
 import com.wrbug.polymarketbot.api.JsonRpcRequest
 import com.wrbug.polymarketbot.entity.NodeHealthStatus
 import com.wrbug.polymarketbot.entity.RpcNodeConfig
@@ -11,6 +13,10 @@ import com.wrbug.polymarketbot.util.RetrofitFactory
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
+import java.net.URI
 
 /**
  * RPC 节点管理服务
@@ -92,13 +98,17 @@ class RpcNodeService(
      * 如果所有节点都不可用，返回默认节点
      * @return  可用节点的配置,如果没有可用节点则返回失败
      */
-    fun getAvailableNode(): Result<RpcNodeConfig> {
+    fun getAvailableNode(excludedHttpUrls: Set<String> = emptySet()): Result<RpcNodeConfig> {
         return try {
+            val excluded = excludedHttpUrls.map(::normalizeRpcUrl).toSet()
             val nodes = rpcNodeConfigRepository.findAllByEnabledTrueOrderByPriorityAsc()
-                .filterNot { isDefaultNode(it) }  // 排除默认节点
+                .filterNot { isDefaultNode(it) || normalizeRpcUrl(it.httpUrl) in excluded }
             
             if (nodes.isEmpty()) {
-                logger.warn("没有配置任何启用的 RPC 节点，将使用默认节点")
+                if (normalizeRpcUrl(DEFAULT_RPC_URL) in excluded) {
+                    return Result.failure(IllegalStateException("没有其他可用的 RPC 节点"))
+                }
+                logger.warn("没有其他启用的 RPC 节点，将使用默认节点")
                 return Result.success(createDefaultNodeConfig())
             }
             
@@ -137,14 +147,45 @@ class RpcNodeService(
             }
             
             // 所有节点都不可用，返回默认节点
+            if (normalizeRpcUrl(DEFAULT_RPC_URL) in excluded) {
+                return Result.failure(IllegalStateException("没有其他可用的 RPC 节点"))
+            }
             logger.warn("所有启用的 RPC 节点都不可用，将使用默认节点: $DEFAULT_RPC_URL")
             Result.success(createDefaultNodeConfig())
         } catch (e: Exception) {
             logger.error("获取可用节点失败: ${e.message}", e)
             // 即使失败也返回默认节点，确保系统可用
+            if (normalizeRpcUrl(DEFAULT_RPC_URL) in excludedHttpUrls.map(::normalizeRpcUrl)) {
+                return Result.failure(e)
+            }
             logger.warn("获取可用节点出现异常，使用默认节点作为兜底")
             Result.success(createDefaultNodeConfig())
         }
+    }
+
+    /**
+     * 构造按请求执行故障切换的 RPC 客户端。写请求只会在发送前的链 ID 校验失败时换节点，
+     * 避免超时后重发交易造成不确定副作用。
+     */
+    fun createFailoverRpcApi(): EthereumRpcApi {
+        fun createCheckedApi(url: String): EthereumRpcApi =
+            ChainIdCheckedRpcApi(url, retrofitFactory.createEthereumRpcApi(url))
+
+        val firstUrl = getHttpUrl()
+        return FailoverEthereumRpcApi(
+            initialEndpoint = firstUrl to createCheckedApi(firstUrl),
+            nextEndpoint = { excluded ->
+                getAvailableNode(excluded).getOrNull()?.httpUrl?.let { url -> url to createCheckedApi(url) }
+            }
+        )
+    }
+
+    private fun normalizeRpcUrl(url: String): String {
+        val trimmed = url.trim()
+        val suffixIndex = listOf(trimmed.indexOf('?'), trimmed.indexOf('#'))
+            .filter { it >= 0 }
+            .minOrNull() ?: trimmed.length
+        return trimmed.substring(0, suffixIndex).trimEnd('/') + trimmed.substring(suffixIndex)
     }
     
     /**
@@ -184,12 +225,33 @@ class RpcNodeService(
         val node = getAvailableNode().getOrNull()
         return node?.wsUrl ?: DEFAULT_WS_URL
     }
-    
+
+    /** Select a websocket endpoint while skipping nodes whose websocket transport failed recently. */
+    fun getWebSocketEndpoint(excludedHttpUrls: Set<String> = emptySet()): Result<WebSocketEndpoint> =
+        getAvailableNode(excludedHttpUrls).map { node ->
+            WebSocketEndpoint(
+                httpUrl = node.httpUrl,
+                wsUrl = node.wsUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_WS_URL
+            )
+        }
+
+    data class WebSocketEndpoint(val httpUrl: String, val wsUrl: String)
+
     /**
-     * 添加节点
+     * 节点校验结果（不落库）
      */
-    @Transactional
-    fun addNode(request: AddRpcNodeRequest): Result<RpcNodeConfig> {
+    data class ValidatedNode(
+        val providerType: RpcProviderType = RpcProviderType.CUSTOM,
+        val httpUrl: String = "",
+        val wsUrl: String? = null,
+        val checkResult: NodeCheckResult = NodeCheckResult(NodeHealthStatus.UNHEALTHY, "", 0L, null)
+    )
+
+    /**
+     * 校验节点（纯校验，不写数据库）
+     * 包括：URL 安全校验（拒绝内网/回环/元数据地址）、可用性校验、链 ID 必须为 Polygon 主网（0x89）
+     */
+    fun validateNodeRequest(request: AddRpcNodeRequest): Result<ValidatedNode> {
         return try {
             // 1. 验证请求
             val providerType = try {
@@ -219,8 +281,14 @@ class RpcNodeService(
                 )
             }
             
-            // 3. 校验节点可用性
-            val validationResult = validateNode(httpUrl, wsUrl)
+            // 3. URL 安全校验（防止 SSRF：只允许公网 http(s)/ws(s) 地址）
+            RpcUrlSafety.checkPublicUrl(httpUrl, allowedSchemes = setOf("http", "https"))
+            if (!wsUrl.isNullOrBlank()) {
+                RpcUrlSafety.checkPublicUrl(wsUrl, allowedSchemes = setOf("ws", "wss"))
+            }
+
+            // 4. 校验节点可用性与链 ID
+            val validationResult = validateNode(httpUrl, wsUrl, verifyChainId = true)
             if (validationResult.isFailure) {
                 return Result.failure(validationResult.exceptionOrNull() ?: Exception("节点验证失败"))
             }
@@ -231,15 +299,35 @@ class RpcNodeService(
             if (checkResult.status != NodeHealthStatus.HEALTHY) {
                 return Result.failure(IllegalArgumentException("节点不可用: ${checkResult.message}"))
             }
+            Result.success(ValidatedNode(providerType, httpUrl, wsUrl, checkResult))
+        } catch (e: IllegalArgumentException) {
+            Result.failure(e)
+        } catch (e: Exception) {
+            logger.error("校验节点失败: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 添加节点
+     */
+    @Transactional
+    fun addNode(request: AddRpcNodeRequest): Result<RpcNodeConfig> {
+        return try {
+            val validated = validateNodeRequest(request).getOrElse { return Result.failure(it) }
+            val providerType = validated.providerType
+            val httpUrl = validated.httpUrl
+            val wsUrl = validated.wsUrl
+            val checkResult = validated.checkResult
             
-            // 4. 加密 API Key (如果有)
+            // 1. 加密 API Key (如果有)
             val encryptedApiKey = request.apiKey?.let { cryptoUtils.encrypt(it) }
             
-            // 5. 获取当前最大优先级
+            // 2. 获取当前最大优先级
             val maxPriority = rpcNodeConfigRepository.findAllByOrderByPriorityAsc()
                 .maxOfOrNull { it.priority } ?: 0
             
-            // 6. 创建节点配置
+            // 3. 创建节点配置
             val node = RpcNodeConfig(
                 providerType = providerType.name,
                 name = request.name,
@@ -373,7 +461,7 @@ class RpcNodeService(
                 return Result.failure(IllegalArgumentException("默认节点不允许检查"))
             }
             
-            val checkResult = validateNode(node.httpUrl, node.wsUrl).getOrThrow()
+            val checkResult = validateNode(node.httpUrl, node.wsUrl, verifyChainId = true).getOrThrow()
             
             // 更新节点健康状态
             val updatedNode = node.copy(
@@ -408,7 +496,7 @@ class RpcNodeService(
             
             for (node in nodes) {
                 try {
-                    val checkResult = validateNode(node.httpUrl, node.wsUrl).getOrNull()
+                    val checkResult = validateNode(node.httpUrl, node.wsUrl, verifyChainId = true).getOrNull()
                     if (checkResult != null) {
                         results[node.id!!] = checkResult
                         
@@ -437,7 +525,7 @@ class RpcNodeService(
      * 校验节点可用性
      * 调用 eth_blockNumber 验证节点是否可用
      */
-    private fun validateNode(httpUrl: String, wsUrl: String?): Result<NodeCheckResult> {
+    private fun validateNode(httpUrl: String, wsUrl: String?, verifyChainId: Boolean = false): Result<NodeCheckResult> {
         return try {
             logger.debug("开始验证节点: $httpUrl")
             
@@ -465,11 +553,12 @@ class RpcNodeService(
             }
             
             val rpcResponse = response.body()!!
-            if (rpcResponse.error != null) {
-                logger.warn("节点验证失败: RPC 错误 ${rpcResponse.error.message}")
+            val rpcError = rpcResponse.error
+            if (rpcError != null) {
+                logger.warn("节点验证失败: RPC 错误 ${rpcError.message}")
                 return Result.success(NodeCheckResult(
                     status = NodeHealthStatus.UNHEALTHY,
-                    message = "RPC 错误: ${rpcResponse.error.message}",
+                    message = "RPC 错误: ${rpcError.message}",
                     checkTime = System.currentTimeMillis(),
                     responseTimeMs = responseTime
                 ))
@@ -480,6 +569,23 @@ class RpcNodeService(
                 return Result.success(NodeCheckResult(
                     status = NodeHealthStatus.UNHEALTHY,
                     message = "区块号为空",
+                    checkTime = System.currentTimeMillis(),
+                    responseTimeMs = responseTime
+                ))
+            }
+
+            // 只允许 Polygon 主网节点（eth_chainId == 0x89），误加其他链会导致代理地址等计算错误
+            // 添加/校验/健康检查时执行；获取可用节点的热路径不重复调用
+            val chainIdResponse = if (!verifyChainId) null else kotlinx.coroutines.runBlocking {
+                rpcApi.call(JsonRpcRequest(method = "eth_chainId", params = emptyList()))
+            }
+            val chainId = chainIdResponse?.body()?.takeIf { chainIdResponse.isSuccessful && it.error == null }
+                ?.result?.takeIf { it.isJsonPrimitive }?.asString
+            if (verifyChainId && !RpcUrlSafety.isPolygonMainnetChainId(chainId)) {
+                logger.warn("节点链 ID 不是 Polygon 主网: $httpUrl, chainId=$chainId")
+                return Result.success(NodeCheckResult(
+                    status = NodeHealthStatus.UNHEALTHY,
+                    message = "节点不是 Polygon 主网（chainId=${chainId ?: "未知"}，需要 0x89）",
                     checkTime = System.currentTimeMillis(),
                     responseTimeMs = responseTime
                 ))
@@ -536,3 +642,92 @@ data class NodeCheckResult(
     val responseTimeMs: Int?,
     val blockNumber: String? = null
 )
+
+/**
+ * RPC 节点 URL 安全校验（防止 SSRF）
+ */
+object RpcUrlSafety {
+
+    /** Polygon 主网链 ID */
+    const val POLYGON_MAINNET_CHAIN_ID = 137L
+
+    /**
+     * 判断 eth_chainId 返回值是否为 Polygon 主网（0x89）
+     */
+    fun isPolygonMainnetChainId(chainIdHex: String?): Boolean {
+        val value = chainIdHex?.trim()?.lowercase() ?: return false
+        if (!value.startsWith("0x")) return false
+        return value.removePrefix("0x").toLongOrNull(16) == POLYGON_MAINNET_CHAIN_ID
+    }
+
+    /**
+     * 校验 URL 只指向公网地址
+     * 拒绝：非允许协议、缺少主机、带用户信息、解析到回环/私网/链路本地/组播/CGNAT/ULA(fc00::/7)/云元数据地址
+     * @throws IllegalArgumentException 校验失败
+     */
+    fun checkPublicUrl(url: String, allowedSchemes: Set<String>) {
+        val uri = try {
+            URI(url.trim())
+        } catch (e: Exception) {
+            throw IllegalArgumentException("无效的节点 URL")
+        }
+        val scheme = uri.scheme?.lowercase()
+        if (scheme == null || scheme !in allowedSchemes) {
+            throw IllegalArgumentException("节点 URL 协议不支持，仅允许 ${allowedSchemes.joinToString("/")}")
+        }
+        if (uri.rawUserInfo != null) {
+            throw IllegalArgumentException("节点 URL 不允许包含用户信息")
+        }
+        val host = uri.host?.trim('[', ']')
+        if (host.isNullOrBlank()) {
+            throw IllegalArgumentException("节点 URL 缺少主机名")
+        }
+        val addresses = try {
+            InetAddress.getAllByName(host)
+        } catch (e: Exception) {
+            throw IllegalArgumentException("无法解析节点主机名")
+        }
+        if (addresses.isEmpty() || addresses.any { !isPublicAddress(it) }) {
+            throw IllegalArgumentException("节点地址不允许指向内网、回环或元数据地址")
+        }
+    }
+
+    /**
+     * 是否为公网地址
+     */
+    fun isPublicAddress(address: InetAddress): Boolean {
+        if (address.isLoopbackAddress || address.isAnyLocalAddress || address.isLinkLocalAddress ||
+            address.isSiteLocalAddress || address.isMulticastAddress
+        ) {
+            return false
+        }
+        val bytes = address.address
+        if (address is Inet4Address) {
+            val b0 = bytes[0].toInt() and 0xff
+            val b1 = bytes[1].toInt() and 0xff
+            val b2 = bytes[2].toInt() and 0xff
+            return when {
+                b0 == 0 -> false                              // 0.0.0.0/8
+                b0 == 100 && b1 in 64..127 -> false          // 100.64.0.0/10 CGNAT
+                b0 == 169 && b1 == 254 -> false              // 169.254.0.0/16 链路本地/云元数据
+                b0 == 192 && b1 == 0 && b2 == 0 -> false     // 192.0.0.0/24
+                b0 == 198 && (b1 == 18 || b1 == 19) -> false // 198.18.0.0/15
+                b0 >= 224 -> false                            // 组播与保留地址
+                else -> true
+            }
+        }
+        if (address is Inet6Address) {
+            val b0 = bytes[0].toInt() and 0xff
+            // fc00::/7 ULA（包括 fd00:ec2::254 等云元数据地址）
+            if ((b0 and 0xfe) == 0xfc) return false
+            // IPv4 映射地址按内嵌 IPv4 判断
+            val isMapped = bytes.copyOfRange(0, 10).all { it.toInt() == 0 } &&
+                (bytes[10].toInt() and 0xff) == 0xff && (bytes[11].toInt() and 0xff) == 0xff
+            if (isMapped) {
+                return isPublicAddress(InetAddress.getByAddress(bytes.copyOfRange(12, 16)))
+            }
+            return true
+        }
+        return false
+    }
+}

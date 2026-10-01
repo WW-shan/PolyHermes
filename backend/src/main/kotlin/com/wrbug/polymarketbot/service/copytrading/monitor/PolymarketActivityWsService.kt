@@ -6,6 +6,7 @@ import com.wrbug.polymarketbot.api.TradeResponse
 import com.wrbug.polymarketbot.dto.ActivityTradeMessage
 import com.wrbug.polymarketbot.dto.ActivityTradePayload
 import com.wrbug.polymarketbot.entity.Leader
+import com.wrbug.polymarketbot.event.ProxyConfigChangedEvent
 import com.wrbug.polymarketbot.enums.LeaderResearchSourceStatus
 import com.wrbug.polymarketbot.enums.LeaderResearchSourceType
 import com.wrbug.polymarketbot.repository.LeaderRepository
@@ -20,6 +21,7 @@ import kotlinx.coroutines.*
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
@@ -52,12 +54,44 @@ class PolymarketActivityWsService(
     // 要监听的 Leader 地址集合（小写地址 -> leaderId）
     private val monitoredAddresses = ConcurrentHashMap<String, Long>()
 
-    // 存储已处理的交易哈希，用于去重（LRU 缓存，保留最近 100 条）
-    // 因为同时订阅 trades 和 orders_matched，同一个交易可能被推送两次
+    // 已交给下游的聚合成交：key = "leaderId:tradeId"，窗口结束后迟到的同一成交消息直接丢弃
     private val processedTxHashes: Cache<String, Long> = Caffeine.newBuilder()
-        .maximumSize(100)
+        .maximumSize(10_000)
         .expireAfterWrite(10, TimeUnit.MINUTES)
         .build()
+
+    /**
+     * 同一 (leader, tx, asset, side) 在聚合窗口内的成交累计。
+     * trades 消息逐笔 fill（maker 每个被撮合订单一条、taker 一条汇总），orders_matched 只针对 taker 且与其 trades 汇总重复，
+     * 因此两类分别累计：有 trades 时以 trades 为准，否则退回 orders_matched。
+     */
+    private class PendingAggregate(
+        val leaderId: Long,
+        val txHash: String,
+        val template: TradeResponse
+    ) {
+        var tradesSize: BigDecimal = BigDecimal.ZERO
+        var tradesNotional: BigDecimal = BigDecimal.ZERO
+        var matchedSize: BigDecimal = BigDecimal.ZERO
+        var matchedNotional: BigDecimal = BigDecimal.ZERO
+    }
+
+    private val pendingAggregates = ConcurrentHashMap<String, PendingAggregate>()
+
+    // 聚合窗口（毫秒），测试中可调小
+    internal var aggregationWindowMs = 1500L
+
+    // 下游处理失败时，在内存中对同一成交做有限重试
+    internal var maxDeliveryAttempts = 3
+    internal var deliveryRetryDelayMs = 500L
+
+    // 超过该时长未收到任何帧则主动重连（毫秒）
+    internal var activityTimeoutMs = 60_000L
+
+    // 按 Leader 串行交付，保证同一 Leader 的 BUY/SELL 按到达顺序处理
+    private val dispatcher = LeaderTradeDispatcher(scope) { leaderId, trade, source ->
+        copyOrderTrackingService.processTrade(leaderId = leaderId, trade = trade, source = source)
+    }
 
     // 是否已订阅
     @Volatile
@@ -141,6 +175,7 @@ class PolymarketActivityWsService(
 
         if (addressToRemove != null) {
             monitoredAddresses.remove(addressToRemove)
+            dispatcher.remove(leaderId)
             logger.info("从 Activity WS 监听移除 Leader: leaderId=$leaderId, address=$addressToRemove")
         }
 
@@ -149,6 +184,29 @@ class PolymarketActivityWsService(
             logger.info("没有 Leader 需要监听了，停止 Activity WebSocket")
             stop()
         }
+    }
+
+    /**
+     * 代理配置变更后按新代理重建连接（PolymarketWebSocketClient 每次 connect 都会读取当前代理）
+     */
+    @EventListener(ProxyConfigChangedEvent::class)
+    fun onProxyConfigChanged() {
+        if (monitoredAddresses.isEmpty()) {
+            return
+        }
+        logger.info("代理配置已变更，重建 Activity WebSocket 连接")
+        reconnect()
+    }
+
+    /**
+     * 主动断开并重新连接
+     */
+    fun reconnect() {
+        stopActivityTimeoutCheck()
+        wsClient?.closeConnection()
+        wsClient = null
+        isSubscribed = false
+        connectAndSubscribe()
     }
 
     /**
@@ -165,6 +223,8 @@ class PolymarketActivityWsService(
         }
 
         logger.info("连接 Activity WebSocket: $websocketUrl")
+        // 旧客户端可能仍在自动重连，先关闭避免出现两条连接重复推送
+        existingClient?.closeConnection()
 
         val newClient = PolymarketWebSocketClient(
             url = websocketUrl,
@@ -229,7 +289,7 @@ class PolymarketActivityWsService(
             // 重置最后一次收到 activity 消息的时间
             lastActivityTime = System.currentTimeMillis()
             // 启动 Activity 消息超时检测
-//            startActivityTimeoutCheck()
+            startActivityTimeoutCheck()
             logger.info("Activity WebSocket 订阅成功（全局交易流: trades + orders_matched）")
         } catch (e: Exception) {
             logger.error("订阅 Activity WebSocket 失败", e)
@@ -247,7 +307,7 @@ class PolymarketActivityWsService(
 
         activityTimeoutJob = scope.launch {
             while (isActive && isSubscribed) {
-                delay(30000)  // 每30秒检查一次
+                delay((activityTimeoutMs / 2).coerceAtLeast(1000L))
 
                 // 如果已经取消订阅，停止检测
                 if (!isSubscribed) {
@@ -262,9 +322,9 @@ class PolymarketActivityWsService(
                 val currentTime = System.currentTimeMillis()
                 val timeSinceLastActivity = currentTime - lastActivityTime
 
-                // 如果超过30秒没有收到activity消息，触发重连
-                if (timeSinceLastActivity >= 30000) {
-                    logger.warn("超过30秒未收到 Activity 消息，触发重连。距离上次消息: ${timeSinceLastActivity}ms")
+                // 超时未收到任何帧，触发重连
+                if (timeSinceLastActivity >= activityTimeoutMs) {
+                    logger.warn("超过 ${activityTimeoutMs}ms 未收到 Activity 消息，触发重连。距离上次消息: ${timeSinceLastActivity}ms")
                     // 关闭当前连接并重连
                     wsClient?.closeConnection()
                     wsClient = null
@@ -322,6 +382,8 @@ class PolymarketActivityWsService(
     private fun handleMessage(message: String) {
         try {
             totalMessagesProcessed++
+            // 任意帧（包括 PONG、其他地址的成交）都说明连接存活，必须在地址过滤之前更新
+            lastActivityTime = System.currentTimeMillis()
 
             // 处理 PONG 响应
             if (message.trim() == "PONG" || message.trim() == "pong") {
@@ -351,59 +413,106 @@ class PolymarketActivityWsService(
                 return
             }
 
-            // 更新最后一次收到 activity 消息的时间（即使不是我们监听的 Leader 的交易）
-            lastActivityTime = System.currentTimeMillis()
-
             val payload = tradeMessage.payload
 
-            // 根据 txHash 去重（使用原子操作避免竞态条件）
-            val txHash = payload.transactionHash
-            if (txHash != null && txHash.isNotBlank()) {
-                val currentTime = System.currentTimeMillis()
-                val existingTimestamp = processedTxHashes.asMap().putIfAbsent(txHash, currentTime)
-                if (existingTimestamp != null) {
-                    duplicateTxHashMessages++
-                    logger.debug("交易已处理过，跳过: txHash=$txHash, firstProcessedAt=$existingTimestamp, type=${tradeMessage.type}")
-                    return
-                }
-            }
-
-            // 提取交易者地址
+            // 先按地址匹配 Leader，再做去重/聚合（同一 tx 可能包含多个被跟 Leader 的成交）
             val traderAddress = extractTraderAddress(payload) ?: run {
-                // 没有交易者地址，跳过
                 logger.warn("Activity Trade 消息中没有交易者地址: trader=${payload.trader}, proxyWallet=${payload.proxyWallet}, asset=${payload.asset}")
                 return
             }
+            val leaderId = monitoredAddresses[traderAddress.lowercase()] ?: return
 
-            // 二次验证：确认地址匹配
-            val normalizedAddress = traderAddress.lowercase()
-            val leaderId = monitoredAddresses[normalizedAddress] ?: run {
+            val trade = parseActivityTrade(payload, leaderId)
+            if (trade == null) {
+                logger.warn("解析交易数据失败: leaderId=$leaderId, address=$traderAddress, asset=${payload.asset}, side=${payload.side}")
                 return
             }
+            logger.info("检测到 Leader 成交: leaderId=$leaderId, address=$traderAddress, type=${tradeMessage.type}, side=${trade.side}, market=${trade.market}, size=${trade.size}, price=${trade.price}")
 
-            // 解析交易数据
-            val trade = parseActivityTrade(payload, leaderId)
-            if (trade != null) {
-                logger.info("✅ 检测到 Leader 交易: leaderId=$leaderId, address=$traderAddress, side=${trade.side}, market=${trade.market}, size=${trade.size}")
-
-                // 异步处理交易（避免阻塞消息处理）
+            val txHash = payload.transactionHash
+            if (txHash.isNullOrBlank()) {
+                // 没有 txHash 无法聚合/去重，直接按 Leader 串行交付
                 scope.launch {
-                    try {
-                        copyOrderTrackingService.processTrade(
-                            leaderId = leaderId,
-                            trade = trade,
-                            source = "activity-ws"
-                        )
-                    } catch (e: Exception) {
-                        logger.error("处理 Activity WS 交易失败: leaderId=$leaderId, tradeId=${trade.id}", e)
+                    if (!deliverTradeWithRetry(leaderId, trade, "activity-ws")) {
+                        logger.error("Activity 成交多次交付失败: leaderId=$leaderId, tradeId=${trade.id}")
                     }
                 }
-            } else {
-                logger.warn("解析交易数据失败: leaderId=$leaderId, address=$traderAddress, asset=${payload.asset}, side=${payload.side}")
+                return
             }
+            addToAggregate(leaderId, txHash, trade, isOrdersMatched = tradeMessage.type == "orders_matched")
         } catch (e: Exception) {
             logger.error("处理 Activity WebSocket 消息失败: ${e.message}", e)
         }
+    }
+
+    /**
+     * 将一笔成交加入 (leader, tx, asset, side) 聚合；首笔到达时启动窗口计时，窗口结束后一次性交付
+     */
+    private fun addToAggregate(leaderId: Long, txHash: String, trade: TradeResponse, isOrdersMatched: Boolean) {
+        val asset = trade.tokenId ?: ""
+        val tradeId = OnChainWsUtils.buildTradeId(txHash, asset, trade.side)
+        if (processedTxHashes.getIfPresent("$leaderId:$tradeId") != null) {
+            duplicateTxHashMessages++
+            logger.debug("成交已交付过，忽略迟到消息: leaderId=$leaderId, tradeId=$tradeId")
+            return
+        }
+        val size = trade.size.toBigDecimalOrNull() ?: return
+        val price = trade.price.toBigDecimalOrNull() ?: return
+        val key = "$leaderId|$tradeId"
+        var created = false
+        val aggregate = pendingAggregates.computeIfAbsent(key) {
+            created = true
+            PendingAggregate(leaderId, txHash, trade.copy(id = tradeId))
+        }
+        synchronized(aggregate) {
+            if (isOrdersMatched) {
+                aggregate.matchedSize = aggregate.matchedSize.add(size)
+                aggregate.matchedNotional = aggregate.matchedNotional.add(size.multiply(price))
+            } else {
+                aggregate.tradesSize = aggregate.tradesSize.add(size)
+                aggregate.tradesNotional = aggregate.tradesNotional.add(size.multiply(price))
+            }
+        }
+        if (created) {
+            scope.launch {
+                delay(aggregationWindowMs)
+                flushAggregate(key)
+            }
+        }
+    }
+
+    /**
+     * 窗口结束：size 求和、价格按成交量加权，以 tradeId 交给下游（与链上路径的 id 一致）
+     */
+    private suspend fun flushAggregate(key: String) {
+        val aggregate = pendingAggregates.remove(key) ?: return
+        val (size, notional) = synchronized(aggregate) {
+            if (aggregate.tradesSize > BigDecimal.ZERO) {
+                aggregate.tradesSize to aggregate.tradesNotional
+            } else {
+                aggregate.matchedSize to aggregate.matchedNotional
+            }
+        }
+        if (size <= BigDecimal.ZERO) return
+        val price = notional.divide(size, 8, java.math.RoundingMode.HALF_UP)
+        val trade = aggregate.template.copy(
+            size = size.stripTrailingZeros().toPlainString(),
+            price = price.stripTrailingZeros().toPlainString()
+        )
+        if (deliverTradeWithRetry(aggregate.leaderId, trade, "activity-ws")) {
+            processedTxHashes.put("${aggregate.leaderId}:${trade.id}", System.currentTimeMillis())
+            logger.info("交付 Leader 聚合成交: leaderId=${aggregate.leaderId}, tradeId=${trade.id}, side=${trade.side}, size=${trade.size}, price=${trade.price}")
+        } else {
+            logger.error("Activity 聚合成交多次交付失败，未写入去重缓存: leaderId=${aggregate.leaderId}, tradeId=${trade.id}")
+        }
+    }
+
+    private suspend fun deliverTradeWithRetry(leaderId: Long, trade: TradeResponse, source: String): Boolean {
+        for (attempt in 1..maxDeliveryAttempts) {
+            if (dispatcher.deliver(leaderId, trade, source)) return true
+            if (attempt < maxDeliveryAttempts) delay(deliveryRetryDelayMs)
+        }
+        return false
     }
 
     private fun maybeCaptureResearchActivity(message: String) {
@@ -636,6 +745,8 @@ class PolymarketActivityWsService(
         wsClient = null
         isSubscribed = false
         monitoredAddresses.clear()
+        pendingAggregates.clear()
+        dispatcher.clear()
         processedTxHashes.invalidateAll()  // 清空去重缓存
         lastActivityTime = 0
     }
@@ -646,6 +757,11 @@ class PolymarketActivityWsService(
     fun isConnected(): Boolean {
         return wsClient?.isConnected() ?: false
     }
+
+    /**
+     * 当前监听中的 Leader ID
+     */
+    fun getMonitoredLeaderIds(): Set<Long> = monitoredAddresses.values.toSet()
 
     /**
      * 获取监听的 Leader 数量

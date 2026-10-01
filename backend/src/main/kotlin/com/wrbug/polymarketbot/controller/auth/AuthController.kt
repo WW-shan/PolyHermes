@@ -4,6 +4,7 @@ import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.enums.ErrorCode
 import com.wrbug.polymarketbot.repository.UserRepository
 import com.wrbug.polymarketbot.service.auth.AuthService
+import com.wrbug.polymarketbot.service.auth.ClientIpResolver
 import com.wrbug.polymarketbot.service.auth.WebSocketTicketService
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
@@ -20,7 +21,8 @@ class AuthController(
     private val authService: AuthService,
     private val messageSource: MessageSource,
     private val webSocketTicketService: WebSocketTicketService,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val clientIpResolver: ClientIpResolver
 ) {
     
     private val logger = LoggerFactory.getLogger(AuthController::class.java)
@@ -72,23 +74,10 @@ class AuthController(
 
     /**
      * 获取客户端IP地址
+     * 只信任来自回环地址/可信代理的转发头，防止伪造 X-Forwarded-For 绕过限速
      */
     private fun getClientIpAddress(request: HttpServletRequest): String {
-        var ip = request.getHeader("X-Forwarded-For")
-        if (ip.isNullOrBlank() || "unknown".equals(ip, ignoreCase = true)) {
-            ip = request.getHeader("X-Real-IP")
-        }
-        if (ip.isNullOrBlank() || "unknown".equals(ip, ignoreCase = true)) {
-            ip = request.getHeader("Proxy-Client-IP")
-        }
-        if (ip.isNullOrBlank() || "unknown".equals(ip, ignoreCase = true)) {
-            ip = request.remoteAddr
-        }
-        // 处理多个IP的情况
-        if (ip.contains(",")) {
-            ip = ip.split(",")[0].trim()
-        }
-        return ip
+        return clientIpResolver.resolve(request)
     }
     
     /**

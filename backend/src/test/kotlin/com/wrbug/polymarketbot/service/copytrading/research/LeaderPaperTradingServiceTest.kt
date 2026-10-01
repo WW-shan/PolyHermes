@@ -114,6 +114,62 @@ class LeaderPaperTradingServiceTest {
     }
 
     @Test
+    fun `sell without paper position is filtered and sell price band does not apply`() {
+        val candidate = paperCandidate()
+        val session = LeaderPaperSession(id = 10L, candidateId = candidate.id!!)
+        val events = listOf(
+            paperEvent(id = 100L, stableKey = "sell-orphan", side = "SELL", price = "0.50", size = "1"),
+            paperEvent(id = 101L, stableKey = "buy-1", side = "BUY", price = "0.50", size = "10"),
+            paperEvent(id = 102L, stableKey = "sell-high", side = "SELL", price = "0.95", size = "1")
+        )
+        val savedTrades = mutableListOf<LeaderPaperTrade>()
+        stubPaperPipeline(candidate, session, events, savedTrades, mutableListOf(), mutableListOf())
+        runBlocking {
+            Mockito.`when`(marketPriceService.getCurrentMarketPrice("market-1", 0)).thenReturn(BigDecimal("0.60"))
+        }
+
+        val result = service.processPaperCandidates(runId = 9L, batchSize = 10)
+
+        assertEquals(1, result.filtered)
+        assertEquals(2, result.processed)
+        assertEquals("sell_without_paper_position", savedTrades.first().filterReason)
+        assertEquals(LeaderPaperFilterResult.PASSED, savedTrades.last().filterResult)
+    }
+
+    @Test
+    fun `events of non paper wallets are skipped and only paper wallet events are queried`() {
+        val candidate = paperCandidate()
+        val session = LeaderPaperSession(id = 10L, candidateId = candidate.id!!)
+        stubPaperPipeline(candidate, session, emptyList(), mutableListOf(), mutableListOf(), mutableListOf())
+
+        service.processPaperCandidates(runId = 9L, batchSize = 10)
+
+        Mockito.verify(activityEventRepository).markNonPaperWalletEvents(
+            eqArg(listOf(LeaderPaperProcessingStatus.NEW, LeaderPaperProcessingStatus.RETRYABLE)),
+            eqArg(setOf(candidate.normalizedWallet)),
+            eqArg(LeaderPaperProcessingStatus.FILTERED),
+            anyLong()
+        )
+        Mockito.verify(activityEventRepository, Mockito.never())
+            .findByPaperProcessingStatusInAndUsableForPaperTrueOrderByEventTimeAsc(anyProcessingStatuses(), anyPageable())
+    }
+
+    private fun <T> eqArg(value: T): T {
+        Mockito.eq(value)
+        return value
+    }
+
+    private fun anyLong(): Long {
+        Mockito.anyLong()
+        return 0L
+    }
+
+    private fun anyPageable(): org.springframework.data.domain.Pageable {
+        Mockito.any(org.springframework.data.domain.Pageable::class.java)
+        return PageRequest.of(0, 1)
+    }
+
+    @Test
     fun `process paper candidates records filtered trade without position mutation`() {
         val candidate = paperCandidate()
         val session = LeaderPaperSession(id = 10L, candidateId = candidate.id!!)
@@ -261,8 +317,9 @@ class LeaderPaperTradingServiceTest {
             saved
         }
         Mockito.`when`(
-            activityEventRepository.findByPaperProcessingStatusInAndUsableForPaperTrueOrderByEventTimeAsc(
+            activityEventRepository.findByPaperProcessingStatusInAndUsableForPaperTrueAndNormalizedWalletInOrderByEventTimeAsc(
                 listOf(LeaderPaperProcessingStatus.NEW, LeaderPaperProcessingStatus.RETRYABLE),
+                setOf(candidate.normalizedWallet),
                 PageRequest.of(0, 10)
             )
         ).thenReturn(PageImpl(events))

@@ -29,7 +29,7 @@ class MarketServiceFeeRateTest {
     private fun stubGamma(response: MarketResponse) {
         Mockito.`when`(retrofitFactory.createGammaApi()).thenReturn(gammaApi)
         runBlocking {
-            Mockito.`when`(gammaApi.listMarkets(Mockito.anyList(), Mockito.any(), Mockito.any()))
+            Mockito.`when`(gammaApi.listMarkets(Mockito.anyList(), Mockito.any(), Mockito.any(), Mockito.any()))
                 .thenReturn(Response.success(listOf(response)))
         }
         val saved = java.util.concurrent.atomic.AtomicReference<Market?>(null)
@@ -113,7 +113,7 @@ class MarketServiceFeeRateTest {
         Mockito.`when`(retrofitFactory.createGammaApi()).thenReturn(gammaApi)
         // 刷新失败：仍应按分类兜底而不是 0
         runBlocking {
-            Mockito.`when`(gammaApi.listMarkets(Mockito.anyList(), Mockito.any(), Mockito.any()))
+            Mockito.`when`(gammaApi.listMarkets(Mockito.anyList(), Mockito.any(), Mockito.any(), Mockito.any()))
                 .thenReturn(Response.error(500, okhttp3.ResponseBody.create(null, "boom")))
         }
 

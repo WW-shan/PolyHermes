@@ -25,16 +25,34 @@ class CryptoTailTimingTest {
             CryptoTailTiming.isWithinExecutionWindow(
                 strategy,
                 periodStartUnix,
-                windowEndMs - CryptoTailTiming.TAKER_DELAY_MS - 1
+                windowEndMs - CryptoTailTiming.END_GUARD_MS - 1
             )
         )
         assertFalse(
             CryptoTailTiming.isWithinExecutionWindow(
                 strategy,
                 periodStartUnix,
-                windowEndMs - CryptoTailTiming.TAKER_DELAY_MS
+                windowEndMs - CryptoTailTiming.END_GUARD_MS
             )
         )
         assertFalse(CryptoTailTiming.isWithinExecutionWindow(strategy, periodStartUnix, windowEndMs))
+    }
+
+    @Test
+    fun `taker delay matches documented 250ms plus network margin`() {
+        org.junit.jupiter.api.Assertions.assertEquals(250L, CryptoTailTiming.TAKER_DELAY_MS)
+        assertTrue(CryptoTailTiming.END_GUARD_MS > CryptoTailTiming.TAKER_DELAY_MS)
+    }
+
+    @Test
+    fun `manual order only allowed before current period closes`() {
+        val periodStart = 1_800L
+        val nowMs = (periodStart + 100) * 1000L
+        org.junit.jupiter.api.Assertions.assertEquals(periodStart, CryptoTailTiming.currentPeriodStart(300, nowMs))
+        assertTrue(CryptoTailTiming.isBeforeMarketClose(300, periodStart, nowMs))
+        val periodEndMs = (periodStart + 300) * 1000L
+        assertFalse(CryptoTailTiming.isBeforeMarketClose(300, periodStart, periodEndMs - CryptoTailTiming.END_GUARD_MS))
+        // 上一周期不可下单
+        assertFalse(CryptoTailTiming.isBeforeMarketClose(300, periodStart - 300, nowMs))
     }
 }

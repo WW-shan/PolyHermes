@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.controller.copytrading.configs
 import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.enums.ErrorCode
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingService
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingValidationException
 import com.wrbug.polymarketbot.service.copytrading.configs.FilteredOrderService
 import org.slf4j.LoggerFactory
 import org.springframework.context.MessageSource
@@ -50,6 +51,7 @@ class CopyTradingController(
                 onFailure = { e ->
                     logger.error("创建跟单失败: ${e.message}", e)
                     when (e) {
+                        is CopyTradingValidationException -> ResponseEntity.ok(ApiResponse.error(e.errorCode, messageSource = messageSource))
                         is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
                         else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_COPY_TRADING_CREATE_FAILED, e.message, messageSource))
                     }
@@ -101,6 +103,7 @@ class CopyTradingController(
                 onFailure = { e ->
                     logger.error("更新跟单配置失败: ${e.message}", e)
                     when (e) {
+                        is CopyTradingValidationException -> ResponseEntity.ok(ApiResponse.error(e.errorCode, messageSource = messageSource))
                         is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
                         is IllegalStateException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.BUSINESS_ERROR, e.message, messageSource))
                         else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_COPY_TRADING_UPDATE_FAILED, e.message, messageSource))
@@ -168,6 +171,7 @@ class CopyTradingController(
                 onFailure = { e ->
                     logger.error("更新跟单状态失败: ${e.message}", e)
                     when (e) {
+                        is CopyTradingValidationException -> ResponseEntity.ok(ApiResponse.error(e.errorCode, messageSource = messageSource))
                         is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
                         is IllegalStateException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.BUSINESS_ERROR, e.message, messageSource))
                         else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_COPY_TRADING_UPDATE_FAILED, e.message, messageSource))
@@ -198,6 +202,7 @@ class CopyTradingController(
                 onFailure = { e ->
                     logger.error("删除跟单失败: ${e.message}", e)
                     when (e) {
+                        is CopyTradingValidationException -> ResponseEntity.ok(ApiResponse.error(e.errorCode, messageSource = messageSource))
                         is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
                         else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_COPY_TRADING_DELETE_FAILED, e.message, messageSource))
                     }
@@ -227,6 +232,7 @@ class CopyTradingController(
                 onFailure = { e ->
                     logger.error("查询钱包绑定的模板失败: ${e.message}", e)
                     when (e) {
+                        is CopyTradingValidationException -> ResponseEntity.ok(ApiResponse.error(e.errorCode, messageSource = messageSource))
                         is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
                         else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_COPY_TRADING_TEMPLATES_FETCH_FAILED, e.message, messageSource))
                     }

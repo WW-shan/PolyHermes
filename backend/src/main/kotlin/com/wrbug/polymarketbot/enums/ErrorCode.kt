@@ -100,6 +100,10 @@ enum class ErrorCode(
     LEADER_ALREADY_EXISTS(4001, "该 Leader 地址已存在", "error.leader_already_exists"),
     LEADER_ADDRESS_SAME_AS_ACCOUNT(4002, "Leader 地址不能与自己的账户地址相同", "error.leader_address_same_as_account"),
     LEADER_HAS_COPY_TRADINGS(4003, "该 Leader 还有跟单关系，请先删除跟单关系", "error.leader_has_copy_tradings"),
+
+    // 账户链上操作 (4040-4069)
+    ACCOUNT_ONCHAIN_TX_PENDING(4040, "链上交易处理中，结果暂未确认，请勿重复提交", "error.account_onchain_tx_pending"),
+    ACCOUNT_ONCHAIN_TX_FAILED(4041, "链上交易执行失败", "error.account_onchain_tx_failed"),
     
     // 模板管理 (4101-4199)
     TEMPLATE_NAME_ALREADY_EXISTS(4101, "模板名称已存在", "error.template_name_already_exists"),
@@ -180,6 +184,13 @@ enum class ErrorCode(
     // 统计相关 (4801-4899)
     STATISTICS_FETCH_FAILED(4801, "获取统计信息失败", "error.statistics_fetch_failed"),
     ORDER_LIST_FETCH_FAILED(4802, "查询订单列表失败", "error.order_list_fetch_failed"),
+
+    // 跟单配置参数校验 (4810-4839)
+    COPY_TRADING_RATIO_INVALID(4810, "跟单比例必须大于 0", "error.copy_trading_ratio_invalid"),
+    COPY_TRADING_AMOUNT_INVALID(4811, "金额参数必须大于 0", "error.copy_trading_amount_invalid"),
+    COPY_TRADING_PRICE_RANGE_INVALID(4812, "价格必须在 0 到 1 之间，且最低价不能高于最高价", "error.copy_trading_price_range_invalid"),
+    COPY_TRADING_ORDER_SIZE_RANGE_INVALID(4813, "最大单笔金额不能小于最小单笔金额", "error.copy_trading_order_size_range_invalid"),
+    COPY_TRADING_FIXED_AMOUNT_REQUIRED(4814, "固定金额模式必须设置大于 0 的固定金额", "error.copy_trading_fixed_amount_required"),
     
     // ==================== 服务器内部错误 (5001-5999) ====================
     SERVER_ERROR(5001, "服务器内部错误", "error.server.error"),

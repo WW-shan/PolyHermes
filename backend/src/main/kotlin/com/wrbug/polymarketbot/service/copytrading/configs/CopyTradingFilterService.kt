@@ -338,9 +338,14 @@ class CopyTradingFilterService(
             // 检查最大仓位金额（如果配置了）
             if (copyTrading.maxPositionValue != null && outcomeIndex != null) {
                 // 按市场+方向（outcomeIndex）分别计算数据库成本价
-                val dbValue = copyOrderTrackingRepository.sumCurrentPositionValueByMarketAndOutcomeIndex(
+                // 已确认持仓 + 待确认买入的额度预占（避免成交确认前连续下单突破上限）
+                val confirmedValue = copyOrderTrackingRepository.sumCurrentPositionValueByMarketAndOutcomeIndex(
                     copyTrading.id!!, marketId, outcomeIndex
                 ) ?: BigDecimal.ZERO
+                val pendingValue = copyOrderTrackingRepository.sumPendingReservedValueByMarketAndOutcomeIndex(
+                    copyTrading.id, marketId, outcomeIndex
+                ) ?: BigDecimal.ZERO
+                val dbValue = confirmedValue.add(pendingValue)
 
                 // 外部持仓也需要按方向过滤，但由于外部持仓可能没有 outcomeIndex 信息，这里保守处理：
                 // 如果外部持仓存在，取该市场的所有外部持仓市值（与数据库取最大值）

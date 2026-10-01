@@ -54,7 +54,7 @@ data class CopyOrderTracking(
     var remainingQuantity: BigDecimal,  // 剩余未匹配数量
     
     @Column(name = "status", nullable = false, length = 20)
-    var status: String = "filled",  // filled, fully_matched, partially_matched
+    var status: String = "filled",  // pending（成交待确认）, filled, fully_matched, partially_matched, unconfirmed（无法确认）
     
     @Column(name = "notification_sent", nullable = false)
     var notificationSent: Boolean = false,  // 是否已发送通知（从订单详情获取实际数据后发送）
@@ -66,6 +66,23 @@ data class CopyOrderTracking(
     val createdAt: Long = System.currentTimeMillis(),
     
     @Column(name = "updated_at", nullable = false)
-    var updatedAt: Long = System.currentTimeMillis()
-)
+    var updatedAt: Long = System.currentTimeMillis(),
+
+    @Column(name = "requested_quantity", nullable = true, precision = 20, scale = 8)
+    val requestedQuantity: BigDecimal? = null,  // 下单请求数量（待确认订单用于仓位额度预占）
+
+    @Version
+    @Column(name = "version", nullable = false)
+    var version: Long = 0  // 乐观锁版本号，防止读-改-写覆盖并发核销
+) {
+    companion object {
+        /** 已下单但成交未确认：quantity/remainingQuantity 为 0，不计入可卖数量 */
+        const val STATUS_PENDING = "pending"
+        const val STATUS_FILLED = "filled"
+        const val STATUS_PARTIALLY_MATCHED = "partially_matched"
+        const val STATUS_FULLY_MATCHED = "fully_matched"
+        /** 长时间无法查询到订单结果，停止轮询等待人工核对 */
+        const val STATUS_UNCONFIRMED = "unconfirmed"
+    }
+}
 

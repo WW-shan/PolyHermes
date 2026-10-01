@@ -21,12 +21,12 @@ import java.util.concurrent.atomic.AtomicLong
  * RelayClient 服务
  * 参考 TypeScript 项目的实现方式，提供 Gasless 交易支持
  *
- * 注意：当前实现使用手动构建交易的方式（需要支付 gas）
- * 如果需要真正的 Gasless 功能，需要集成 Builder Relayer API
+ * 所有代理钱包链上操作（Safe / Magic / Deposit Wallet）均通过 Builder Relayer（Gasless）执行，
+ * 必须配置 Builder API Key；提交后等待 Relayer 终态并核验回执，不以“拿到 txHash”作为成功。
  *
  * 参考：
  * - TypeScript: https://github.com/Polymarket/builder-relayer-client（client.execute、src/encode/safe.ts MultiSend）
- * - 赎回 calldata 由本服务构建，官方仓库无 redeem 工具；Neg Risk 逻辑见 docs/neg-risk-redeem.md
+ * - 赎回与授权清单参考 Polymarket/ts-sdk（prepareMarketRedemptionCalls、getRequiredTradingApprovals）
  */
 @Service
 class RelayClientService(
@@ -55,6 +55,61 @@ class RelayClientService(
     // 空集合ID
     private val EMPTY_SET = "0x0000000000000000000000000000000000000000000000000000000000000000"
 
+    companion object {
+        /** 普通市场赎回适配器（ts-sdk environments.production.contracts.collateralAdapter） */
+        const val CTF_COLLATERAL_ADAPTER = "0xAdA100Db00Ca00073811820692005400218FcE1f"
+
+        /** Neg Risk 市场赎回适配器（ts-sdk environments.production.contracts.negRiskCollateralAdapter） */
+        const val NEG_RISK_CTF_COLLATERAL_ADAPTER = "0xadA2005600Dec949baf300f4C6120000bDB6eAab"
+
+        /** pUSD（CollateralToken） */
+        const val PUSD_ADDRESS = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
+
+        /** ConditionalTokens（ERC1155） */
+        const val CONDITIONAL_TOKENS_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+
+        /** 二元市场赎回 indexSets（ts-sdk BINARY_OUTCOME_INDEX_SETS） */
+        val BINARY_INDEX_SETS: List<BigInteger> = listOf(BigInteger.ONE, BigInteger.TWO)
+
+        /** 按市场类型选择赎回适配器 */
+        fun redeemAdapterFor(isNegRisk: Boolean): String =
+            if (isNegRisk) NEG_RISK_CTF_COLLATERAL_ADAPTER else CTF_COLLATERAL_ADAPTER
+
+        /** Relayer 终态（参考 ts-sdk RelayerTransactionState） */
+        const val STATE_CONFIRMED = "STATE_CONFIRMED"
+        const val STATE_FAILED = "STATE_FAILED"
+        const val STATE_INVALID = "STATE_INVALID"
+
+        /** GSN RelayHub TransactionRelayed(address,address,address,bytes4,uint8,uint256) 事件 topic0 */
+        const val TRANSACTION_RELAYED_TOPIC = "0xab74390d395916d9e0006298d47938a5def5d367054dcca78fa6ec84381f3f22"
+    }
+
+    /**
+     * Relayer 交易在同步等待时间内未到终态：结果未知，可能稍后上链。
+     * 调用方必须提示“处理中，请勿重复提交”，不能当作失败重试。
+     */
+    class RelayerTransactionPendingException(
+        val transactionId: String,
+        val transactionHash: String?,
+        message: String
+    ) : Exception(message)
+
+    /**
+     * Relayer 交易已到失败终态（STATE_FAILED / STATE_INVALID），或链上回执显示执行失败
+     */
+    class RelayerTransactionFailedException(
+        val transactionId: String?,
+        val transactionHash: String?,
+        message: String
+    ) : Exception(message)
+
+    /**
+     * Builder API Key 未配置：Safe / Magic / Deposit Wallet 的链上操作均需通过 Builder Relayer 执行。
+     * 消息中保留“Builder API Key 未配置”，控制器据此映射为 ErrorCode.BUILDER_API_KEY_NOT_CONFIGURED(2014)。
+     */
+    class BuilderApiKeyNotConfiguredException(operation: String) :
+        IllegalStateException("Builder API Key 未配置，无法执行$operation。请前往系统设置页面配置 Builder API Key。")
+
     // Polygon PROXY（Magic）合约地址，参考 builder-relayer-client config
     private val proxyFactoryAddress = "0xaB45c5A4B0c941a2F231C04C3f49182e1A254052"
     private val relayHubAddress = "0xD216153c06E857cD7f72665E0aF1d7D82172F494"
@@ -78,17 +133,22 @@ class RelayClientService(
     // Deposit Wallet 批量签名有效期（秒），参考 ts-sdk DEPOSIT_WALLET_DEFAULT_DEADLINE_SECONDS
     private val depositWalletDeadlineSeconds = 600L
 
-    // 提交后等待 Relayer 返回交易哈希的轮询次数与间隔
-    private val relayerHashPollAttempts = 15
-    private val relayerHashPollIntervalMs = 2000L
+    // 提交后等待 Relayer 终态的轮询次数与间隔（同步等待上限约 60 秒，超时返回“处理中”）
+    internal var relayerHashPollAttempts = 30
+    internal var relayerHashPollIntervalMs = 2000L
+
+    // Relayer 确认后查询回执的次数（节点同步可能略慢）
+    internal var relayerReceiptPollAttempts = 5
+
+    /** 在途（结果未知）Relayer 交易：代理地址（小写）→ transactionID */
+    private val inFlightTransactions = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     // Safe 代理工厂（用于 SAFE-CREATE 部署）
     private val safeProxyFactoryAddress = PolymarketConstants.SAFE_PROXY_FACTORY_ADDRESS
 
-    private val polygonRpcApi: EthereumRpcApi by lazy {
-        val rpcUrl = rpcNodeService.getHttpUrl()
-        retrofitFactory.createEthereumRpcApi(rpcUrl)
-    }
+    // 只读请求可在本次调用内切换 RPC；交易提交遇到不确定网络错误时不会自动重发。
+    private val polygonRpcApi: EthereumRpcApi
+        get() = rpcNodeService.createFailoverRpcApi()
 
     /** 遇到 429 限流时的重试次数 */
     private val builderRelayerRateLimitMaxAttempts = 3
@@ -257,24 +317,38 @@ class RelayClientService(
     }
 
     /**
-     * 创建赎回交易（支持多个 indexSets，用于批量赎回）
-     * 参考 TypeScript: utils/redeem.ts 的 createRedeemTx
-     * Neg Risk 市场使用 WrappedCollateral 作为抵押品，需传 isNegRisk=true
+     * 创建赎回交易（官方 V2 路径：通过 CollateralAdapter 赎回，直接得到 pUSD）
+     * 参考 ts-sdk actions/positions.ts prepareMarketRedemptionCalls + abis.ts ctfRedeemPositionsCall：
+     * 普通市场调用 CtfCollateralAdapter，Neg Risk 市场调用 NegRiskCtfCollateralAdapter，
+     * 参数固定为 redeemPositions(pUSD, 0x0, conditionId, [1, 2])。
+     *
+     * 注意：CTF 仓位本身按 USDC.e / WCOL 抵押推导，直接对 CTF 以 pUSD 作 collateral 调用
+     * redeemPositions 会“成功但 payout=0”，因此禁止直接调用 CTF。
+     * 调用前代理钱包需对该 adapter 做 CTF setApprovalForAll（见 [createCtfSetApprovalForAllTx]）。
      *
      * @param conditionId 市场条件ID
-     * @param indexSets 索引集合列表（每个元素是 2^outcomeIndex）
-     * @param isNegRisk 是否为 Neg Risk 市场（true 时使用 WrappedCollateral 地址）
+     * @param indexSets 保留参数（兼容旧调用方）；adapter 按官方实现总是赎回 [1, 2]
+     * @param isNegRisk 是否为 Neg Risk 市场（决定使用哪个 adapter）
      * @return Safe 交易对象
      */
     fun createRedeemTx(conditionId: String, indexSets: List<BigInteger>, isNegRisk: Boolean = false): SafeTransaction {
-        // 编码 redeemPositions 函数调用
+        if (indexSets.isEmpty()) {
+            throw IllegalArgumentException("indexSets 不能为空")
+        }
+        return encodeAdapterRedeemTx(conditionId, isNegRisk)
+    }
+
+    /**
+     * 编码 adapter.redeemPositions(pUSD, 0x0, conditionId, [1, 2])
+     */
+    private fun encodeAdapterRedeemTx(conditionId: String, isNegRisk: Boolean): SafeTransaction {
+        val indexSets = BINARY_INDEX_SETS
         val functionSelector = EthereumUtils.getFunctionSelector(
             "redeemPositions(address,bytes32,bytes32,uint256[])"
         )
 
-        // Neg Risk 市场仓位由 WrappedCollateral 抵押，普通市场由 USDC 抵押
-        val collateralAddress = if (isNegRisk) negRiskWrappedCollateralAddress else usdcContractAddress
-        val encodedCollateral = EthereumUtils.encodeAddress(collateralAddress)
+        // adapter 接收 pUSD 作为 collateral，内部完成 USDC.e / WCOL 的转换
+        val encodedCollateral = EthereumUtils.encodeAddress(PUSD_ADDRESS)
         val encodedParentCollection = EthereumUtils.encodeBytes32(EMPTY_SET)
         val encodedConditionId = EthereumUtils.encodeBytes32(conditionId)
 
@@ -295,8 +369,31 @@ class RelayClientService(
                 encodedArrayElements
 
         return SafeTransaction(
-            to = conditionalTokensAddress,
+            to = redeemAdapterFor(isNegRisk),
             operation = 0,  // CALL
+            data = callData,
+            value = "0"
+        )
+    }
+
+    /**
+     * 创建 CTF setApprovalForAll(operator, true) 交易（ERC1155 授权）
+     * 用于赎回前授权 collateral adapter，以及设置步骤3的交易授权
+     */
+    fun createCtfSetApprovalForAllTx(operator: String): SafeTransaction =
+        createErc1155SetApprovalForAllTx(CONDITIONAL_TOKENS_ADDRESS, operator)
+
+    /**
+     * 创建任意 ERC1155 合约的 setApprovalForAll(operator, true) 交易
+     */
+    fun createErc1155SetApprovalForAllTx(token: String, operator: String): SafeTransaction {
+        val functionSelector = EthereumUtils.getFunctionSelector("setApprovalForAll(address,bool)")
+        val callData = "0x" + functionSelector.removePrefix("0x") +
+                EthereumUtils.encodeAddress(operator) +
+                EthereumUtils.encodeUint256(BigInteger.ONE)
+        return SafeTransaction(
+            to = token,
+            operation = 0,
             data = callData,
             value = "0"
         )
@@ -307,7 +404,7 @@ class RelayClientService(
      * 合约: Neg Risk WrappedCollateral 0x3A3BD7bb9528E159577F7C2e685CC81A765002E2
      * 方法: unwrap(address _to, uint256 _amount)
      *
-     * Safe 与 Magic 共用此交易对象：Safe 走 [executeViaBuilderRelayer] / [executeManually]（execTransaction），
+     * Safe 与 Magic 共用此交易对象：Safe 走 [executeViaBuilderRelayer]（execTransaction），
      * Magic 走 [executeViaBuilderRelayerProxy]（encodeProxyTransactionData），语义一致。
      *
      * @param toAddress 接收解包资产的地址（通常为 proxy 自身，使余额留在代理钱包）
@@ -454,13 +551,15 @@ class RelayClientService(
      * @param proxyAddress 代理钱包地址
      * @param safeTx 交易对象（to/data/value）
      * @param walletType 钱包类型：MAGIC 使用 PROXY Gasless，SAFE 使用 Safe 流程
-     * @return 交易哈希
+     * @param metadata Relayer metadata（描述本次操作，如“Redeem positions”“Token approvals”）
+     * @return 已确认且回执核验通过的交易哈希；超时返回 [RelayerTransactionPendingException]
      */
     suspend fun execute(
         privateKey: String,
         proxyAddress: String,
         safeTx: SafeTransaction,
-        walletType: WalletType = WalletType.SAFE
+        walletType: WalletType = WalletType.SAFE,
+        metadata: String? = null
     ): Result<String> {
         return try {
             if (proxyAddress.isBlank() || !proxyAddress.startsWith("0x") || proxyAddress.length != 42) {
@@ -475,38 +574,37 @@ class RelayClientService(
                 if (safeTx.operation == 1) {
                     return Result.failure(IllegalArgumentException("Deposit Wallet 不支持 MultiSend delegatecall，请使用 executeCalls 批量执行"))
                 }
-                return executeCalls(privateKey, proxyAddress, listOf(safeTx), walletType)
+                return executeCalls(privateKey, proxyAddress, listOf(safeTx), walletType, metadata)
+            }
+
+            if (!isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
+                // 不再提供“EOA 自付 gas 手动发送”的兜底路径：该路径签名/编码有误且广播即当成功
+                return Result.failure(BuilderApiKeyNotConfiguredException("代理钱包链上操作（Gasless）"))
             }
 
             if (walletType == WalletType.MAGIC) {
-                if (!isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
-                    return Result.failure(IllegalStateException("Magic 账户赎回必须配置 Builder API Key（Gasless）"))
-                }
-                logger.info("使用 Builder Relayer PROXY 执行 Magic 赎回")
+                logger.info("使用 Builder Relayer PROXY 执行 Magic 交易")
                 return executeViaBuilderRelayerProxy(
                     privateKey,
                     proxyAddress,
-                    safeTx,
+                    listOf(safeTx),
                     builderApiKey!!,
                     builderSecret!!,
-                    builderPassphrase!!
+                    builderPassphrase!!,
+                    metadata
                 )
             }
 
-            if (isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
-                logger.info("使用 Builder Relayer 执行 Gasless 交易")
-                return executeViaBuilderRelayer(
-                    privateKey,
-                    proxyAddress,
-                    safeTx,
-                    builderApiKey!!,
-                    builderSecret!!,
-                    builderPassphrase!!
-                )
-            }
-
-            logger.info("Builder Relayer 未配置，使用手动发送交易（需要用户支付 gas）")
-            return executeManually(privateKey, proxyAddress, safeTx)
+            logger.info("使用 Builder Relayer 执行 Gasless 交易")
+            return executeViaBuilderRelayer(
+                privateKey,
+                proxyAddress,
+                safeTx,
+                builderApiKey!!,
+                builderSecret!!,
+                builderPassphrase!!,
+                metadata
+            )
         } catch (e: Exception) {
             logger.error("执行交易失败: ${e.message}", e)
             Result.failure(e)
@@ -517,15 +615,16 @@ class RelayClientService(
      * 批量执行多笔调用，按钱包类型选择最合适的方式：
      * - DEPOSIT：一次 WALLET 批量提交（原生支持 calls[]）
      * - SAFE：MultiSend 合并为一笔 execTransaction
-     * - MAGIC：PROXY 不支持 delegatecall MultiSend，逐笔顺序执行
+     * - MAGIC：多笔 CALL 编码进同一个 proxy(calls[])，一次 PROXY 交易完成（PROXY 不支持 delegatecall）
      *
-     * @return 最后一笔交易的哈希
+     * @return 最后一笔交易的哈希（均已确认且回执核验通过）
      */
     suspend fun executeCalls(
         privateKey: String,
         proxyAddress: String,
         txs: List<SafeTransaction>,
-        walletType: WalletType
+        walletType: WalletType,
+        metadata: String? = null
     ): Result<String> {
         if (txs.isEmpty()) {
             return Result.failure(IllegalArgumentException("txs 不能为空"))
@@ -540,24 +639,32 @@ class RelayClientService(
                     val builderSecret = systemConfigService.getBuilderSecret()
                     val builderPassphrase = systemConfigService.getBuilderPassphrase()
                     if (!isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
-                        return Result.failure(IllegalStateException("Deposit Wallet 账户链上操作必须配置 Builder API Key（Gasless）"))
+                        return Result.failure(BuilderApiKeyNotConfiguredException("Deposit Wallet 账户链上操作（Gasless）"))
                     }
                     logger.info("使用 Builder Relayer WALLET 批量执行 Deposit Wallet 调用: calls=${txs.size}")
                     executeDepositWalletBatch(
-                        privateKey, proxyAddress, txs, builderApiKey!!, builderSecret!!, builderPassphrase!!
+                        privateKey, proxyAddress, txs, builderApiKey!!, builderSecret!!, builderPassphrase!!, metadata
                     )
                 }
                 WalletType.SAFE -> {
                     val tx = if (txs.size == 1) txs.first() else createMultiSendTx(txs)
-                    execute(privateKey, proxyAddress, tx, walletType)
+                    execute(privateKey, proxyAddress, tx, walletType, metadata)
                 }
                 WalletType.MAGIC -> {
-                    var lastHash = ""
-                    for (tx in txs) {
-                        val result = execute(privateKey, proxyAddress, tx, walletType)
-                        lastHash = result.getOrElse { return Result.failure(it) }
+                    // 与 ts-sdk buildProxyWalletExecuteRequest 一致：多笔调用编码进同一个 proxy(calls[])，一次 Relayer 交易完成
+                    if (txs.any { it.operation == 1 }) {
+                        return Result.failure(IllegalArgumentException("Magic 代理钱包不支持 delegatecall 调用"))
                     }
-                    Result.success(lastHash)
+                    val builderApiKey = systemConfigService.getBuilderApiKey()
+                    val builderSecret = systemConfigService.getBuilderSecret()
+                    val builderPassphrase = systemConfigService.getBuilderPassphrase()
+                    if (!isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
+                        return Result.failure(BuilderApiKeyNotConfiguredException("代理钱包链上操作（Gasless）"))
+                    }
+                    logger.info("使用 Builder Relayer PROXY 批量执行 Magic 调用: calls=${txs.size}")
+                    executeViaBuilderRelayerProxy(
+                        privateKey, proxyAddress, txs, builderApiKey!!, builderSecret!!, builderPassphrase!!, metadata
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -598,7 +705,8 @@ class RelayClientService(
         txs: List<SafeTransaction>,
         builderApiKey: String,
         builderSecret: String,
-        builderPassphrase: String
+        builderPassphrase: String,
+        metadata: String? = null
     ): Result<String> {
         val relayerApi = retrofitFactory.createBuilderRelayerApi(
             relayerUrl = PolymarketConstants.BUILDER_RELAYER_URL,
@@ -606,6 +714,8 @@ class RelayClientService(
             secret = builderSecret,
             passphrase = builderPassphrase
         )
+        // 同一钱包有结果未知的在途交易时拒绝再次提交，避免重复执行
+        checkNoInFlightTransaction(relayerApi, depositWallet).getOrElse { return Result.failure(it) }
 
         val cleanPrivateKey = privateKey.removePrefix("0x")
         val privateKeyBigInt = BigInteger(cleanPrivateKey, 16)
@@ -646,7 +756,7 @@ class RelayClientService(
                     deadline = deadline.toString(),
                     depositWallet = depositWallet
                 ),
-                metadata = "PolyHermes deposit wallet batch (${calls.size} calls)"
+                metadata = metadata ?: "PolyHermes deposit wallet batch (${calls.size} calls)"
             )
             logger.debug(
                 "Deposit Wallet 批量提交: wallet={}, nonce={}, deadline={}, calls={}",
@@ -656,8 +766,9 @@ class RelayClientService(
             val response = withBuilderRelayerRateLimitRetry { relayerApi.submitDepositWalletTransaction(request) }
             if (response.isSuccessful && response.body() != null) {
                 val relayerResponse = response.body()!!
-                val txHash = relayerResponse.transactionHash ?: relayerResponse.hash
-                    ?: waitForRelayerTransactionHash(relayerApi, relayerResponse.transactionID).getOrElse { return Result.failure(it) }
+                // 等待 Relayer 终态并核验回执，未到终态前不当作成功
+                val txHash = awaitRelayerOutcome(relayerApi, relayerResponse, depositWallet, checkRelayHubInnerStatus = false)
+                    .getOrElse { return Result.failure(it) }
                 logger.info("Builder Relayer WALLET 执行成功: transactionID=${relayerResponse.transactionID}, txHash=$txHash")
                 return Result.success(txHash)
             }
@@ -713,12 +824,18 @@ class RelayClientService(
     }
 
     /**
-     * 提交后 Relayer 可能尚未返回交易哈希（STATE_NEW），轮询交易状态直到拿到哈希或失败
+     * 按 transactionID 轮询 Relayer 直到终态（参考 ts-sdk GaslessTransactionHandle.wait）：
+     * - STATE_CONFIRMED：返回交易哈希（随后由调用方核验回执）
+     * - STATE_FAILED / STATE_INVALID：返回 [RelayerTransactionFailedException]
+     * - 超时（约 60 秒）：返回 [RelayerTransactionPendingException]，结果未知，不可当作失败重试
+     * 状态查询本身出错时继续轮询，不把网络错误当成终态。
      */
-    private suspend fun waitForRelayerTransactionHash(
+    internal suspend fun waitForRelayerTerminalState(
         relayerApi: BuilderRelayerApi,
-        transactionId: String
+        transactionId: String,
+        submittedHash: String? = null
     ): Result<String> {
+        var lastHash = submittedHash
         repeat(relayerHashPollAttempts) {
             delay(relayerHashPollIntervalMs)
             val response = try {
@@ -729,16 +846,133 @@ class RelayClientService(
             }
             val status = response?.body()
             if (response != null && response.isSuccessful && status != null) {
-                val hash = status.transactionHash
-                if (!hash.isNullOrBlank()) {
-                    return Result.success(hash)
+                if (!status.transactionHash.isNullOrBlank()) {
+                    lastHash = status.transactionHash
                 }
-                if (status.state == "STATE_FAILED" || status.state == "STATE_INVALID") {
-                    return Result.failure(Exception("Relayer 交易失败: state=${status.state}, ${status.errorMsg ?: ""}"))
+                when (status.state) {
+                    STATE_CONFIRMED -> {
+                        val hash = lastHash
+                            ?: return Result.failure(RelayerTransactionFailedException(transactionId, null, "Relayer 交易已确认但缺少交易哈希"))
+                        return Result.success(hash)
+                    }
+                    STATE_FAILED, STATE_INVALID -> return Result.failure(
+                        RelayerTransactionFailedException(
+                            transactionId, lastHash,
+                            "Relayer 交易失败: state=${status.state}, ${status.errorMsg ?: ""}"
+                        )
+                    )
                 }
             }
         }
-        return Result.failure(Exception("Relayer 交易 $transactionId 在 ${relayerHashPollAttempts * relayerHashPollIntervalMs / 1000} 秒内未返回交易哈希"))
+        return Result.failure(
+            RelayerTransactionPendingException(
+                transactionId, lastHash,
+                "Relayer 交易 $transactionId 在 ${relayerHashPollAttempts * relayerHashPollIntervalMs / 1000} 秒内未到终态，结果未知，请勿重复提交"
+            )
+        )
+    }
+
+    /**
+     * 提交后的统一结果判定：等待 Relayer 终态 → 核验回执（Magic 额外核验 RelayHub 内层状态）。
+     * 超时（结果未知）时记录在途交易，同一代理钱包在其终态前拒绝新的提交，防止重复执行。
+     */
+    private suspend fun awaitRelayerOutcome(
+        relayerApi: BuilderRelayerApi,
+        relayerResponse: BuilderRelayerApi.RelayerTransactionResponse,
+        proxyAddress: String,
+        checkRelayHubInnerStatus: Boolean
+    ): Result<String> {
+        val submittedHash = relayerResponse.transactionHash ?: relayerResponse.hash
+        val txHash = waitForRelayerTerminalState(relayerApi, relayerResponse.transactionID, submittedHash).getOrElse { e ->
+            if (e is RelayerTransactionPendingException) {
+                inFlightTransactions[proxyAddress.lowercase()] = relayerResponse.transactionID
+            }
+            return Result.failure(e)
+        }
+        verifyTransactionReceipt(txHash, checkRelayHubInnerStatus).getOrElse { return Result.failure(it) }
+        return Result.success(txHash)
+    }
+
+    /**
+     * 检查该代理钱包是否有未到终态的在途交易：有则查询一次状态，仍未到终态时返回处理中错误
+     */
+    private suspend fun checkNoInFlightTransaction(relayerApi: BuilderRelayerApi, proxyAddress: String): Result<Unit> {
+        val key = proxyAddress.lowercase()
+        val transactionId = inFlightTransactions[key] ?: return Result.success(Unit)
+        val state = try {
+            relayerApi.getTransactionById(transactionId).body()?.state
+        } catch (e: Exception) {
+            logger.warn("查询在途 Relayer 交易状态异常: ${e.message}")
+            null
+        }
+        if (state == STATE_CONFIRMED || state == STATE_FAILED || state == STATE_INVALID) {
+            inFlightTransactions.remove(key, transactionId)
+            logger.info("在途 Relayer 交易已到终态: proxy=$proxyAddress, transactionID=$transactionId, state=$state")
+            return Result.success(Unit)
+        }
+        return Result.failure(
+            RelayerTransactionPendingException(transactionId, null, "该钱包上一笔链上交易 $transactionId 仍在处理中（state=$state），请勿重复提交")
+        )
+    }
+
+    /**
+     * 核验交易回执：status 必须为 0x1；Magic PROXY 还需检查 RelayHub TransactionRelayed 的内层状态（0=成功）。
+     * RelayHub 外层交易成功但内层调用失败时 status 仍为 0x1，只能靠该事件识别。
+     * @return 回执 JSON（供调用方解析 PayoutRedemption / Transfer 等事件）
+     */
+    internal suspend fun verifyTransactionReceipt(
+        txHash: String,
+        checkRelayHubInnerStatus: Boolean
+    ): Result<com.google.gson.JsonObject> {
+        repeat(relayerReceiptPollAttempts) { attempt ->
+            if (attempt > 0) delay(relayerHashPollIntervalMs)
+            val receipt = try {
+                val response = polygonRpcApi.call(JsonRpcRequest(method = "eth_getTransactionReceipt", params = listOf(txHash)))
+                val body = response.body()
+                if (response.isSuccessful && body != null && body.error == null) body.result else null
+            } catch (e: Exception) {
+                logger.warn("查询交易回执异常: txHash=$txHash, ${e.message}")
+                null
+            }
+            if (receipt != null && receipt.isJsonObject) {
+                return checkReceipt(txHash, receipt.asJsonObject, checkRelayHubInnerStatus)
+            }
+        }
+        return Result.failure(
+            RelayerTransactionPendingException("", txHash, "Relayer 已确认但暂未查到交易回执: $txHash，结果未知，请勿重复提交")
+        )
+    }
+
+    /**
+     * 判定回执是否成功（纯函数，便于单元测试）
+     */
+    internal fun checkReceipt(
+        txHash: String,
+        receipt: com.google.gson.JsonObject,
+        checkRelayHubInnerStatus: Boolean
+    ): Result<com.google.gson.JsonObject> {
+        val status = receipt.get("status")?.takeIf { !it.isJsonNull }?.asString
+        if (status != "0x1") {
+            return Result.failure(RelayerTransactionFailedException(null, txHash, "交易已上链但执行失败: status=$status"))
+        }
+        if (checkRelayHubInnerStatus) {
+            val relayed = receipt.getAsJsonArray("logs")?.map { it.asJsonObject }?.filter { log ->
+                log.get("address")?.asString.equals(relayHubAddress, ignoreCase = true) &&
+                        log.getAsJsonArray("topics")?.firstOrNull()?.asString.equals(TRANSACTION_RELAYED_TOPIC, ignoreCase = true)
+            } ?: emptyList()
+            if (relayed.isEmpty()) {
+                return Result.failure(RelayerTransactionFailedException(null, txHash, "回执中缺少 RelayHub TransactionRelayed 事件，无法确认内层执行结果"))
+            }
+            for (log in relayed) {
+                // data = selector(bytes4) | status(uint8) | charge(uint256)，每项 32 字节
+                val data = log.get("data")?.asString?.removePrefix("0x") ?: ""
+                val innerStatus = if (data.length >= 128) BigInteger(data.substring(64, 128), 16) else null
+                if (innerStatus != BigInteger.ZERO) {
+                    return Result.failure(RelayerTransactionFailedException(null, txHash, "Magic PROXY 内层调用失败: relayStatus=$innerStatus"))
+                }
+            }
+        }
+        return Result.success(receipt)
     }
 
     /**
@@ -754,7 +988,7 @@ class RelayClientService(
             val builderSecret = systemConfigService.getBuilderSecret()
             val builderPassphrase = systemConfigService.getBuilderPassphrase()
             if (!isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
-                return Result.failure(IllegalStateException("Builder API Key 未配置，无法部署 Deposit Wallet"))
+                return Result.failure(BuilderApiKeyNotConfiguredException("Deposit Wallet 部署"))
             }
             val relayerApi = retrofitFactory.createBuilderRelayerApi(
                 relayerUrl = PolymarketConstants.BUILDER_RELAYER_URL,
@@ -776,8 +1010,9 @@ class RelayClientService(
                 return Result.failure(Exception("部署 Deposit Wallet 失败: ${response.code()} - $errorBody"))
             }
             val relayerResponse = response.body()!!
-            val txHash = relayerResponse.transactionHash ?: relayerResponse.hash
-                ?: waitForRelayerTransactionHash(relayerApi, relayerResponse.transactionID).getOrElse { return Result.failure(it) }
+            // 等待 Relayer 终态并核验回执，未到终态前不当作成功
+            val txHash = awaitRelayerOutcome(relayerApi, relayerResponse, fromAddress, checkRelayHubInnerStatus = false)
+                .getOrElse { return Result.failure(it) }
             logger.info("Deposit Wallet 部署成功: owner=$fromAddress, txHash=$txHash")
             Result.success(txHash)
         } catch (e: Exception) {
@@ -793,10 +1028,11 @@ class RelayClientService(
     private suspend fun executeViaBuilderRelayerProxy(
         privateKey: String,
         proxyAddress: String,
-        safeTx: SafeTransaction,
+        calls: List<SafeTransaction>,
         builderApiKey: String,
         builderSecret: String,
-        builderPassphrase: String
+        builderPassphrase: String,
+        metadata: String? = null
     ): Result<String> {
         val relayerApi = retrofitFactory.createBuilderRelayerApi(
             relayerUrl = PolymarketConstants.BUILDER_RELAYER_URL,
@@ -804,6 +1040,8 @@ class RelayClientService(
             secret = builderSecret,
             passphrase = builderPassphrase
         )
+        // 同一钱包有结果未知的在途交易时拒绝再次提交，避免重复执行
+        checkNoInFlightTransaction(relayerApi, proxyAddress).getOrElse { return Result.failure(it) }
 
         val cleanPrivateKey = privateKey.removePrefix("0x")
         val privateKeyBigInt = BigInteger(cleanPrivateKey, 16)
@@ -821,7 +1059,7 @@ class RelayClientService(
         val relayAddress = relayPayload.address
         val nonce = relayPayload.nonce
 
-        val proxyCallData = encodeProxyTransactionData(safeTx)
+        val proxyCallData = encodeProxyTransactionData(calls)
         
         // 估算 gas limit（参考 builder-relayer-client builder/proxy.ts getGasLimit）
         val gasLimit = try {
@@ -883,7 +1121,7 @@ class RelayClientService(
                 relayHub = relayHubAddress,
                 relay = relayAddress
             ),
-            metadata = "Redeem positions via Builder Relayer PROXY"
+            metadata = metadata ?: "PolyHermes proxy call"
         )
 
         val response = withBuilderRelayerRateLimitRetry { relayerApi.submitTransaction(request) }
@@ -895,8 +1133,9 @@ class RelayClientService(
         }
 
         val relayerResponse = response.body()!!
-        val txHash = relayerResponse.transactionHash ?: relayerResponse.hash
-            ?: waitForRelayerTransactionHash(relayerApi, relayerResponse.transactionID).getOrElse { return Result.failure(it) }
+        // 等待 Relayer 终态并核验回执，未到终态前不当作成功
+        val txHash = awaitRelayerOutcome(relayerApi, relayerResponse, proxyAddress, checkRelayHubInnerStatus = true)
+            .getOrElse { return Result.failure(it) }
         logger.info("Builder Relayer PROXY 执行成功: transactionID=${relayerResponse.transactionID}, txHash=$txHash")
         return Result.success(txHash)
     }
@@ -909,9 +1148,9 @@ class RelayClientService(
      * 结构：
      * - selector (4 bytes)
      * - array offset (32 bytes) = 32
-     * - array length (32 bytes) = 1
-     * - tuple[0] offset (32 bytes) = 32 (指向 tuple 数据开始，从 array length 之后计算)
-     * - tuple[0] 数据：
+     * - array length (32 bytes) = N
+     * - tuple[i] offset (32 bytes)，从 offsets 区起算：tuple[0] = 32 * N，之后依次累加前一个 tuple 的字节数
+     * - tuple[i] 数据：
      *   - typeCode (32 bytes) = 1
      *   - to (32 bytes)
      *   - value (32 bytes) = 0
@@ -919,37 +1158,31 @@ class RelayClientService(
      *   - data length (32 bytes)
      *   - data (padded to 32-byte boundary)
      */
-    private fun encodeProxyTransactionData(safeTx: SafeTransaction): String {
+    internal fun encodeProxyTransactionData(calls: List<SafeTransaction>): String {
         val selector = EthereumUtils.getFunctionSelector("proxy((uint8,address,uint256,bytes)[])")
-        val callData = safeTx.data.removePrefix("0x")
-        val dataLen = callData.length / 2
-        val dataLenPadded = (dataLen + 31) / 32 * 32 * 2
-        val dataPadded = callData.padEnd(dataLenPadded, '0')
-
-        // ABI 编码：tuple 数组，tuple 包含动态类型 bytes
-        // 1. array offset: 32 (指向 array length)
-        val arrayOffset = EthereumUtils.encodeUint256(BigInteger.valueOf(32))
-        // 2. array length: 1
-        val arrayLength = EthereumUtils.encodeUint256(BigInteger.ONE)
-        // 3. tuple[0] offset: 32 (指向 tuple 数据开始，从 array length 之后计算)
-        val tupleOffset = EthereumUtils.encodeUint256(BigInteger.valueOf(32))
-        // 4. tuple[0] 数据：
-        //    - typeCode: 1
-        val typeCode = EthereumUtils.encodeUint256(BigInteger.ONE)
-        //    - to: address
-        val toEncoded = EthereumUtils.encodeAddress(safeTx.to)
-        //    - value: 0
-        val valueEncoded = EthereumUtils.encodeUint256(BigInteger.ZERO)
-        //    - data offset: 128 (从 tuple 数据开始计算，typeCode+to+value = 3*32 = 96，加上 offset 字段 = 128)
-        val dataOffsetInTuple = BigInteger.valueOf(128)
-        val dataOffsetEncoded = EthereumUtils.encodeUint256(dataOffsetInTuple)
-        //    - data length
-        val dataLengthEncoded = EthereumUtils.encodeUint256(BigInteger.valueOf(dataLen.toLong()))
-        //    - data (padded)
-        
-        return "0x" + selector.removePrefix("0x") + arrayOffset + arrayLength +
-                tupleOffset + typeCode + toEncoded + valueEncoded + dataOffsetEncoded +
-                dataLengthEncoded + dataPadded
+        // ABI 编码：动态 tuple 数组。每个 tuple = typeCode(1=CALL) + to + value + data 偏移(128) + data 长度 + data（补齐到 32 字节）
+        val encodedTuples = calls.map { call ->
+            val callData = call.data.removePrefix("0x")
+            val dataLen = callData.length / 2
+            val dataPadded = callData.padEnd((dataLen + 31) / 32 * 32 * 2, '0')
+            EthereumUtils.encodeUint256(BigInteger.ONE) +
+                EthereumUtils.encodeAddress(call.to) +
+                EthereumUtils.encodeUint256(BigInteger.ZERO) +
+                EthereumUtils.encodeUint256(BigInteger.valueOf(128)) +
+                EthereumUtils.encodeUint256(BigInteger.valueOf(dataLen.toLong())) +
+                dataPadded
+        }
+        // tuple 偏移从 offsets 区起算：第一个为 32 * N，之后依次累加前一个 tuple 的字节数
+        var offset = 32L * calls.size
+        val offsets = encodedTuples.joinToString("") { tuple ->
+            val encoded = EthereumUtils.encodeUint256(BigInteger.valueOf(offset))
+            offset += tuple.length / 2
+            encoded
+        }
+        return "0x" + selector.removePrefix("0x") +
+            EthereumUtils.encodeUint256(BigInteger.valueOf(32)) +
+            EthereumUtils.encodeUint256(BigInteger.valueOf(calls.size.toLong())) +
+            offsets + encodedTuples.joinToString("")
     }
 
     /**
@@ -1033,7 +1266,8 @@ class RelayClientService(
         safeTx: SafeTransaction,
         builderApiKey: String,
         builderSecret: String,
-        builderPassphrase: String
+        builderPassphrase: String,
+        metadata: String? = null
     ): Result<String> {
         val relayerApi = retrofitFactory.createBuilderRelayerApi(
             relayerUrl = PolymarketConstants.BUILDER_RELAYER_URL,
@@ -1041,6 +1275,8 @@ class RelayClientService(
             secret = builderSecret,
             passphrase = builderPassphrase
         )
+        // 同一钱包有结果未知的在途交易时拒绝再次提交，避免重复执行
+        checkNoInFlightTransaction(relayerApi, proxyAddress).getOrElse { return Result.failure(it) }
 
         // 从私钥推导实际签名地址（EOA）
         val cleanPrivateKey = privateKey.removePrefix("0x")
@@ -1152,10 +1388,10 @@ class RelayClientService(
                 gasToken = gasToken,
                 refundReceiver = refundReceiver
             ),
-            metadata = if (safeTx.operation == 1) {
-                "MultiSend redeem positions via Builder Relayer"
+            metadata = metadata ?: if (safeTx.operation == 1) {
+                "PolyHermes safe MultiSend batch"
             } else {
-                "Redeem positions via Builder Relayer"
+                "PolyHermes safe call"
             }
         )
 
@@ -1170,8 +1406,9 @@ class RelayClientService(
         }
 
         val relayerResponse = response.body()!!
-        val txHash = relayerResponse.transactionHash ?: relayerResponse.hash
-            ?: waitForRelayerTransactionHash(relayerApi, relayerResponse.transactionID).getOrElse { return Result.failure(it) }
+        // 等待 Relayer 终态并核验回执，未到终态前不当作成功
+        val txHash = awaitRelayerOutcome(relayerApi, relayerResponse, proxyAddress, checkRelayHubInnerStatus = false)
+            .getOrElse { return Result.failure(it) }
 
         logger.info("Builder Relayer 执行成功: transactionID=${relayerResponse.transactionID}, txHash=$txHash")
         return Result.success(txHash)
@@ -1196,7 +1433,7 @@ class RelayClientService(
             val builderSecret = systemConfigService.getBuilderSecret()
             val builderPassphrase = systemConfigService.getBuilderPassphrase()
             if (!isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
-                return Result.failure(IllegalStateException("Builder API Key 未配置，无法执行 Safe 部署"))
+                return Result.failure(BuilderApiKeyNotConfiguredException("Safe 部署"))
             }
             val relayerApi = retrofitFactory.createBuilderRelayerApi(
                 relayerUrl = PolymarketConstants.BUILDER_RELAYER_URL,
@@ -1248,8 +1485,9 @@ class RelayClientService(
                 return Result.failure(Exception("部署 Safe 失败: ${response.code()} - $errorBody"))
             }
             val relayerResponse = response.body()!!
-            val txHash = relayerResponse.transactionHash ?: relayerResponse.hash
-                ?: waitForRelayerTransactionHash(relayerApi, relayerResponse.transactionID).getOrElse { return Result.failure(it) }
+            // 等待 Relayer 终态并核验回执，未到终态前不当作成功
+            val txHash = awaitRelayerOutcome(relayerApi, relayerResponse, proxyAddress, checkRelayHubInnerStatus = false)
+                .getOrElse { return Result.failure(it) }
             logger.info("Safe 部署成功: proxy=$proxyAddress, txHash=$txHash")
             Result.success(txHash)
         } catch (e: Exception) {
@@ -1332,336 +1570,6 @@ class RelayClientService(
         val vEncoded = String.format("%02x", vInt)  // 2 个十六进制字符
 
         return "0x$rEncoded$sEncoded$vEncoded"
-    }
-
-    /**
-     * 手动执行交易（需要用户支付 gas）
-     */
-    private suspend fun executeManually(
-        privateKey: String,
-        proxyAddress: String,
-        safeTx: SafeTransaction
-    ): Result<String> {
-        return try {
-            val rpcApi = polygonRpcApi
-
-            // 从私钥推导实际签名地址（交易真正的 from 地址）
-            val cleanPrivateKey = privateKey.removePrefix("0x")
-            val privateKeyBigInt = BigInteger(cleanPrivateKey, 16)
-            val credentials = org.web3j.crypto.Credentials.create(privateKeyBigInt.toString(16))
-            val fromAddress = credentials.address
-
-            val redeemCallData = safeTx.data.removePrefix("0x")  // 移除 0x 前缀，后续编码需要
-
-            // 获取 Proxy 的 nonce（用于构建 Safe 交易哈希）
-            val proxyNonceResult = getProxyNonce(proxyAddress, rpcApi)
-            val proxyNonce = proxyNonceResult.getOrElse {
-                logger.warn("获取 Proxy nonce 失败，使用 0: ${it.message}")
-                BigInteger.ZERO
-            }
-
-            // 构建 Safe 交易哈希（用于 EIP-712 签名）
-            val safeTxGas = BigInteger.ZERO
-            val baseGas = BigInteger.ZERO
-            val safeGasPrice = BigInteger.ZERO
-            val gasToken = "0x0000000000000000000000000000000000000000"
-            val refundReceiver = "0x0000000000000000000000000000000000000000"
-
-            // 1. 编码 Safe 域分隔符
-            val safeDomainSeparator = com.wrbug.polymarketbot.util.Eip712Encoder.encodeSafeDomain(
-                chainId = 137L,  // Polygon 主网
-                verifyingContract = proxyAddress
-            )
-
-            // 2. 编码 SafeTx 消息哈希
-            val safeTxHash = com.wrbug.polymarketbot.util.Eip712Encoder.encodeSafeTx(
-                to = safeTx.to,
-                value = BigInteger.ZERO,
-                data = redeemCallData,
-                operation = safeTx.operation,
-                safeTxGas = safeTxGas,
-                baseGas = baseGas,
-                gasPrice = safeGasPrice,
-                gasToken = gasToken,
-                refundReceiver = refundReceiver,
-                nonce = proxyNonce
-            )
-
-            // 3. 计算完整的结构化数据哈希
-            val safeTxStructuredHash = com.wrbug.polymarketbot.util.Eip712Encoder.hashStructuredData(
-                domainSeparator = safeDomainSeparator,
-                messageHash = safeTxHash
-            )
-
-            // 4. 使用私钥签名 Safe 交易
-            // 注意：ethers.js 的 signMessage 会添加 EIP-191 前缀
-            // 格式：\x19Ethereum Signed Message:\n<length><message>
-            // 我们需要模拟这个行为以匹配 TypeScript 实现
-            val prefix = "\u0019Ethereum Signed Message:\n${safeTxStructuredHash.size}".toByteArray(Charsets.UTF_8)
-            val messageWithPrefix = ByteArray(prefix.size + safeTxStructuredHash.size)
-            System.arraycopy(prefix, 0, messageWithPrefix, 0, prefix.size)
-            System.arraycopy(safeTxStructuredHash, 0, messageWithPrefix, prefix.size, safeTxStructuredHash.size)
-
-            // 对带前缀的消息进行 keccak256 哈希
-            val keccak256 = org.bouncycastle.crypto.digests.KeccakDigest(256)
-            keccak256.update(messageWithPrefix, 0, messageWithPrefix.size)
-            val hashWithPrefix = ByteArray(keccak256.digestSize)
-            keccak256.doFinal(hashWithPrefix, 0)
-
-            val ecKeyPair = org.web3j.crypto.ECKeyPair.create(privateKeyBigInt)
-            val safeSignature = org.web3j.crypto.Sign.signMessage(hashWithPrefix, ecKeyPair, false)
-
-            // 5. 编码签名数据（Gnosis Safe 签名格式：r + s + v，每个 32 字节，共 96 字节）
-            val vBytes = safeSignature.v as ByteArray
-            val vInt = if (vBytes.isNotEmpty()) {
-                vBytes[0].toInt() and 0xff
-            } else {
-                0
-            }
-
-            val rHex = org.web3j.utils.Numeric.toHexString(safeSignature.r).removePrefix("0x").padStart(64, '0')
-            val sHex = org.web3j.utils.Numeric.toHexString(safeSignature.s).removePrefix("0x").padStart(64, '0')
-            val vHex = String.format("%064x", vInt)
-            val safeSignatureHex = rHex + sHex + vHex
-
-            // 6. 构建 execTransaction 调用数据
-            val execCallData = buildExecTransactionCallData(safeTx, redeemCallData, safeSignatureHex)
-
-            // 7. 获取 EOA 的 nonce（用于发送交易）
-            val nonceResult = getTransactionCount(fromAddress, rpcApi)
-            val nonce = nonceResult.getOrElse {
-                return Result.failure(Exception("获取 nonce 失败: ${it.message}"))
-            }
-
-            // 8. 获取 gas price
-            val gasPriceResult = getGasPrice(rpcApi)
-            val gasPrice = gasPriceResult.getOrElse {
-                return Result.failure(Exception("获取 gas price 失败: ${it.message}"))
-            }
-
-            // 9. Gas limit（通过 Proxy 执行需要更多 gas，给 240 万，参考实际交易）
-            val gasLimit = BigInteger.valueOf(2400000)
-
-            // 10. 构建并签名交易
-            val transaction = buildTransaction(
-                privateKey = privateKey,
-                from = fromAddress,
-                to = proxyAddress,
-                data = execCallData,
-                nonce = nonce,
-                gasLimit = gasLimit,
-                gasPrice = gasPrice
-            )
-
-            // 11. 发送交易
-            sendTransaction(rpcApi, transaction)
-        } catch (e: Exception) {
-            logger.error("手动执行 Safe 交易失败: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * 构建 execTransaction 调用数据
-     */
-    private fun buildExecTransactionCallData(
-        safeTx: SafeTransaction,
-        redeemCallData: String,
-        safeSignatureHex: String
-    ): String {
-        val execFunctionSelector =
-            EthereumUtils.getFunctionSelector("execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)")
-
-        val encodedTo = EthereumUtils.encodeAddress(safeTx.to)
-        val encodedValue = EthereumUtils.encodeUint256(BigInteger.ZERO)
-
-        val dataOffset = BigInteger.valueOf(320L)
-        val redeemCallDataHex = redeemCallData.removePrefix("0x")
-        val dataLengthBytes = BigInteger.valueOf((redeemCallDataHex.length / 2).toLong())
-        val encodedDataOffset = EthereumUtils.encodeUint256(dataOffset)
-        val encodedDataLength = EthereumUtils.encodeUint256(dataLengthBytes)
-        val dataPaddedLength = ((dataLengthBytes.toInt() + 31) / 32) * 32 * 2
-        val encodedData = redeemCallDataHex.padEnd(dataPaddedLength, '0')
-
-        val encodedOperation = EthereumUtils.encodeUint256(BigInteger.valueOf(safeTx.operation.toLong()))
-        val encodedSafeTxGas = EthereumUtils.encodeUint256(BigInteger.ZERO)
-        val encodedBaseGas = EthereumUtils.encodeUint256(BigInteger.ZERO)
-        val encodedGasPrice = EthereumUtils.encodeUint256(BigInteger.ZERO)
-        val encodedGasToken = EthereumUtils.encodeAddress("0x0000000000000000000000000000000000000000")
-        val encodedRefundReceiver = EthereumUtils.encodeAddress("0x0000000000000000000000000000000000000000")
-
-        val dataPaddedBytes = dataPaddedLength / 2
-        val signaturesOffset = BigInteger.valueOf((320 + dataPaddedBytes).toLong())
-        val signaturesLength = BigInteger.valueOf(96L)
-        val encodedSignaturesOffset = EthereumUtils.encodeUint256(signaturesOffset)
-        val encodedSignaturesLength = EthereumUtils.encodeUint256(signaturesLength)
-        val encodedSignatures = safeSignatureHex
-
-        return "0x" + execFunctionSelector.removePrefix("0x") +
-                encodedTo +
-                encodedValue +
-                encodedDataOffset +
-                encodedDataLength +
-                encodedData +
-                encodedOperation +
-                encodedSafeTxGas +
-                encodedBaseGas +
-                encodedGasPrice +
-                encodedGasToken +
-                encodedRefundReceiver +
-                encodedSignaturesOffset +
-                encodedSignaturesLength +
-                encodedSignatures
-    }
-
-    /**
-     * 获取代理钱包的 nonce（用于构建 Safe 交易）
-     */
-    private suspend fun getProxyNonce(proxyAddress: String, rpcApi: EthereumRpcApi): Result<BigInteger> {
-        val nonceFunctionSelector = EthereumUtils.getFunctionSelector("nonce()")
-
-        val rpcRequest = JsonRpcRequest(
-            method = "eth_call",
-            params = listOf(
-                mapOf(
-                    "to" to proxyAddress,
-                    "data" to nonceFunctionSelector
-                ),
-                "latest"
-            )
-        )
-
-        val response = rpcApi.call(rpcRequest)
-        if (!response.isSuccessful || response.body() == null) {
-            return Result.failure(Exception("获取 Proxy nonce 失败: ${response.code()} ${response.message()}"))
-        }
-
-        val rpcResponse = response.body()!!
-        if (rpcResponse.error != null) {
-            return Result.failure(Exception("获取 Proxy nonce 失败: ${rpcResponse.error.message}"))
-        }
-
-        val hexNonce = rpcResponse.result ?: return Result.failure(Exception("Proxy nonce 结果为空"))
-        val nonce = EthereumUtils.decodeUint256(hexNonce.asString)
-        return Result.success(nonce)
-    }
-
-    /**
-     * 获取交易 nonce
-     */
-    private suspend fun getTransactionCount(address: String, rpcApi: EthereumRpcApi): Result<BigInteger> {
-        val rpcRequest = JsonRpcRequest(
-            method = "eth_getTransactionCount",
-            params = listOf(address, "pending")
-        )
-
-        val response = rpcApi.call(rpcRequest)
-        if (!response.isSuccessful || response.body() == null) {
-            return Result.failure(Exception("获取 nonce 失败: ${response.code()} ${response.message()}"))
-        }
-
-        val rpcResponse = response.body()!!
-        if (rpcResponse.error != null) {
-            return Result.failure(Exception("获取 nonce 失败: ${rpcResponse.error.message}"))
-        }
-
-        val hexNonce = rpcResponse.result ?: return Result.failure(Exception("nonce 结果为空"))
-        val nonce = EthereumUtils.decodeUint256(hexNonce.asString)
-        return Result.success(nonce)
-    }
-
-    /**
-     * 获取 gas price
-     */
-    private suspend fun getGasPrice(rpcApi: EthereumRpcApi): Result<BigInteger> {
-        val rpcRequest = JsonRpcRequest(
-            method = "eth_gasPrice",
-            params = emptyList()
-        )
-
-        val response = rpcApi.call(rpcRequest)
-        if (!response.isSuccessful || response.body() == null) {
-            return Result.failure(Exception("获取 gas price 失败: ${response.code()} ${response.message()}"))
-        }
-
-        val rpcResponse = response.body()!!
-        if (rpcResponse.error != null) {
-            return Result.failure(Exception("获取 gas price 失败: ${rpcResponse.error.message}"))
-        }
-
-        val hexGasPrice = rpcResponse.result ?: return Result.failure(Exception("gas price 结果为空"))
-        val gasPrice = EthereumUtils.decodeUint256(hexGasPrice.asString)
-        return Result.success(gasPrice)
-    }
-
-    /**
-     * 构建并签名交易
-     */
-    private fun buildTransaction(
-        privateKey: String,
-        from: String,
-        to: String,
-        data: String,
-        nonce: BigInteger,
-        gasLimit: BigInteger,
-        gasPrice: BigInteger
-    ): Map<String, Any> {
-        val cleanPrivateKey = privateKey.removePrefix("0x")
-        val privateKeyBigInt = BigInteger(cleanPrivateKey, 16)
-        val credentials = org.web3j.crypto.Credentials.create(privateKeyBigInt.toString(16))
-
-        val rawTransaction = org.web3j.crypto.RawTransaction.createTransaction(
-            nonce,
-            gasPrice,
-            gasLimit,
-            to,
-            data
-        )
-
-        val chainId: Long = 137L
-        val signedTransaction = org.web3j.crypto.TransactionEncoder.signMessage(rawTransaction, chainId, credentials)
-        val hexValue = org.web3j.utils.Numeric.toHexString(signedTransaction)
-
-        return mapOf(
-            "from" to from,
-            "to" to to,
-            "data" to data,
-            "nonce" to "0x${nonce.toString(16)}",
-            "gas" to "0x${gasLimit.toString(16)}",
-            "gasPrice" to "0x${gasPrice.toString(16)}",
-            "value" to "0x0",
-            "chainId" to "0x89",
-            "rawTransaction" to hexValue
-        )
-    }
-
-    /**
-     * 发送交易
-     */
-    private suspend fun sendTransaction(
-        rpcApi: EthereumRpcApi,
-        transaction: Map<String, Any>
-    ): Result<String> {
-        val rawTransaction = transaction["rawTransaction"] as? String
-            ?: return Result.failure(IllegalArgumentException("rawTransaction 不能为空"))
-
-        val rpcRequest = JsonRpcRequest(
-            method = "eth_sendRawTransaction",
-            params = listOf(rawTransaction)
-        )
-
-        val response = rpcApi.call(rpcRequest)
-        if (!response.isSuccessful || response.body() == null) {
-            return Result.failure(Exception("发送交易失败: ${response.code()} ${response.message()}"))
-        }
-
-        val rpcResponse = response.body()!!
-        if (rpcResponse.error != null) {
-            return Result.failure(Exception("发送交易失败: ${rpcResponse.error.message}"))
-        }
-
-        val txHash = rpcResponse.result ?: return Result.failure(Exception("交易哈希为空"))
-        return Result.success(txHash.asString)
     }
 
     /**

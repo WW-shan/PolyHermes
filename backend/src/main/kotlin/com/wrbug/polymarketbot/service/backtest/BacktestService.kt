@@ -310,9 +310,10 @@ class BacktestService(
                 return Result.failure(IllegalArgumentException("回测任务未在运行中"))
             }
 
-            task.status = "STOPPED"
-            task.updatedAt = System.currentTimeMillis()
-            backtestTaskRepository.save(task)
+            // 条件更新只改状态，避免用整行实体覆盖执行线程写入的进度/断点
+            if (backtestTaskRepository.updateStatusIfCurrent(request.id, "RUNNING", "STOPPED") == 0) {
+                return Result.failure(IllegalArgumentException("回测任务未在运行中"))
+            }
 
             Result.success(Unit)
         } catch (e: Exception) {
@@ -323,7 +324,7 @@ class BacktestService(
 
     /**
      * 重试回测任务
-     * 从断点继续执行，保留已处理的交易记录
+     * 重新排队执行；执行时会清空旧交易从头回测，保证余额、持仓与统计一致
      */
     @Transactional
     fun retryBacktestTask(request: BacktestRetryRequest): Result<Unit> {
@@ -340,7 +341,7 @@ class BacktestService(
             task.errorMessage = null
             task.updatedAt = System.currentTimeMillis()
 
-            // 不清理已处理的交易记录，保留恢复点
+            // 旧交易由执行服务在开始时清空（从头重跑）
             backtestTaskRepository.save(task)
 
             Result.success(Unit)

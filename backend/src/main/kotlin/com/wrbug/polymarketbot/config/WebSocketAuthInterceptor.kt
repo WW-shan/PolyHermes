@@ -33,7 +33,8 @@ class WebSocketAuthInterceptor(
         val ticket = getTicketFromRequest(request)
         if (ticket != null) {
             val username = webSocketTicketService.validateAndConsumeTicket(ticket)
-            if (username != null) {
+            // 票据签发后用户可能已被删除，需再次确认用户存在
+            if (username != null && userRepository.findByUsername(username) != null) {
                 attributes["username"] = username
                 logger.debug("WebSocket 连接票据认证成功: username=$username")
                 return true
@@ -62,14 +63,18 @@ class WebSocketAuthInterceptor(
         // 验证tokenVersion（检查token是否因密码修改而失效）
         val username = jwtUtils.getUsernameFromToken(token)
         if (username != null) {
+            // 用户不存在（例如已被删除）时直接鉴权失败
             val user = userRepository.findByUsername(username)
-            if (user != null) {
-                val tokenVersion = jwtUtils.getTokenVersionFromToken(token)
-                if (tokenVersion == null || tokenVersion != user.tokenVersion) {
-                    logger.warn("WebSocket 连接 token 版本不匹配，token已失效: username=$username")
-                    response.setStatusCode(org.springframework.http.HttpStatus.UNAUTHORIZED)
-                    return false
-                }
+            if (user == null) {
+                logger.warn("WebSocket 连接 token 对应用户不存在，token已失效: username=$username")
+                response.setStatusCode(org.springframework.http.HttpStatus.UNAUTHORIZED)
+                return false
+            }
+            val tokenVersion = jwtUtils.getTokenVersionFromToken(token)
+            if (tokenVersion == null || tokenVersion != user.tokenVersion) {
+                logger.warn("WebSocket 连接 token 版本不匹配，token已失效: username=$username")
+                response.setStatusCode(org.springframework.http.HttpStatus.UNAUTHORIZED)
+                return false
             }
 
             // 获取用户名并存入 attributes，供后续使用

@@ -4,8 +4,8 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.wrbug.polymarketbot.api.*
+import com.wrbug.polymarketbot.event.ProxyConfigChangedEvent
 import com.wrbug.polymarketbot.service.system.RpcNodeService
-import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.createClient
 import com.wrbug.polymarketbot.util.getProxyConfig
 import jakarta.annotation.PostConstruct
@@ -18,6 +18,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -29,7 +30,6 @@ import java.util.concurrent.atomic.AtomicInteger
 @Service
 class UnifiedOnChainWsService(
     private val rpcNodeService: RpcNodeService,
-    private val retrofitFactory: RetrofitFactory,
     private val gson: Gson
 ) {
     
@@ -37,6 +37,9 @@ class UnifiedOnChainWsService(
     
     @Value("\${copy.trading.onchain.ws.reconnect.delay:3000}")
     private var reconnectDelay: Long = 3000  // 重连延迟（毫秒），默认3秒
+
+    @Value("\${copy.trading.onchain.ws.heartbeat.timeout:60000}")
+    private var heartbeatTimeoutMs: Long = 60_000  // 超过该时长未收到任何消息（含 newHeads）则主动重连
     
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     
@@ -51,7 +54,7 @@ class UnifiedOnChainWsService(
         val address: String,  // 要监听的地址（Leader 地址或账户代理地址）
         val entityType: String,  // 实体类型：LEADER 或 ACCOUNT
         val entityId: Long,  // 实体 ID（Leader ID 或 Account ID）
-        val callback: suspend (String, OkHttpClient, EthereumRpcApi) -> Unit  // 回调函数
+        val callback: suspend (String, OkHttpClient, EthereumRpcApi) -> Boolean  // true 表示该交易已处理或确认无关
     )
     
     /**
@@ -68,7 +71,7 @@ class UnifiedOnChainWsService(
         address: String,
         entityType: String,
         entityId: Long,
-        callback: suspend (String, OkHttpClient, EthereumRpcApi) -> Unit
+        callback: suspend (String, OkHttpClient, EthereumRpcApi) -> Boolean
     ): Boolean {
         try {
             val lowerAddress = address.lowercase()
@@ -150,9 +153,19 @@ class UnifiedOnChainWsService(
     }
 
     /**
+     * 代理配置变更后，让所有地址连接按新代理重建（连接循环每次都会新建 OkHttpClient 并读取当前代理）
+     */
+    @EventListener(ProxyConfigChangedEvent::class)
+    fun onProxyConfigChanged() {
+        logger.info("代理配置已变更，重建链上 WebSocket 连接: count=${addressConnections.size}")
+        addressConnections.values.forEach { it.forceReconnect() }
+    }
+
+    /**
      * 单个地址的 WebSocket 连接管理
      */
     inner class AddressWsConnection(val address: String) {
+        @Volatile
         private var webSocket: WebSocket? = null
         @Volatile
         private var isConnected = false
@@ -172,6 +185,32 @@ class UnifiedOnChainWsService(
         
         // 存储 RPC subscriptionId 到订阅 ID 的映射：rpcSubscriptionId -> subscriptionId
         private val rpcSubscriptionIdToSubscriptionId = ConcurrentHashMap<String, String>()
+
+        // newHeads 心跳订阅的 RPC subscriptionId
+        @Volatile
+        private var newHeadsRpcSubscriptionId: String? = null
+
+        // 最后一次收到任意消息的时间（毫秒）
+        @Volatile
+        private var lastMessageAt: Long = 0L
+
+        private val backfillCursor = OnChainBackfillCursor()
+
+        // 连续连接失败次数，用于重连退避
+        private var consecutiveFailures = 0
+        private val failedWsHttpUrls = linkedSetOf<String>()
+
+        private fun updateLastBlock(block: Long) {
+            backfillCursor.observe(block)
+        }
+
+        /**
+         * 主动断开当前连接，由连接循环按最新配置（代理/RPC 节点）重连
+         */
+        fun forceReconnect() {
+            webSocket?.cancel()
+            isConnected = false
+        }
 
         fun start() {
             if (connectionJob != null && connectionJob!!.isActive) return
@@ -225,6 +264,7 @@ class UnifiedOnChainWsService(
 
         private suspend fun startConnectionLoop() {
             while (scope.isActive) {
+                var attemptedEndpoint: RpcNodeService.WebSocketEndpoint? = null
                 try {
                     if (subscriptions.isEmpty()) {
                         // 如果启动循环时还没订阅（不太可能，通常是先 addSubscription 再 start，或者是 start 后 addSubscription）
@@ -238,34 +278,58 @@ class UnifiedOnChainWsService(
                         continue
                     }
 
-                    // 获取可用的 RPC 节点
-                    val wsUrl = rpcNodeService.getWsUrl()
-                    val httpUrl = rpcNodeService.getHttpUrl()
+                    // HTTP 健康并不代表 WS 可用；重连时跳过最近 WS 失败的节点。
+                    val endpoint = nextWebSocketEndpoint()
+                    attemptedEndpoint = endpoint
+                    val wsUrl = endpoint.wsUrl
+                    val rpcApi = rpcNodeService.createFailoverRpcApi()
 
                     logger.info("[$address] 连接链上 WebSocket: $wsUrl")
 
                     val httpClient = createHttpClient()
-                    val rpcApi = retrofitFactory.createEthereumRpcApi(httpUrl)
-
                     connectWebSocket(wsUrl, httpClient, rpcApi)
                     waitForConnect()
 
                     if (isConnected) {
                         logger.info("[$address] WebSocket 连接已建立，开始注册订阅")
+                        consecutiveFailures = 0
+                        lastMessageAt = System.currentTimeMillis()
+                        // newHeads 作为心跳，同时记录最新区块
+                        subscribeNewHeads()
                         // 重新为所有订阅注册链上监听
                         for (subscription in subscriptions.values) {
                             subscribeAddressOnChain(subscription)
                         }
+                        // 补齐断线期间的事件（回调内部有去重）
+                        scope.launch { backfillMissedLogs(httpClient, rpcApi) }
                         waitForDisconnect()
+                        failedWsHttpUrls.add(endpoint.httpUrl)
+                    } else {
+                        consecutiveFailures++
+                        failedWsHttpUrls.add(endpoint.httpUrl)
                     }
+                    attemptedEndpoint = null
 
-                    logger.info("[$address] WebSocket 连接断开，等待 ${reconnectDelay}ms 后重连")
-                    delay(reconnectDelay)
+                    val backoff = nextReconnectDelay()
+                    logger.info("[$address] WebSocket 连接断开，等待 ${backoff}ms 后重连")
+                    delay(backoff)
 
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
+                    attemptedEndpoint?.let { failedWsHttpUrls.add(it.httpUrl) }
                     logger.error("[$address] 连接异常: ${e.message}", e)
-                    delay(reconnectDelay)
+                    consecutiveFailures++
+                    delay(nextReconnectDelay())
                 }
+            }
+        }
+
+        private fun nextWebSocketEndpoint(): RpcNodeService.WebSocketEndpoint {
+            return rpcNodeService.getWebSocketEndpoint(failedWsHttpUrls).getOrElse {
+                // All candidates failed. Retry the pool so transient outages do not permanently blacklist nodes.
+                failedWsHttpUrls.clear()
+                rpcNodeService.getWebSocketEndpoint().getOrThrow()
             }
         }
 
@@ -278,6 +342,7 @@ class UnifiedOnChainWsService(
             
             webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                    lastMessageAt = System.currentTimeMillis()
                     isConnected = true
                     logger.info("[$address] 链上 WebSocket 连接成功")
                 }
@@ -291,16 +356,22 @@ class UnifiedOnChainWsService(
                 }
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    // 已被替换的旧连接回调直接忽略，避免把新连接标记为断开
+                    if (webSocket !== this@AddressWsConnection.webSocket) return
                     isConnected = false
                     logger.warn("[$address] 链上 WebSocket 连接关闭: code=$code, reason=$reason")
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    // 已被替换的旧连接回调直接忽略，避免把新连接标记为断开
+                    if (webSocket !== this@AddressWsConnection.webSocket) return
                     isConnected = false
                     logger.warn("[$address] 链上 WebSocket 连接已关闭: code=$code, reason=$reason")
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+                    // 已被替换的旧连接回调直接忽略，避免把新连接标记为断开
+                    if (webSocket !== this@AddressWsConnection.webSocket) return
                     logger.error("[$address] 链上 WebSocket 连接失败: ${t.message}", t)
                     isConnected = false
                 }
@@ -314,18 +385,11 @@ class UnifiedOnChainWsService(
             val subId = subscription.subscriptionId
             
             try {
-                // 订阅该地址相关的所有事件
-                // USDC Transfer (from/to)
-                subscribeLogs(OnChainWsUtils.USDC_CONTRACT, listOf(OnChainWsUtils.ERC20_TRANSFER_TOPIC, walletTopic), subId)
-                subscribeLogs(OnChainWsUtils.USDC_CONTRACT, listOf(OnChainWsUtils.ERC20_TRANSFER_TOPIC, null, walletTopic), subId)
-                
-                // ERC1155 TransferSingle (from/to)
-                subscribeLogs(OnChainWsUtils.ERC1155_CONTRACT, listOf(OnChainWsUtils.ERC1155_TRANSFER_SINGLE_TOPIC, null, walletTopic), subId)
-                subscribeLogs(OnChainWsUtils.ERC1155_CONTRACT, listOf(OnChainWsUtils.ERC1155_TRANSFER_SINGLE_TOPIC, null, null, walletTopic), subId)
-                
-                // ERC1155 TransferBatch (from/to)
-                subscribeLogs(OnChainWsUtils.ERC1155_CONTRACT, listOf(OnChainWsUtils.ERC1155_TRANSFER_BATCH_TOPIC, null, walletTopic), subId)
-                subscribeLogs(OnChainWsUtils.ERC1155_CONTRACT, listOf(OnChainWsUtils.ERC1155_TRANSFER_BATCH_TOPIC, null, null, walletTopic), subId)
+                // 只订阅两个 V2 交易所发出的、maker = 该地址的 OrderFilled 事件
+                // （作为 taker 时交易所也会为其 taker 订单发出 maker = 该地址的 OrderFilled）
+                for (exchange in OnChainWsUtils.EXCHANGE_CONTRACTS) {
+                    subscribeLogs(exchange, listOf(OnChainWsUtils.ORDER_FILLED_TOPIC, null, walletTopic), subId)
+                }
                 
                 logger.debug("[$address] 已发送链上订阅请求: subscriptionId=$subId")
             } catch (e: Exception) {
@@ -356,7 +420,80 @@ class UnifiedOnChainWsService(
             ws.send(gson.toJson(request))
         }
 
+        /**
+         * 订阅 newHeads 作为心跳（Polygon 约 2 秒一个区块），同时用于记录最新区块号
+         */
+        private fun subscribeNewHeads() {
+            val ws = webSocket ?: return
+            val requestId = requestIdCounter.incrementAndGet()
+            requestIdToSubscriptionId[requestId] = NEW_HEADS_SUBSCRIPTION
+            val request = JsonObject()
+            request.addProperty("jsonrpc", "2.0")
+            request.addProperty("id", requestId)
+            request.addProperty("method", "eth_subscribe")
+            val paramsArray = JsonArray()
+            paramsArray.add("newHeads")
+            request.add("params", paramsArray)
+            ws.send(gson.toJson(request))
+        }
+
+        /**
+         * 断线重连后，从最后观察到的区块开始用 eth_getLogs 补齐该地址作为 maker 的 OrderFilled 事件。
+         * 每个 txHash 回调所有订阅者，由订阅方的去重保证不会重复处理。
+         */
+        private suspend fun backfillMissedLogs(httpClient: OkHttpClient, rpcApi: EthereumRpcApi) {
+            val fromBlockRaw = backfillCursor.nextBackfillBlock() ?: return
+            try {
+                val latestResponse = rpcApi.call(JsonRpcRequest(method = "eth_blockNumber", params = emptyList()))
+                val latestHex = latestResponse.body()?.result?.takeIf { !it.isJsonNull }?.asString
+                if (!latestResponse.isSuccessful || latestHex == null) {
+                    logger.warn("[$address] 补数据获取最新区块失败，跳过本次补数据")
+                    return
+                }
+                val latest = OnChainWsUtils.hexToBigInt(latestHex).toLong()
+                var fromBlock = fromBlockRaw
+                if (latest - fromBlock > MAX_BACKFILL_BLOCKS) {
+                    logger.warn("[$address] 断线区块跨度过大（$fromBlock -> $latest），仅补最近 $MAX_BACKFILL_BLOCKS 个区块")
+                    fromBlock = latest - MAX_BACKFILL_BLOCKS
+                }
+                if (fromBlock > latest) return
+
+                val filter = JsonObject()
+                filter.addProperty("fromBlock", "0x" + fromBlock.toString(16))
+                filter.addProperty("toBlock", "0x" + latest.toString(16))
+                filter.add("address", gson.toJsonTree(OnChainWsUtils.EXCHANGE_CONTRACTS))
+                filter.add("topics", gson.toJsonTree(listOf(OnChainWsUtils.ORDER_FILLED_TOPIC, null, OnChainWsUtils.addressToTopic32(address))))
+                val logsResponse = rpcApi.call(JsonRpcRequest(method = "eth_getLogs", params = listOf(filter)))
+                val body = logsResponse.body()
+                if (!logsResponse.isSuccessful || body == null || body.error != null || body.result == null || !body.result.isJsonArray) {
+                    logger.warn("[$address] 补数据 eth_getLogs 失败: code=${logsResponse.code()}, error=${body?.error}")
+                    return
+                }
+                val txHashes = body.result.asJsonArray.mapNotNull { log ->
+                    log.asJsonObject.get("transactionHash")?.takeIf { !it.isJsonNull }?.asString
+                }.distinct()
+                if (txHashes.isNotEmpty()) {
+                    logger.info("[$address] 补数据发现 ${txHashes.size} 笔交易（区块 $fromBlock -> $latest）")
+                }
+                var allCallbacksSucceeded = true
+                for (txHash in txHashes) {
+                    for (subscription in subscriptions.values) {
+                        if (!invokeCallback(subscription, txHash, httpClient, rpcApi, null)) {
+                            allCallbacksSucceeded = false
+                        }
+                    }
+                }
+                backfillCursor.finishBackfill(fromBlock, latest, allCallbacksSucceeded)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.warn("[$address] 补数据失败: ${e.message}")
+            }
+        }
+
         private suspend fun handleMessage(text: String, httpClient: OkHttpClient, rpcApi: EthereumRpcApi) {
+            // 任意消息都说明连接存活
+            lastMessageAt = System.currentTimeMillis()
             try {
                 val message = gson.fromJson(text, JsonObject::class.java)
 
@@ -364,10 +501,12 @@ class UnifiedOnChainWsService(
                 if (message.has("result") && message.has("id")) {
                     val requestId = message.get("id")?.asInt
                     val rpcSubscriptionId = message.get("result")?.asString
-                    
+
                     if (requestId != null && rpcSubscriptionId != null) {
                         val subId = requestIdToSubscriptionId.remove(requestId)
-                        if (subId != null) {
+                        if (subId == NEW_HEADS_SUBSCRIPTION) {
+                            newHeadsRpcSubscriptionId = rpcSubscriptionId
+                        } else if (subId != null) {
                             rpcSubscriptionIdToSubscriptionId[rpcSubscriptionId] = subId
                             logger.debug("[$address] 链上订阅成功: mapped connection rpcSubId=$rpcSubscriptionId to localSubId=$subId")
                         }
@@ -381,6 +520,15 @@ class UnifiedOnChainWsService(
                     val params = message.getAsJsonObject("params") ?: return
                     val rpcSubParam = params.get("subscription")?.asString
                     val result = params.getAsJsonObject("result") ?: return
+
+                    // newHeads 心跳：记录最新区块，用于断线重连后补数据
+                    if (rpcSubParam != null && rpcSubParam == newHeadsRpcSubscriptionId) {
+                        result.get("number")?.asString?.let { updateLastBlock(OnChainWsUtils.hexToBigInt(it).toLong()) }
+                        return
+                    }
+                    val blockNumber = result.get("blockNumber")?.asString
+                        ?.let { OnChainWsUtils.hexToBigInt(it).toLong() }
+                    blockNumber?.let(::updateLastBlock)
                     val txHash = result.get("transactionHash")?.asString
 
                     if (txHash != null && rpcSubParam != null) {
@@ -393,11 +541,7 @@ class UnifiedOnChainWsService(
                             val subscription = subscriptions[localSubId]
                             if (subscription != null) {
                                 logger.info("[$address] 收到交易通知: txHash=$txHash, subId=$localSubId")
-                                runCatching {
-                                    subscription.callback(txHash, httpClient, rpcApi)
-                                }.onFailure { e ->
-                                    logger.error("[$address] 回调执行失败: ${e.message}", e)
-                                }
+                                invokeCallback(subscription, txHash, httpClient, rpcApi, blockNumber)
                             }
                         } else {
                             // 找不到具体是哪个订阅请求触发的（可能是重启后之前的订阅残留？或者映射丢失？）
@@ -405,11 +549,7 @@ class UnifiedOnChainWsService(
                             // 我们可以尝试通知所有订阅者（通常一个地址只有一个订阅者，除非此地址既是Leader又是User）
                             logger.warn("[$address] 未找到映射的订阅ID: rpcSubId=$rpcSubParam. 广播给所有订阅者.")
                             subscriptions.values.forEach { sub ->
-                                runCatching {
-                                    sub.callback(txHash, httpClient, rpcApi)
-                                }.onFailure { e ->
-                                    logger.error("[$address] 广播回调执行失败: ${e.message}", e)
-                                }
+                                invokeCallback(sub, txHash, httpClient, rpcApi, blockNumber)
                             }
                         }
                     }
@@ -417,6 +557,27 @@ class UnifiedOnChainWsService(
             } catch (e: Exception) {
                 logger.error("[$address] 处理消息失败: ${e.message}", e)
             }
+        }
+
+        private suspend fun invokeCallback(
+            subscription: SubscriptionInfo,
+            txHash: String,
+            httpClient: OkHttpClient,
+            rpcApi: EthereumRpcApi,
+            blockNumber: Long?
+        ): Boolean {
+            val handled = try {
+                subscription.callback(txHash, httpClient, rpcApi)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.error("[$address] 交易回调执行失败: txHash=$txHash, ${e.message}", e)
+                false
+            }
+            if (!handled && blockNumber != null) {
+                backfillCursor.markCallbackFailure(blockNumber)
+            }
+            return handled
         }
         
         private suspend fun waitForConnect() {
@@ -429,10 +590,23 @@ class UnifiedOnChainWsService(
             if (!isConnected) logger.warn("[$address] WebSocket 连接超时")
         }
 
+        /**
+         * 等待连接断开；超过心跳超时时间未收到任何消息（包括 newHeads）则主动断开触发重连
+         */
         private suspend fun waitForDisconnect() {
             while (isConnected && scope.isActive) {
                 delay(1000)
+                val silentMs = System.currentTimeMillis() - lastMessageAt
+                if (isConnected && silentMs > heartbeatTimeoutMs) {
+                    logger.warn("[$address] ${silentMs}ms 未收到任何链上 WebSocket 消息，主动重连")
+                    forceReconnect()
+                }
             }
+        }
+
+        private fun nextReconnectDelay(): Long {
+            val factor = 1L shl consecutiveFailures.coerceAtMost(5)
+            return (reconnectDelay * factor).coerceAtMost(MAX_RECONNECT_DELAY_MS)
         }
         
         private fun createHttpClient(): OkHttpClient {
@@ -442,5 +616,12 @@ class UnifiedOnChainWsService(
             return builder.build()
         }
     }
-}
 
+    companion object {
+        // newHeads 心跳订阅在 requestIdToSubscriptionId 中的占位 ID
+        private const val NEW_HEADS_SUBSCRIPTION = "__NEW_HEADS__"
+        private const val MAX_RECONNECT_DELAY_MS = 60_000L
+        // 断线补数据最多回溯的区块数（Polygon 约 2 秒一块，约 1 小时）
+        private const val MAX_BACKFILL_BLOCKS = 1800L
+    }
+}

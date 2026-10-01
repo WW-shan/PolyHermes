@@ -28,6 +28,8 @@ import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import jakarta.annotation.PreDestroy
+import com.wrbug.polymarketbot.event.ProxyConfigChangedEvent
+import org.springframework.context.event.EventListener
 
 /**
  * Retrofit 客户端工厂
@@ -231,7 +233,7 @@ class RetrofitFactory(
         try {
             // 解析 URL
             val httpUrl = rpcUrl.toHttpUrlOrNull()
-                ?: throw IllegalArgumentException("无效的 RPC URL: $rpcUrl")
+                ?: throw IllegalArgumentException("无效的 RPC URL")
             
             // 创建 JSON-RPC 请求体
             val jsonRpcRequest = """
@@ -261,10 +263,11 @@ class RetrofitFactory(
                 .build()
             
             // 发送请求
+            // 不回显响应体，避免把内网服务内容泄露给调用方
             val response = testClient.newCall(request).execute()
             
             if (!response.isSuccessful) {
-                throw IllegalArgumentException("RPC 节点不可用: HTTP ${response.code} ${response.message}")
+                throw IllegalArgumentException("RPC 节点不可用: HTTP ${response.code}")
             }
             
             val responseBody = response.body?.string()
@@ -274,12 +277,12 @@ class RetrofitFactory(
             
             // 检查响应是否包含错误
             if (responseBody.contains("\"error\"")) {
-                throw IllegalArgumentException("RPC 节点返回错误: $responseBody")
+                throw IllegalArgumentException("RPC 节点返回错误")
             }
             
             // 检查响应是否包含 result
             if (!responseBody.contains("\"result\"")) {
-                throw IllegalArgumentException("RPC 节点响应格式错误: $responseBody")
+                throw IllegalArgumentException("RPC 节点响应格式错误")
             }
             
             logger.debug("RPC 节点验证成功: $rpcUrl")
@@ -288,7 +291,7 @@ class RetrofitFactory(
             throw e
         } catch (e: Exception) {
             logger.error("RPC 节点验证失败: $rpcUrl - ${e.message}", e)
-            throw IllegalArgumentException("RPC 节点不可用: ${e.message}", e)
+            throw IllegalArgumentException("RPC 节点不可用: ${e.javaClass.simpleName}", e)
         }
     }
     
@@ -398,6 +401,27 @@ class RetrofitFactory(
         builderRelayerApiCache.clear()
     }
     
+    /**
+     * 清理所有缓存的客户端并断开共享连接池中的空闲连接
+     * 用于代理配置变更后，确保后续请求按新代理重新建立连接
+     */
+    fun clearAllCaches() {
+        clobApiCache.clear()
+        rpcApiCache.clear()
+        builderRelayerApiCache.clear()
+        evictProxyAwareConnections()
+        logger.info("已清理 RetrofitFactory 全部缓存客户端与空闲连接")
+    }
+
+    /**
+     * 代理配置变更：清理缓存客户端
+     * 单例客户端（Gamma/Data/GitHub/Binance/无认证 CLOB）使用动态代理选择器，新连接自动走新代理
+     */
+    @EventListener
+    fun onProxyConfigChanged(event: ProxyConfigChangedEvent) {
+        clearAllCaches()
+    }
+
     /**
      * 清理指定钱包地址的 CLOB API 缓存
      * 用于 API Key 变更时

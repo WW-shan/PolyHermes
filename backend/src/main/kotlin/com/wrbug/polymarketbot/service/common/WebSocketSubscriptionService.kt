@@ -58,8 +58,8 @@ class WebSocketSubscriptionService(
      */
     fun registerSession(sessionId: String, callback: (WsMessage) -> Unit) {
         sessionCallbacks[sessionId] = callback
-        sessionSubscriptions[sessionId] = mutableSetOf()
-        monitorChannelCallbacks[sessionId] = mutableMapOf()
+        sessionSubscriptions[sessionId] = ConcurrentHashMap.newKeySet()
+        monitorChannelCallbacks[sessionId] = ConcurrentHashMap()
     }
     
     /**
@@ -67,7 +67,8 @@ class WebSocketSubscriptionService(
      */
     fun unregisterSession(sessionId: String) {
         // 取消所有订阅
-        val channels = sessionSubscriptions.remove(sessionId) ?: emptySet()
+        // 先取快照再遍历：unsubscribe 会修改集合
+        val channels = sessionSubscriptions.remove(sessionId)?.toList() ?: emptyList()
         channels.forEach { channel ->
             unsubscribe(sessionId, channel)
         }
@@ -77,7 +78,7 @@ class WebSocketSubscriptionService(
 
         // 清理加密价差策略监控频道的回调
         val monitorCallbacks = monitorChannelCallbacks.remove(sessionId)
-        monitorCallbacks?.keys?.forEach { strategyId ->
+        monitorCallbacks?.keys?.toList()?.forEach { strategyId ->
             cryptoTailMonitorService?.unsubscribe(sessionId, strategyId)
         }
 
@@ -90,7 +91,7 @@ class WebSocketSubscriptionService(
     fun subscribe(sessionId: String, channel: String, payload: Map<*, *>?) {
         
         // 检查是否已经订阅
-        val sessionChannels = sessionSubscriptions.getOrPut(sessionId) { mutableSetOf() }
+        val sessionChannels = sessionSubscriptions.getOrPut(sessionId) { ConcurrentHashMap.newKeySet() }
         if (sessionChannels.contains(channel)) {
             sendSubscribeAck(sessionId, channel, true)
             return
@@ -98,7 +99,7 @@ class WebSocketSubscriptionService(
         
         // 记录订阅关系
         sessionChannels.add(channel)
-        channelSubscriptions.getOrPut(channel) { mutableSetOf() }.add(sessionId)
+        channelSubscriptions.getOrPut(channel) { ConcurrentHashMap.newKeySet() }.add(sessionId)
         
         // 发送订阅确认
         sendSubscribeAck(sessionId, channel, true)
@@ -133,7 +134,7 @@ class WebSocketSubscriptionService(
                     val callback: (CryptoTailMonitorPushData) -> Unit = { message ->
                         pushData(sessionId, channel, message)
                     }
-                    monitorChannelCallbacks.getOrPut(sessionId) { mutableMapOf() }[strategyId] = callback
+                    monitorChannelCallbacks.getOrPut(sessionId) { ConcurrentHashMap() }[strategyId] = callback
                     cryptoTailMonitorService!!.subscribe(sessionId, strategyId, callback)
                 } else {
                     logger.warn("无效的加密价差策略监控频道或服务未初始化: $channel")
@@ -181,7 +182,7 @@ class WebSocketSubscriptionService(
      * 注册加密价差策略监控回调（由 CryptoTailMonitorService 调用）
      */
     fun registerMonitorCallback(sessionId: String, strategyId: Long, callback: (CryptoTailMonitorPushData) -> Unit) {
-        monitorChannelCallbacks.getOrPut(sessionId) { mutableMapOf() }[strategyId] = callback
+        monitorChannelCallbacks.getOrPut(sessionId) { ConcurrentHashMap() }[strategyId] = callback
     }
     
     /**
@@ -196,7 +197,8 @@ class WebSocketSubscriptionService(
      */
     fun pushMonitorData(strategyId: Long, data: CryptoTailMonitorPushData) {
         val channel = "crypto_tail_monitor_$strategyId"
-        val sessionIds = channelSubscriptions[channel] ?: return
+        // 遍历快照：推送回调中可能触发会话清理（取消订阅）而修改集合
+        val sessionIds = channelSubscriptions[channel]?.toList() ?: return
         
         for (sessionId in sessionIds) {
             val callback = sessionCallbacks[sessionId]

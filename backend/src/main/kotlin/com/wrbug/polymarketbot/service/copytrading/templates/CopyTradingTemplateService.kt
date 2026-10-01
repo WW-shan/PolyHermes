@@ -4,6 +4,7 @@ import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.entity.CopyTradingTemplate
 import com.wrbug.polymarketbot.repository.CopyTradingRepository
 import com.wrbug.polymarketbot.repository.CopyTradingTemplateRepository
+import com.wrbug.polymarketbot.util.IllegalBigDecimal
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -59,10 +60,10 @@ class CopyTradingTemplateService(
                 websocketReconnectInterval = request.websocketReconnectInterval ?: 5000,
                 websocketMaxRetries = request.websocketMaxRetries ?: 10,
                 supportSell = request.supportSell ?: true,
-                minOrderDepth = request.minOrderDepth?.toSafeBigDecimal(),
-                maxSpread = request.maxSpread?.toSafeBigDecimal(),
-                minPrice = request.minPrice?.toSafeBigDecimal(),
-                maxPrice = request.maxPrice?.toSafeBigDecimal(),
+                minOrderDepth = request.minOrderDepth?.takeIf { it.isNotBlank() }?.toSafeBigDecimal(),
+                maxSpread = request.maxSpread?.takeIf { it.isNotBlank() }?.toSafeBigDecimal(),
+                minPrice = request.minPrice?.takeIf { it.isNotBlank() }?.toSafeBigDecimal(),
+                maxPrice = request.maxPrice?.takeIf { it.isNotBlank() }?.toSafeBigDecimal(),
                 pushFilteredOrders = request.pushFilteredOrders ?: false
             )
             
@@ -118,10 +119,10 @@ class CopyTradingTemplateService(
                 websocketReconnectInterval = request.websocketReconnectInterval ?: template.websocketReconnectInterval,
                 websocketMaxRetries = request.websocketMaxRetries ?: template.websocketMaxRetries,
                 supportSell = request.supportSell ?: template.supportSell,
-                minOrderDepth = request.minOrderDepth?.toSafeBigDecimal() ?: template.minOrderDepth,
-                maxSpread = request.maxSpread?.toSafeBigDecimal() ?: template.maxSpread,
-                minPrice = request.minPrice?.toSafeBigDecimal() ?: template.minPrice,
-                maxPrice = request.maxPrice?.toSafeBigDecimal() ?: template.maxPrice,
+                minOrderDepth = updateOptionalDecimal(request.minOrderDepth, template.minOrderDepth),
+                maxSpread = updateOptionalDecimal(request.maxSpread, template.maxSpread),
+                minPrice = updateOptionalDecimal(request.minPrice, template.minPrice),
+                maxPrice = updateOptionalDecimal(request.maxPrice, template.maxPrice),
                 pushFilteredOrders = request.pushFilteredOrders ?: template.pushFilteredOrders,
                 updatedAt = System.currentTimeMillis()
             )
@@ -135,6 +136,16 @@ class CopyTradingTemplateService(
         }
     }
     
+    /**
+     * 可选字段更新约定（与跟单配置编辑一致）：null 不更新，空字符串清空，转换失败保留旧值
+     */
+    private fun updateOptionalDecimal(value: String?, current: BigDecimal?): BigDecimal? {
+        if (value == null) return current
+        if (value.isBlank()) return null
+        val converted = value.toSafeBigDecimal()
+        return if (converted == IllegalBigDecimal) current else converted
+    }
+
     /**
      * 删除模板
      */
@@ -185,10 +196,10 @@ class CopyTradingTemplateService(
                 websocketReconnectInterval = request.websocketReconnectInterval ?: sourceTemplate.websocketReconnectInterval,
                 websocketMaxRetries = request.websocketMaxRetries ?: sourceTemplate.websocketMaxRetries,
                 supportSell = request.supportSell ?: sourceTemplate.supportSell,
-                minOrderDepth = request.minOrderDepth?.toSafeBigDecimal() ?: sourceTemplate.minOrderDepth,
-                maxSpread = request.maxSpread?.toSafeBigDecimal() ?: sourceTemplate.maxSpread,
-                minPrice = request.minPrice?.toSafeBigDecimal() ?: sourceTemplate.minPrice,
-                maxPrice = request.maxPrice?.toSafeBigDecimal() ?: sourceTemplate.maxPrice,
+                minOrderDepth = updateOptionalDecimal(request.minOrderDepth, sourceTemplate.minOrderDepth),
+                maxSpread = updateOptionalDecimal(request.maxSpread, sourceTemplate.maxSpread),
+                minPrice = updateOptionalDecimal(request.minPrice, sourceTemplate.minPrice),
+                maxPrice = updateOptionalDecimal(request.maxPrice, sourceTemplate.maxPrice),
                 pushFilteredOrders = request.pushFilteredOrders ?: sourceTemplate.pushFilteredOrders
             )
             

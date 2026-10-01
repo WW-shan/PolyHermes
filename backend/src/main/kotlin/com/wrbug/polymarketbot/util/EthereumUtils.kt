@@ -62,8 +62,12 @@ object EthereumUtils {
      */
     fun decodeAddress(hexResult: String): String {
         val cleanHex = hexResult.removePrefix("0x")
-        // 地址是最后20字节（40个十六进制字符）
-        val addressHex = cleanHex.takeLast(40)
+        // eth_call 返回 "0x"（地址无代码）或长度不足 32 字节时视为无效结果，不能解析成地址
+        require(cleanHex.length >= 64 && cleanHex.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) {
+            "无效的地址返回值: $hexResult"
+        }
+        // 地址是 32 字节中的最后 20 字节（40 个十六进制字符）
+        val addressHex = cleanHex.substring(0, 64).takeLast(40)
         return "0x$addressHex"
     }
     

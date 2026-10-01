@@ -1,5 +1,6 @@
 package com.wrbug.polymarketbot.service.copytrading.monitor
 
+import com.wrbug.polymarketbot.entity.Account
 import com.wrbug.polymarketbot.entity.CopyTrading
 import com.wrbug.polymarketbot.entity.Leader
 import com.wrbug.polymarketbot.repository.AccountRepository
@@ -9,6 +10,7 @@ import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.*
 import org.slf4j.LoggerFactory
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 
 /**
@@ -67,33 +69,82 @@ class CopyTradingMonitorService(
      * 同时启动跟单账户的链上 WebSocket 监听（用于检测卖出/赎回事件）
      */
     suspend fun startMonitoring() {
-        // 1. 获取所有启用的跟单关系
-        val enabledCopyTradings = copyTradingRepository.findByEnabledTrue()
-        
-        if (enabledCopyTradings.isEmpty()) {
-            return
+        val plan = buildMonitoringPlan()
+
+        // 1. 启动 Activity WebSocket 监听（优先，低延迟）
+        activityWsService.start(plan.leaders)
+
+        // 2. 启动链上 WebSocket 监听（兜底，高可靠性）
+        onChainWsService.start(plan.leaders)
+
+        // 3. 启动跟单账户的链上 WebSocket 监听（用于检测外部卖出）
+        accountOnChainMonitorService.start(plan.accounts)
+    }
+
+    /**
+     * 监听计划：需要监听的 Leader（有启用的配置、且不是本系统账户地址）与账户（有任意跟单配置，含已禁用）
+     */
+    private data class MonitoringPlan(
+        val leaders: List<Leader> = emptyList(),
+        val accounts: List<Account> = emptyList()
+    )
+
+    private fun buildMonitoringPlan(): MonitoringPlan {
+        val allAccounts = accountRepository.findAll()
+        val systemAddresses = systemAddressesOf(allAccounts)
+        val leaderIds = copyTradingRepository.findByEnabledTrue().map { it.leaderId }.distinct()
+        val leaders = leaderIds.mapNotNull { leaderRepository.findById(it).orElse(null) }
+            .filter { !isSystemAddress(it, systemAddresses) }
+        // 禁用配置仍可能持有仓位，账户卖出需要继续记账，因此账户监听覆盖所有配置
+        val accountIds = copyTradingRepository.findAll().map { it.accountId }.toSet()
+        val accounts = allAccounts.filter { it.id != null && it.id in accountIds }
+        return MonitoringPlan(leaders, accounts)
+    }
+
+    private fun systemAddressesOf(accounts: List<Account>): Set<String> {
+        return accounts.flatMap { listOf(it.proxyAddress, it.walletAddress) }
+            .filter { it.isNotBlank() }
+            .map { it.lowercase() }
+            .toSet()
+    }
+
+    /**
+     * 自跟单防护：Leader 地址等于本系统任一账户的代理地址或钱包地址时不监听其成交
+     */
+    private fun isSystemAddress(leader: Leader, systemAddresses: Set<String>): Boolean {
+        val self = leader.leaderAddress.lowercase() in systemAddresses
+        if (self) {
+            logger.warn("Leader 地址属于本系统账户，跳过监听以防自跟单: leaderId=${leader.id}, address=${leader.leaderAddress}")
         }
-        
-        // 2. 获取所有需要监听的Leader（去重）
-        val leaderIds = enabledCopyTradings.map { it.leaderId }.distinct()
-        val leaders = leaderIds.mapNotNull { leaderId ->
-            leaderRepository.findById(leaderId).orElse(null)
+        return self
+    }
+
+    private fun isSystemAddress(leader: Leader): Boolean {
+        return isSystemAddress(leader, systemAddressesOf(accountRepository.findAll()))
+    }
+
+    /**
+     * 定期按数据库刷新订阅：移除已删除/已无启用配置的 Leader 与已删除的账户，补上遗漏的订阅
+     */
+    @Scheduled(fixedDelay = 300_000, initialDelay = 300_000)
+    fun refreshMonitoring() {
+        try {
+            val plan = buildMonitoringPlan()
+            val desiredLeaderIds = plan.leaders.mapNotNull { it.id }.toSet()
+            (onChainWsService.getMonitoredLeaderIds() - desiredLeaderIds).forEach { onChainWsService.removeLeader(it) }
+            (activityWsService.getMonitoredLeaderIds() - desiredLeaderIds).forEach { activityWsService.removeLeader(it) }
+            plan.leaders.forEach { leader ->
+                activityWsService.addLeader(leader)
+                onChainWsService.addLeader(leader)
+            }
+            val desiredAccountIds = plan.accounts.mapNotNull { it.id }.toSet()
+            (accountOnChainMonitorService.getMonitoredAccountIds() - desiredAccountIds).forEach {
+                accountOnChainMonitorService.removeAccount(it)
+            }
+            plan.accounts.forEach { accountOnChainMonitorService.addAccount(it) }
+        } catch (e: Exception) {
+            logger.error("刷新跟单监听订阅失败: ${e.message}", e)
         }
-        
-        // 3. 获取所有需要监听的跟单账户（去重）
-        val accountIds = enabledCopyTradings.map { it.accountId }.distinct()
-        val accounts = accountIds.mapNotNull { accountId ->
-            accountRepository.findById(accountId).orElse(null)
-        }
-        
-        // 4. 启动 Activity WebSocket 监听（优先，低延迟）
-        activityWsService.start(leaders)
-        
-        // 5. 启动链上 WebSocket 监听（兜底，高可靠性）
-        onChainWsService.start(leaders)
-        
-        // 6. 启动跟单账户的链上 WebSocket 监听（用于检测卖出/赎回事件）
-        accountOnChainMonitorService.start(accounts)
     }
     
     /**
@@ -105,7 +156,7 @@ class CopyTradingMonitorService(
             ?: return
         
         val copyTradings = copyTradingRepository.findByLeaderIdAndEnabledTrue(leaderId)
-        if (copyTradings.isEmpty()) {
+        if (copyTradings.isEmpty() || isSystemAddress(leader)) {
             return
         }
         
@@ -137,9 +188,14 @@ class CopyTradingMonitorService(
     suspend fun updateLeaderMonitoring(leaderId: Long) {
         val copyTradings = copyTradingRepository.findByLeaderIdAndEnabledTrue(leaderId)
         val leader = leaderRepository.findById(leaderId).orElse(null)
-            ?: return
+        if (leader == null) {
+            // Leader 已被删除：移除其订阅
+            activityWsService.removeLeader(leaderId)
+            onChainWsService.removeLeader(leaderId)
+            return
+        }
         
-        if (copyTradings.isNotEmpty()) {
+        if (copyTradings.isNotEmpty() && !isSystemAddress(leader)) {
             // 有启用的跟单配置，确保在监听列表中
             activityWsService.addLeader(leader)
             onChainWsService.addLeader(leader)
@@ -153,7 +209,7 @@ class CopyTradingMonitorService(
                 }
             }
         } else {
-            // 没有启用的跟单配置，同时从两种监听移除
+            // 没有启用的跟单配置（或属于本系统账户地址），同时从两种监听移除
             activityWsService.removeLeader(leaderId)
             onChainWsService.removeLeader(leaderId)
         }
@@ -164,16 +220,14 @@ class CopyTradingMonitorService(
      * 根据当前状态决定添加或移除账户监听
      */
     suspend fun updateAccountMonitoring(accountId: Long) {
+        // 禁用的配置仍可能持有仓位，外部卖出需要继续记账，因此只要账户还有任意跟单配置就保持监听
         val copyTradings = copyTradingRepository.findByAccountId(accountId)
-            .filter { it.enabled }
         val account = accountRepository.findById(accountId).orElse(null)
-            ?: return
         
-        if (copyTradings.isNotEmpty()) {
-            // 有启用的跟单配置，确保账户在监听列表中
+        if (account != null && copyTradings.isNotEmpty()) {
             accountOnChainMonitorService.addAccount(account)
         } else {
-            // 没有启用的跟单配置，移除账户监听
+            // 账户已删除或已无任何跟单配置，移除账户监听
             accountOnChainMonitorService.removeAccount(accountId)
         }
     }

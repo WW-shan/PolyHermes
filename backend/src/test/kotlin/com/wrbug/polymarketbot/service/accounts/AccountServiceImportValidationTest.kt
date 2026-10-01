@@ -106,7 +106,7 @@ class AccountServiceImportValidationTest {
     fun `accepts import when private key matches wallet address ignoring case`() {
         stubHappyPath(depositWallet, WalletType.DEPOSIT)
         runBlocking {
-            Mockito.`when`(blockchainService.isProxyDeployed(depositWallet)).thenReturn(false)
+            Mockito.`when`(blockchainService.checkProxyDeployed(depositWallet)).thenReturn(Result.success(false))
         }
 
         val result = service.importAccount(
@@ -126,7 +126,7 @@ class AccountServiceImportValidationTest {
     fun `rejects deposit wallet import when deployed owner cannot be read`() {
         stubHappyPath(depositWallet, WalletType.DEPOSIT)
         runBlocking {
-            Mockito.`when`(blockchainService.isProxyDeployed(depositWallet)).thenReturn(true)
+            Mockito.`when`(blockchainService.checkProxyDeployed(depositWallet)).thenReturn(Result.success(true))
             Mockito.`when`(blockchainService.getDepositWalletOwner(depositWallet)).thenReturn(null)
         }
 
@@ -147,7 +147,7 @@ class AccountServiceImportValidationTest {
     fun `rejects deposit wallet import when owner differs from imported eoa`() {
         stubHappyPath(depositWallet, WalletType.DEPOSIT)
         runBlocking {
-            Mockito.`when`(blockchainService.isProxyDeployed(depositWallet)).thenReturn(true)
+            Mockito.`when`(blockchainService.checkProxyDeployed(depositWallet)).thenReturn(Result.success(true))
             Mockito.`when`(blockchainService.getDepositWalletOwner(depositWallet)).thenReturn(otherEoa)
         }
 

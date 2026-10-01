@@ -13,6 +13,7 @@ import com.wrbug.polymarketbot.util.parseStringArray
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import retrofit2.Response
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
@@ -33,8 +34,16 @@ class MarketService(
         .maximumSize(200)  // 最多缓存 200 条记录
         .build()
 
-    /** 已尝试刷新手续费率的 marketId（避免老数据反复请求 Gamma） */
-    private val feeRateRefreshAttempted: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** 最近一次尝试刷新手续费率的时间（marketId -> 毫秒），用于节流重试 */
+    private val feeRateRefreshAttemptedAt: MutableMap<String, Long> = java.util.concurrent.ConcurrentHashMap()
+
+    companion object {
+        /** Gamma condition_ids 单次查询数量上限 */
+        private const val GAMMA_CONDITION_IDS_BATCH_SIZE = 50
+
+        /** 费率缺失时的刷新间隔 */
+        private const val FEE_RATE_REFRESH_INTERVAL_MS = 10 * 60 * 1000L
+    }
     
     /**
      * 根据市场ID获取市场信息
@@ -105,22 +114,54 @@ class MarketService(
     }
     
     /**
-     * 从API获取市场信息并保存到数据库
+     * 按 conditionId 查询 Gamma 市场。
+     * Gamma 对已结束市场的默认查询返回 []，因此先按默认条件查询，缺失的 id 再用 closed=true 补查一次。
+     * 任一请求失败都会抛出异常，避免把接口失败当作"市场不存在"。
+     *
+     * @return key 为调用方传入的 conditionId（原样），不存在的市场不在结果中
+     */
+    private suspend fun queryMarketsByConditionIds(conditionIds: List<String>): Map<String, MarketResponse> {
+        val ids = conditionIds.filter { it.isNotBlank() }.distinct()
+        if (ids.isEmpty()) return emptyMap()
+        val gammaApi = retrofitFactory.createGammaApi()
+        val result = mutableMapOf<String, MarketResponse>()
+        for (chunk in ids.chunked(GAMMA_CONDITION_IDS_BATCH_SIZE)) {
+            collectMarkets(chunk, gammaApi.listMarkets(conditionIds = chunk), result, closed = false)
+            val missing = chunk.filter { it !in result }
+            if (missing.isNotEmpty()) {
+                collectMarkets(missing, gammaApi.listMarkets(conditionIds = missing, closed = true), result, closed = true)
+            }
+        }
+        return result
+    }
+
+    private fun collectMarkets(
+        requestedIds: List<String>,
+        response: Response<List<MarketResponse>>,
+        into: MutableMap<String, MarketResponse>,
+        closed: Boolean
+    ) {
+        if (!response.isSuccessful) {
+            throw IllegalStateException("Gamma 查询市场失败: closed=$closed, code=${response.code()}")
+        }
+        val byLowerId = (response.body() ?: emptyList())
+            .filter { !it.conditionId.isNullOrBlank() }
+            .associateBy { it.conditionId!!.lowercase() }
+        for (id in requestedIds) {
+            byLowerId[id.lowercase()]?.let { into[id] = it }
+        }
+    }
+
+    /**
+     * 从API获取市场信息并保存到数据库（含已结束市场）
      */
     private suspend fun fetchAndSaveMarket(marketId: String): Market? {
         return try {
-            val gammaApi = retrofitFactory.createGammaApi()
-            val response = gammaApi.listMarkets(conditionIds = listOf(marketId))
-            
-            if (response.isSuccessful && response.body() != null) {
-                val markets = response.body()!!
-                if (markets.isNotEmpty()) {
-                    val marketResponse = markets.first()
-                    saveMarketFromResponse(marketId, marketResponse)
-                } else {
-                    null
-                }
+            val marketResponse = queryMarketsByConditionIds(listOf(marketId))[marketId]
+            if (marketResponse != null) {
+                saveMarketFromResponse(marketId, marketResponse)
             } else {
+                logger.warn("Gamma 未找到市场（含已结束市场）: marketId=$marketId")
                 null
             }
         } catch (e: Exception) {
@@ -130,25 +171,15 @@ class MarketService(
     }
     
     /**
-     * 批量从API获取市场信息并保存到数据库
+     * 批量从API获取市场信息并保存到数据库（含已结束市场）
      */
     private suspend fun fetchAndSaveMarkets(marketIds: List<String>) {
         if (marketIds.isEmpty()) return
         
         try {
-            val gammaApi = retrofitFactory.createGammaApi()
-            val response = gammaApi.listMarkets(conditionIds = marketIds)
-            
-            if (response.isSuccessful && response.body() != null) {
-                val markets = response.body()!!
-                val marketMap = markets.associateBy { it.conditionId ?: "" }
-                
-                for (marketId in marketIds) {
-                    val marketResponse = marketMap[marketId]
-                    if (marketResponse != null) {
-                        saveMarketFromResponse(marketId, marketResponse)
-                    }
-                }
+            val marketMap = queryMarketsByConditionIds(marketIds)
+            for ((marketId, marketResponse) in marketMap) {
+                saveMarketFromResponse(marketId, marketResponse)
             }
         } catch (e: Exception) {
             logger.error("批量从API获取市场信息失败: marketIds=$marketIds, error=${e.message}", e)
@@ -233,15 +264,21 @@ class MarketService(
     }
 
     /**
-     * 获取市场 taker 费率（用于盈亏中的手续费计算）。
-     * 历史数据没有费率时会尝试刷新一次市场信息；仍拿不到时按分类兜底，最终为 0。
+     * 查询市场 taker 费率（用于盈亏中的手续费计算），取不到时返回 null（未知），由调用方决定如何处理。
+     * 数据库没有费率时会刷新市场信息（含已结束市场）；刷新失败按 [FEE_RATE_REFRESH_INTERVAL_MS] 节流后重试，
+     * 仍拿不到时按已存分类兜底（仅当兜底费率 > 0）。
      */
-    fun getTakerFeeRate(marketId: String): java.math.BigDecimal {
+    fun findTakerFeeRate(marketId: String): java.math.BigDecimal? {
         val cached = getMarket(marketId)
         cached?.takerFeeRate?.let { return it }
 
-        // 老数据（迁移前入库）没有费率：拉取一次并回填（每个市场每进程最多尝试一次，避免反复请求）
-        val refreshed = if (cached != null && feeRateRefreshAttempted.add(marketId)) {
+        // 没有费率（老数据或上次查询缺字段）：按时间节流刷新，避免反复请求 Gamma，同时保证失败后能重试
+        val now = System.currentTimeMillis()
+        val lastAttempt = feeRateRefreshAttemptedAt[marketId]
+        val shouldRefresh = cached != null &&
+            (lastAttempt == null || now - lastAttempt >= FEE_RATE_REFRESH_INTERVAL_MS)
+        val refreshed = if (shouldRefresh) {
+            feeRateRefreshAttemptedAt[marketId] = now
             runBlocking {
                 try {
                     fetchAndSaveMarket(marketId)
@@ -254,8 +291,20 @@ class MarketService(
             null
         }
         val market = refreshed ?: cached
-        return market?.takerFeeRate
-            ?: PolymarketTradingFee.fallbackRate(null, market?.category)
+        market?.takerFeeRate?.let { return it }
+        val fallback = PolymarketTradingFee.fallbackRate(null, market?.category)
+        return fallback.takeIf { it > java.math.BigDecimal.ZERO }
+    }
+
+    /**
+     * 获取市场 taker 费率（兼容旧调用方，返回非空）。
+     * 费率未知时返回 0 并告警；需要区分"未知"的调用方请改用 [findTakerFeeRate]。
+     */
+    fun getTakerFeeRate(marketId: String): java.math.BigDecimal {
+        return findTakerFeeRate(marketId) ?: run {
+            logger.warn("市场 taker 费率未知，本次按 0 计算手续费（结果可能偏高）: marketId=$marketId")
+            java.math.BigDecimal.ZERO
+        }
     }
 
     /**
@@ -266,12 +315,17 @@ class MarketService(
         if (tokenId.isBlank()) return null
         return try {
             val gammaApi = retrofitFactory.createGammaApi()
-            val response = gammaApi.listMarkets(
+            var response = gammaApi.listMarkets(
                 conditionIds = null,
                 clobTokenIds = listOf(tokenId),
                 includeTag = null
             )
-            if (!response.isSuccessful || response.body().isNullOrEmpty()) return null
+            if (!response.isSuccessful) return null
+            if (response.body().isNullOrEmpty()) {
+                // 已结束市场默认查询返回 []，需 closed=true 补查
+                response = gammaApi.listMarkets(clobTokenIds = listOf(tokenId), closed = true)
+                if (!response.isSuccessful || response.body().isNullOrEmpty()) return null
+            }
             val market = response.body()!!.first()
             val conditionId = market.conditionId ?: return null
             val clobTokenIdsRaw = market.clobTokenIds ?: market.clob_token_ids
@@ -314,22 +368,31 @@ class MarketService(
 
     /**
      * 根据 conditionId 查询该市场是否为 Neg Risk（需使用 Neg Risk Exchange 签约）
-     * 用于跟单下单时选择正确的 exchange 合约，避免 invalid signature
+     * 用于跟单下单时选择正确的 exchange 合约，避免 invalid signature。
+     * 查询失败、市场不存在或 negRisk 字段缺失时返回失败，调用方不得把失败当作 false。
      */
-    suspend fun getNegRiskByConditionId(conditionId: String): Boolean? {
-        if (conditionId.isBlank()) return null
+    suspend fun fetchNegRiskByConditionId(conditionId: String): Result<Boolean> {
+        if (conditionId.isBlank()) return Result.failure(IllegalArgumentException("conditionId 为空"))
         return try {
-            val gammaApi = retrofitFactory.createGammaApi()
-            val response = gammaApi.listMarkets(conditionIds = listOf(conditionId))
-            if (!response.isSuccessful || response.body().isNullOrEmpty()) return null
-            val marketResponse = response.body()!!.first()
+            val marketResponse = queryMarketsByConditionIds(listOf(conditionId))[conditionId]
+                ?: return Result.failure(IllegalStateException("Gamma 未找到市场: conditionId=$conditionId"))
             val fromEvent = marketResponse.events?.firstOrNull()?.negRisk
             val fromMarket = marketResponse.negRisk ?: marketResponse.negRiskOther
-            fromEvent ?: fromMarket
+            val negRisk = fromEvent ?: fromMarket
+                ?: return Result.failure(IllegalStateException("Gamma 市场缺少 negRisk 字段: conditionId=$conditionId"))
+            Result.success(negRisk)
         } catch (e: Exception) {
             logger.warn("查询市场 negRisk 失败: conditionId=$conditionId, error=${e.message}")
-            null
+            Result.failure(e)
         }
+    }
+
+    /**
+     * 兼容旧调用方：失败返回 null。
+     * 注意 null 表示"未知"而不是 false，新代码请使用 [fetchNegRiskByConditionId] 并在失败时中止/重试。
+     */
+    suspend fun getNegRiskByConditionId(conditionId: String): Boolean? {
+        return fetchNegRiskByConditionId(conditionId).getOrNull()
     }
 }
 

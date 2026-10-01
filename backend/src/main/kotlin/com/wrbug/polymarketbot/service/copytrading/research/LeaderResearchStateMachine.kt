@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.service.copytrading.research
 import com.wrbug.polymarketbot.entity.LeaderPaperSession
 import com.wrbug.polymarketbot.entity.LeaderResearchCandidate
 import com.wrbug.polymarketbot.enums.LeaderResearchEventType
+import com.wrbug.polymarketbot.enums.LeaderPaperSessionStatus
 import com.wrbug.polymarketbot.enums.LeaderResearchState
 import com.wrbug.polymarketbot.repository.LeaderPaperSessionRepository
 import com.wrbug.polymarketbot.repository.LeaderResearchCandidateRepository
@@ -34,8 +35,13 @@ class LeaderResearchStateMachine(
     @Transactional
     fun advance(candidate: LeaderResearchCandidate, runId: Long?): LeaderResearchCandidate {
         if (candidate.locked) return candidate
+        // 人工锁定的 Leader 池条目：自动化不推进也不同步
+        if (poolMappingService.isPoolLocked(candidate)) return candidate
         val now = System.currentTimeMillis()
-        val latestSession = candidate.id?.let { paperSessionRepository.findTopByCandidateIdOrderByStartedAtDesc(it) }
+        // 只看活跃会话：冷却时旧会话已结束，恢复后新建会话，不能用旧会话指标判断
+        val latestSession = candidate.id?.let {
+            paperSessionRepository.findTopByCandidateIdAndStatusOrderByStartedAtDesc(it, LeaderPaperSessionStatus.ACTIVE)
+        }
         val sourceFresh48h = candidate.lastSourceSeenAt?.let { now - it <= SOURCE_FRESH_48H_MS } == true
         val sourceFresh72h = candidate.lastSourceSeenAt?.let { now - it <= SOURCE_STALE_72H_MS } == true
         val score = candidate.score ?: BigDecimal.ZERO
@@ -120,6 +126,10 @@ class LeaderResearchStateMachine(
         reason: String
     ): LeaderResearchCandidate {
         val now = System.currentTimeMillis()
+        // 进入冷却/退役时结束当前纸跟会话
+        if ((nextState == LeaderResearchState.COOLDOWN || nextState == LeaderResearchState.RETIRED) && candidate.id != null) {
+            paperTradingService.endActiveSession(candidate.id, now)
+        }
         val updated = candidate.copy(
             researchState = nextState,
             cooldownUntil = if (nextState == LeaderResearchState.COOLDOWN) now + COOLDOWN_MS else candidate.cooldownUntil,

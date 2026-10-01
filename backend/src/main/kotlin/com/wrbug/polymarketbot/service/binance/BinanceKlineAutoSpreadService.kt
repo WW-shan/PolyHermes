@@ -9,7 +9,7 @@ import java.math.RoundingMode
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 自动最小价差：按周期计算。每个周期首次需要时，拉取该周期前的 20 根已收盘 K 线，按方向筛选、IQR 剔除后求平均，缓存 100% 基准值 (marketSlugPrefix, interval, period)。
+ * 自动最小价差：按周期计算。每个周期首次需要时，拉取该周期前的 20 根已收盘 K 线（不含当前未收盘 K 线），按方向筛选、IQR 剔除后求平均，缓存 100% 基准值 (marketSlugPrefix, interval, period)，每周期只算一次。
  * 触发时由调用方按窗口进度计算动态系数（100%→50%）后得到有效最小价差。不在保存策略时计算。
  */
 @Service
@@ -62,42 +62,78 @@ class BinanceKlineAutoSpreadService(
         keysToRemove.forEach { cache.remove(it) }
     }
 
-    /** 返回该周期、该方向的 100% 基准价差，供调用方按窗口进度应用动态系数。 */
+    /** 返回该周期、该方向的 100% 基准价差，供调用方按窗口进度应用动态系数；不可用时返回 null。 */
     fun getAutoMinSpreadBase(marketSlugPrefix: String, intervalSeconds: Int, periodStartUnix: Long, outcomeIndex: Int): BigDecimal? {
-        val key = cacheKey(marketSlugPrefix, intervalSeconds, periodStartUnix)
-        val (up, down) = cache[key] ?: run {
-            computeAndCache(marketSlugPrefix, intervalSeconds, periodStartUnix) ?: return null
-        }
+        val (up, down) = computeAndCache(marketSlugPrefix, intervalSeconds, periodStartUnix) ?: return null
         return if (outcomeIndex == 0) up else down
     }
 
-    /** 计算并缓存 100% 基准价差（IQR 平均，不乘系数）。预加载与触发时共用此缓存。 */
+    /**
+     * 获取该周期的 100% 基准价差：已缓存则直接返回，否则计算并 putIfAbsent（每周期只算一次）。
+     * 计算失败不缓存，下次调用重试。预加载与触发时共用此缓存。
+     */
     fun computeAndCache(marketSlugPrefix: String, intervalSeconds: Int, periodStartUnix: Long): Pair<BigDecimal, BigDecimal>? {
         cleanExpiredCache()
+        val key = cacheKey(marketSlugPrefix, intervalSeconds, periodStartUnix)
+        cache[key]?.let { return it }
+        val computed = compute(marketSlugPrefix, intervalSeconds, periodStartUnix) ?: return null
+        return cache.putIfAbsent(key, computed) ?: computed
+    }
+
+    /**
+     * 只读计算（监控页、预览接口使用）：命中缓存直接返回，否则现算但不写缓存，不影响交易路径的基准值。
+     */
+    fun computeReadOnly(marketSlugPrefix: String, intervalSeconds: Int, periodStartUnix: Long): Pair<BigDecimal, BigDecimal>? {
+        cache[cacheKey(marketSlugPrefix, intervalSeconds, periodStartUnix)]?.let { return it }
+        return compute(marketSlugPrefix, intervalSeconds, periodStartUnix)
+    }
+
+    private fun compute(marketSlugPrefix: String, intervalSeconds: Int, periodStartUnix: Long): Pair<BigDecimal, BigDecimal>? {
         val symbol = getSymbol(marketSlugPrefix) ?: run {
             logger.warn("不支持的市场 slug 前缀: $marketSlugPrefix")
             return null
         }
         val intervalStr = if (intervalSeconds == 300) "5m" else "15m"
-        val endTimeMs = periodStartUnix * 1000L
+        // endTime 取周期起点前 1ms，只包含已收盘 K 线，不含当前周期未收盘的那根
+        val endTimeMs = periodStartUnix * 1000L - 1
         val klines = fetchKlines(symbol, intervalStr, historyLimit, endTime = endTimeMs) ?: return null
+        val result = computeBaseSpreads(klines, periodStartUnix * 1000L)
+        if (result == null) {
+            logger.warn("加密价差策略自动价差不可用（无有效已收盘 K 线）: market=$marketSlugPrefix symbol=$symbol periodStartUnix=$periodStartUnix")
+            return null
+        }
+        logger.info(
+            "加密价差策略自动价差已计算(100%基准): market=$marketSlugPrefix symbol=$symbol interval=${intervalSeconds}s periodStartUnix=$periodStartUnix | " +
+                "baseSpreadUp=${result.first.toPlainString()} baseSpreadDown=${result.second.toPlainString()}"
+        )
+        return result
+    }
+
+    /**
+     * 由已收盘 K 线计算 (baseUp, baseDown)：按方向筛选、IQR 剔除后求平均。
+     * 某方向 0 样本时退化为全部 K 线 |close − open| 的均值；仍不可用（无样本或均值为 0）返回 null。
+     * @param periodStartMs 当前周期起点，openTime >= 该值的 K 线（未收盘）会被丢弃
+     */
+    internal fun computeBaseSpreads(klines: List<List<Any>>, periodStartMs: Long): Pair<BigDecimal, BigDecimal>? {
         val spreadsUp = mutableListOf<BigDecimal>()
         val spreadsDown = mutableListOf<BigDecimal>()
+        val spreadsAll = mutableListOf<BigDecimal>()
         for (k in klines) {
             if (k.size < 5) continue
+            val openTime = k.getOrNull(0)?.toString()?.toBigDecimalOrNull()?.toLong() ?: continue
+            if (openTime >= periodStartMs) continue
             val openP = k.getOrNull(1)?.toString()?.toSafeBigDecimal() ?: continue
             val closeP = k.getOrNull(4)?.toString()?.toSafeBigDecimal() ?: continue
+            if (openP <= BigDecimal.ZERO || closeP <= BigDecimal.ZERO) continue
+            spreadsAll.add(closeP.subtract(openP).abs())
             if (closeP > openP) spreadsUp.add(closeP.subtract(openP))
             if (closeP < openP) spreadsDown.add(openP.subtract(closeP))
         }
-        val baseUp = averageAfterIqr(spreadsUp).setScale(8, RoundingMode.HALF_UP)
-        val baseDown = averageAfterIqr(spreadsDown).setScale(8, RoundingMode.HALF_UP)
-        cache[cacheKey(marketSlugPrefix, intervalSeconds, periodStartUnix)] = baseUp to baseDown
-        logger.info(
-            "加密价差策略自动价差已计算并缓存(100%基准): market=$marketSlugPrefix symbol=$symbol interval=${intervalSeconds}s periodStartUnix=$periodStartUnix | " +
-                "Up方向: 样本数=${spreadsUp.size}, baseSpreadUp=${baseUp.toPlainString()} | " +
-                "Down方向: 样本数=${spreadsDown.size}, baseSpreadDown=${baseDown.toPlainString()}"
-        )
+        if (spreadsAll.isEmpty()) return null
+        val fallback = averageAfterIqr(spreadsAll)
+        val baseUp = (if (spreadsUp.isEmpty()) fallback else averageAfterIqr(spreadsUp)).setScale(8, RoundingMode.HALF_UP)
+        val baseDown = (if (spreadsDown.isEmpty()) fallback else averageAfterIqr(spreadsDown)).setScale(8, RoundingMode.HALF_UP)
+        if (baseUp <= BigDecimal.ZERO || baseDown <= BigDecimal.ZERO) return null
         return baseUp to baseDown
     }
 

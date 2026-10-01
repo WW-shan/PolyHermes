@@ -98,5 +98,56 @@ interface CopyOrderTrackingRepository : JpaRepository<CopyOrderTracking, Long> {
         outcomeIndex: Int,
         thresholdTime: Long
     ): List<CopyOrderTracking>
+
+    /**
+     * 幂等判断：该跟单配置是否已为该 Leader 买入交易创建过买入记录（重试处理同一笔交易时避免重复下单）
+     */
+    fun existsByCopyTradingIdAndLeaderBuyTradeId(copyTradingId: Long, leaderBuyTradeId: String): Boolean
+
+    /**
+     * 查询指定配置在某市场+方向的全部买入记录（用于计算累计跟单比例）
+     */
+    fun findByCopyTradingIdAndMarketIdAndOutcomeIndex(
+        copyTradingId: Long,
+        marketId: String,
+        outcomeIndex: Int
+    ): List<CopyOrderTracking>
+
+    /**
+     * 统计指定配置在某市场+方向的某状态记录数（卖出前检查是否有待确认买入）
+     */
+    fun countByCopyTradingIdAndMarketIdAndOutcomeIndexAndStatus(
+        copyTradingId: Long,
+        marketId: String,
+        outcomeIndex: Int,
+        status: String
+    ): Long
+
+    /**
+     * 待确认买入的额度预占：Σ(requestedQuantity × 下单限价)
+     */
+    @Query("SELECT SUM(COALESCE(t.requestedQuantity, 0) * t.price) FROM CopyOrderTracking t WHERE t.copyTradingId = :copyTradingId AND t.marketId = :marketId AND t.outcomeIndex = :outcomeIndex AND t.status = 'pending'")
+    fun sumPendingReservedValueByMarketAndOutcomeIndex(copyTradingId: Long, marketId: String, outcomeIndex: Int): BigDecimal?
+
+    /**
+     * 统计配置在某时间之后创建的买入记录数（每日订单数风控）
+     */
+    fun countByCopyTradingIdAndCreatedAtGreaterThanEqual(copyTradingId: Long, createdAt: Long): Long
+
+    /**
+     * 有界查询指定状态、创建时间早于阈值的记录（待确认订单轮询，避免全表扫描）
+     */
+    fun findTop200ByStatusAndCreatedAtBeforeOrderByCreatedAtAsc(status: String, createdAt: Long): List<CopyOrderTracking>
+
+    /**
+     * 有界查询未发送通知且状态不是指定值的记录（排除待确认订单）
+     */
+    fun findTop200ByNotificationSentFalseAndStatusNotInOrderByIdAsc(statuses: Collection<String>): List<CopyOrderTracking>
+
+    /**
+     * 查询所有出现过的市场ID（去重，避免为补齐市场信息加载整张表）
+     */
+    @Query("SELECT DISTINCT t.marketId FROM CopyOrderTracking t")
+    fun findDistinctMarketIds(): List<String>
 }
 

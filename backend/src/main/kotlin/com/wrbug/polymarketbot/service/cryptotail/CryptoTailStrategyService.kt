@@ -45,8 +45,11 @@ class CryptoTailStrategyService(
             if (interval != 300 && interval != 900) {
                 return Result.failure(IllegalArgumentException(ErrorCode.CRYPTO_TAIL_STRATEGY_INTERVAL_INVALID.messageKey))
             }
+            if (!isSlugMatchingInterval(request.marketSlugPrefix.trim(), interval)) {
+                return Result.failure(IllegalArgumentException(ErrorCode.CRYPTO_TAIL_STRATEGY_INTERVAL_INVALID.messageKey))
+            }
             val maxWindow = maxWindowByInterval[interval] ?: 300
-            if (request.windowStartSeconds > request.windowEndSeconds) {
+            if (request.windowStartSeconds < 0 || request.windowStartSeconds > request.windowEndSeconds) {
                 return Result.failure(IllegalArgumentException(ErrorCode.CRYPTO_TAIL_STRATEGY_WINDOW_INVALID.messageKey))
             }
             if (request.windowEndSeconds > maxWindow) {
@@ -56,13 +59,16 @@ class CryptoTailStrategyService(
             if (amountMode != "RATIO" && amountMode != "FIXED") {
                 return Result.failure(IllegalArgumentException(ErrorCode.CRYPTO_TAIL_STRATEGY_AMOUNT_MODE_INVALID.messageKey))
             }
-            val minPrice = request.minPrice.toSafeBigDecimal()
-            val maxPrice = (request.maxPrice ?: "1").toSafeBigDecimal()
+            val minPrice = parsePrice(request.minPrice)
+                ?: return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
+            val maxPrice = parsePrice(request.maxPrice ?: "1")
+                ?: return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
             if (minPrice > maxPrice) {
                 return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
             }
-            val amountValue = request.amountValue.toSafeBigDecimal()
-            if (amountValue <= BigDecimal.ZERO) {
+            val amountValue = parseDecimal(request.amountValue)
+                ?: return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
+            if (amountValue <= BigDecimal.ZERO || (amountMode == "RATIO" && amountValue > BigDecimal("100"))) {
                 return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
             }
             val spreadMode = try {
@@ -70,7 +76,12 @@ class CryptoTailStrategyService(
             } catch (e: Exception) {
                 return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
             }
-            val spreadValue = request.spreadValue?.toSafeBigDecimal()
+            val spreadValue = if (request.spreadValue.isNullOrBlank()) {
+                null
+            } else {
+                parseDecimal(request.spreadValue)
+                    ?: return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
+            }
             if (spreadMode == SpreadMode.FIXED && (spreadValue == null || spreadValue < BigDecimal.ZERO)) {
                 return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
             }
@@ -140,7 +151,19 @@ class CryptoTailStrategyService(
             } else {
                 existing.spreadMode
             }
-            val newSpreadValue = request.spreadValue?.toSafeBigDecimal() ?: existing.spreadValue
+            val newSpreadValue = if (request.spreadValue.isNullOrBlank()) {
+                existing.spreadValue
+            } else {
+                parseDecimal(request.spreadValue)
+                    ?: return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
+            }
+            val newMinPrice = if (request.minPrice == null) existing.minPrice else parsePrice(request.minPrice)
+                ?: return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
+            val newMaxPrice = if (request.maxPrice == null) existing.maxPrice else parsePrice(request.maxPrice)
+                ?: return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
+            val newAmountValue = if (request.amountValue == null) existing.amountValue else parseDecimal(request.amountValue)
+                ?.takeIf { it > BigDecimal.ZERO }
+                ?: return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
             if (newSpreadMode == SpreadMode.FIXED && (newSpreadValue == null || newSpreadValue < BigDecimal.ZERO)) {
                 return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
             }
@@ -158,17 +181,19 @@ class CryptoTailStrategyService(
                 name = nameToSave,
                 windowStartSeconds = request.windowStartSeconds ?: existing.windowStartSeconds,
                 windowEndSeconds = request.windowEndSeconds ?: existing.windowEndSeconds,
-                minPrice = request.minPrice?.toSafeBigDecimal() ?: existing.minPrice,
-                maxPrice = request.maxPrice?.toSafeBigDecimal() ?: existing.maxPrice,
+                minPrice = newMinPrice,
+                maxPrice = newMaxPrice,
                 amountMode = request.amountMode?.uppercase() ?: existing.amountMode,
-                amountValue = request.amountValue?.toSafeBigDecimal() ?: existing.amountValue,
+                amountValue = newAmountValue,
                 spreadMode = newSpreadMode,
                 spreadValue = newSpreadValue,
                 spreadDirection = newSpreadDirection,
                 enabled = request.enabled ?: existing.enabled,
                 updatedAt = System.currentTimeMillis()
             )
-            if (updated.minPrice > updated.maxPrice) {
+            if (updated.minPrice > updated.maxPrice ||
+                (updated.amountMode == "RATIO" && updated.amountValue > BigDecimal("100"))
+            ) {
                 return Result.failure(IllegalArgumentException(ErrorCode.PARAM_ERROR.messageKey))
             }
             request.amountMode?.uppercase()?.let { if (it != "RATIO" && it != "FIXED") return Result.failure(IllegalArgumentException(ErrorCode.CRYPTO_TAIL_STRATEGY_AMOUNT_MODE_INVALID.messageKey)) }
@@ -315,6 +340,23 @@ class CryptoTailStrategyService(
     }
 
     fun getStrategy(strategyId: Long): CryptoTailStrategy? = strategyRepository.findById(strategyId).orElse(null)
+
+    /** 严格解析数值：非法格式返回 null（不再静默变成 0） */
+    private fun parseDecimal(value: String?): BigDecimal? = value?.trim()?.toBigDecimalOrNull()
+
+    /** 价格必须是 0~1 之间的合法数值 */
+    private fun parsePrice(value: String?): BigDecimal? =
+        parseDecimal(value)?.takeIf { it >= BigDecimal.ZERO && it <= BigDecimal.ONE }
+
+    /** 市场 slug 的周期后缀必须与 intervalSeconds 一致（-5m ↔ 300，-15m ↔ 900） */
+    private fun isSlugMatchingInterval(slug: String, interval: Int): Boolean {
+        val lower = slug.lowercase()
+        return when (interval) {
+            300 -> lower.endsWith("-5m")
+            900 -> lower.endsWith("-15m")
+            else -> false
+        }
+    }
 
     private fun generateStrategyName(marketSlugPrefix: String): String {
         val suffix = Instant.now().atZone(ZoneId.systemDefault())

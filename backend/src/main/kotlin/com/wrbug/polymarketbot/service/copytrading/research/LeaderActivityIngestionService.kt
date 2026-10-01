@@ -36,8 +36,14 @@ class LeaderActivityIngestionService(
             activity.price != null &&
             activity.size != null
         val eventTime = normalizeTimestamp(activity.timestamp)
-        val stableKey = activity.transactionHash?.trim()?.takeIf { it.isNotBlank() }
-            ?: sha256("${source.name}:${activity.proxyWallet}:${activity.conditionId}:${activity.side}:${activity.asset}:${eventTime}:${activity.price}:${activity.size}")
+        val stableKey = fillStableKey(
+            wallet = normalizedWallet,
+            txHash = activity.transactionHash,
+            asset = activity.asset,
+            side = activity.side,
+            size = activity.size?.let { BigDecimal.valueOf(it) },
+            price = activity.price?.let { BigDecimal.valueOf(it) }
+        ) ?: sha256("${source.name}:${activity.proxyWallet}:${activity.conditionId}:${activity.side}:${activity.asset}:${eventTime}:${activity.price}:${activity.size}")
 
         val event = LeaderActivityEvent(
             source = source.name,
@@ -90,8 +96,14 @@ class LeaderActivityIngestionService(
             payload.side.isNotBlank() &&
             price != null &&
             size != null
-        val stableKey = payload.transactionHash?.trim()?.takeIf { it.isNotBlank() }
-            ?: sha256("${source.name}:$normalizedWallet:${payload.conditionId}:${payload.side}:${payload.asset}:$eventTime:$price:$size")
+        val stableKey = fillStableKey(
+            wallet = normalizedWallet,
+            txHash = payload.transactionHash,
+            asset = payload.asset,
+            side = payload.side,
+            size = size,
+            price = price
+        ) ?: sha256("${source.name}:$normalizedWallet:${payload.conditionId}:${payload.side}:${payload.asset}:$eventTime:$price:$size")
 
         val event = LeaderActivityEvent(
             source = source.name,
@@ -134,18 +146,35 @@ class LeaderActivityIngestionService(
 
     fun stableHash(raw: String): String = sha256(raw)
 
+    /**
+     * 成交粒度的去重键：hash(wallet, tx, asset, side, size, price)，与来源无关（WS 与 Data API 的同一成交可去重），
+     * 同一 tx 的多笔成交不会互相覆盖。缺 txHash 时返回 null，由调用方用含时间戳的兜底键。
+     */
+    fun fillStableKey(
+        wallet: String?,
+        txHash: String?,
+        asset: String?,
+        side: String?,
+        size: BigDecimal?,
+        price: BigDecimal?
+    ): String? {
+        val tx = txHash?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+        val normalizedSize = size?.stripTrailingZeros()?.toPlainString() ?: ""
+        val normalizedPrice = price?.stripTrailingZeros()?.toPlainString() ?: ""
+        // 保留 txHash 前缀便于排查与游标展示，后缀为成交维度的哈希
+        val fillHash = sha256(
+            "fill:${wallet ?: ""}:$tx:${asset?.trim() ?: ""}:${side?.trim()?.uppercase() ?: ""}:$normalizedSize:$normalizedPrice"
+        )
+        return "$tx:$fillHash"
+    }
+
     private fun saveDeduped(event: LeaderActivityEvent): LeaderActivityEvent {
         activityEventRepository.findByStableEventKey(event.stableEventKey)?.let { return it }
-        event.sourceEventId?.takeIf { it.isNotBlank() }?.let { sourceEventId ->
-            activityEventRepository.findBySourceAndSourceEventId(event.source, sourceEventId)?.let { return it }
-        }
         return try {
             activityEventRepository.save(event)
         } catch (e: DataIntegrityViolationException) {
             logger.debug("Activity event deduped: stableKey={}", event.stableEventKey)
-            activityEventRepository.findByStableEventKey(event.stableEventKey)
-                ?: event.sourceEventId?.takeIf { it.isNotBlank() }?.let { activityEventRepository.findBySourceAndSourceEventId(event.source, it) }
-                ?: throw e
+            activityEventRepository.findByStableEventKey(event.stableEventKey) ?: throw e
         }
     }
 

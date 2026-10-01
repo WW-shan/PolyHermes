@@ -13,6 +13,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
 import com.wrbug.polymarketbot.service.common.RateLimitService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.security.MessageDigest
 
 /**
  * 认证服务
@@ -21,7 +22,8 @@ import org.springframework.transaction.annotation.Transactional
 class AuthService(
     private val userRepository: UserRepository,
     private val jwtUtils: JwtUtils,
-    private val rateLimitService: RateLimitService
+    private val rateLimitService: RateLimitService,
+    private val clientIpResolver: ClientIpResolver = ClientIpResolver()
 ) {
     
     private val logger = LoggerFactory.getLogger(AuthService::class.java)
@@ -36,7 +38,7 @@ class AuthService(
     fun login(username: String, password: String, ipAddress: String): Result<LoginResponse> {
         return try {
             // 检查登录频率限制
-            rateLimitService.checkLoginRateLimit(ipAddress).fold(
+            rateLimitService.checkLoginRateLimit(ipAddress, username).fold(
                 onSuccess = { },
                 onFailure = { e ->
                     return Result.failure(IllegalStateException(e.message ?: "登录频率限制"))
@@ -46,7 +48,7 @@ class AuthService(
             val user = userRepository.findByUsername(username)
             if (user == null) {
                 // 记录失败尝试
-                val lockoutMsg = rateLimitService.recordLoginFailure(ipAddress)
+                val lockoutMsg = rateLimitService.recordLoginFailure(ipAddress, username)
                 if (lockoutMsg != null) {
                     return Result.failure(IllegalStateException(lockoutMsg))
                 }
@@ -56,7 +58,7 @@ class AuthService(
             // 验证密码
             if (!passwordEncoder.matches(password, user.password)) {
                 // 记录失败尝试
-                val lockoutMsg = rateLimitService.recordLoginFailure(ipAddress)
+                val lockoutMsg = rateLimitService.recordLoginFailure(ipAddress, username)
                 if (lockoutMsg != null) {
                     return Result.failure(IllegalStateException(lockoutMsg))
                 }
@@ -64,7 +66,7 @@ class AuthService(
             }
 
             // 登录成功，清除失败记录
-            rateLimitService.clearLoginFailures(ipAddress)
+            rateLimitService.clearLoginFailures(ipAddress, username)
 
             // 生成JWT token（包含tokenVersion，用于使修改密码后的旧token失效）
             val token = jwtUtils.generateToken(username, user.tokenVersion)
@@ -88,8 +90,8 @@ class AuthService(
         request: HttpServletRequest
     ): Result<Unit> {
         return try {
-            // 先检查频率限制（全局限制，不按IP）
-            rateLimitService.checkResetPasswordRateLimit().fold(
+            // 先检查频率限制（按IP + 全局较宽上限）
+            rateLimitService.checkResetPasswordRateLimit(clientIpResolver.resolve(request)).fold(
                 onSuccess = { },
                 onFailure = { e ->
                     logger.warn("重置密码频率限制触发：username=$username")
@@ -98,7 +100,7 @@ class AuthService(
             )
             
             // 验证重置密钥
-            if (resetKey != resetPasswordKey) {
+            if (!MessageDigest.isEqual(resetKey.toByteArray(Charsets.UTF_8), resetPasswordKey.toByteArray(Charsets.UTF_8))) {
                 logger.warn("重置密码失败：重置密钥错误，username=$username")
                 return Result.failure(IllegalArgumentException("重置失败"))
             }
@@ -197,29 +199,4 @@ class AuthService(
     private fun checkPasswordStrength(password: String): Boolean {
         return password.length >= 6
     }
-    
-    /**
-     * 获取客户端IP地址
-     */
-    private fun getClientIpAddress(request: HttpServletRequest): String {
-        var ip = request.getHeader("X-Forwarded-For")
-        if (ip.isNullOrBlank() || "unknown".equals(ip, ignoreCase = true)) {
-            ip = request.getHeader("X-Real-IP")
-        }
-        if (ip.isNullOrBlank() || "unknown".equals(ip, ignoreCase = true)) {
-            ip = request.getHeader("Proxy-Client-IP")
-        }
-        if (ip.isNullOrBlank() || "unknown".equals(ip, ignoreCase = true)) {
-            ip = request.getHeader("WL-Proxy-Client-IP")
-        }
-        if (ip.isNullOrBlank() || "unknown".equals(ip, ignoreCase = true)) {
-            ip = request.remoteAddr
-        }
-        // 处理多个IP的情况（X-Forwarded-For可能包含多个IP）
-        if (ip.contains(",")) {
-            ip = ip.split(",")[0].trim()
-        }
-        return ip
-    }
 }
-

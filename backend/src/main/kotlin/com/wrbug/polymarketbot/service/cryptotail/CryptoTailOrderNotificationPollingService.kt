@@ -133,14 +133,9 @@ class CryptoTailOrderNotificationPollingService(
         val market = marketService.getMarket(order.market)
         val marketTitle = trigger.marketTitle?.takeIf { it.isNotBlank() } ?: market?.title ?: order.market
         val orderTimeMs = if (order.createdAt < 1_000_000_000_000L) order.createdAt * 1000 else order.createdAt
-        // 实际成交价 = original_size * price / size_matched，数量用 size_matched
-        val sizeMatchedDec = order.sizeMatched.toSafeBigDecimal()
-        val avgFilledPriceStr = if (sizeMatchedDec.gt(BigDecimal.ZERO)) {
-            order.originalSize.toSafeBigDecimal()
-                .multi(order.price)
-                .div(sizeMatchedDec, 18)
-                .toPlainString()
-        } else null
+        // 成交均价：CLOB 订单里的 price 是限价而非成交价，这里用下单时保存的交易哈希到 Data API 聚合实际成交；
+        // 拿不到精确成交明细时不展示均价，避免推送错误数值
+        val avgFilledPriceStr = fetchAvgFilledPrice(trigger, account.proxyAddress, order.market)?.toPlainString()
         val filledSize = order.sizeMatched
         telegramNotificationService.sendCryptoTailOrderSuccessNotification(
             orderId = orderId,
@@ -160,6 +155,38 @@ class CryptoTailOrderNotificationPollingService(
         )
         logger.info("加密价差策略订单 TG 通知已发送: orderId=$orderId, strategyId=${strategy.id}, triggerId=${trigger.id}")
         return true
+    }
+
+    /**
+     * 按交易哈希从 Data API activity 聚合本单成交，返回成交量加权均价；无哈希或查询失败返回 null。
+     */
+    private suspend fun fetchAvgFilledPrice(
+        trigger: CryptoTailStrategyTrigger,
+        proxyAddress: String,
+        conditionId: String
+    ): BigDecimal? {
+        val txHashes = CryptoTailTriggerRecorder.splitTransactionHashes(trigger.transactionHashes)
+        if (txHashes.isEmpty()) return null
+        return try {
+            val triggerTimeSeconds = trigger.createdAt / 1000
+            val response = retrofitFactory.createDataApi().getUserActivity(
+                user = proxyAddress,
+                market = listOf(conditionId),
+                type = listOf("TRADE"),
+                side = "BUY",
+                start = triggerTimeSeconds - 120,
+                end = triggerTimeSeconds + 600,
+                limit = 500,
+                sortBy = "TIMESTAMP",
+                sortDirection = "ASC"
+            )
+            val activities = response.body()
+            if (!response.isSuccessful || activities == null) return null
+            CryptoTailSettlementService.aggregateActivityFills(activities, conditionId, trigger.outcomeIndex, txHashes)?.price
+        } catch (e: Exception) {
+            logger.debug("查询成交明细失败，TG 不展示成交均价: triggerId=${trigger.id}, ${e.message}")
+            null
+        }
     }
 
     @PreDestroy

@@ -11,11 +11,12 @@ import kotlinx.coroutines.delay
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.math.RoundingMode
 
 /**
  * 基于 start 游标的一批历史交易结果
  * @param trades 本批交易列表（已按时间升序）
- * @param nextCursorSeconds 下一页游标（API 的 start 参数，秒级）；若本批不足 limit 条则为 null 表示最后一页
+ * @param nextCursorSeconds 下一页游标（API 的 start 参数，秒级）；原始返回不足 limit 条时为 null 表示最后一页
  */
 data class LeaderTradesBatchResult(
     val trades: List<TradeData>,
@@ -35,7 +36,11 @@ class BacktestDataService(
 
     /**
      * 按 start 游标获取一批 Leader 历史交易
-     * 规则：limit 固定为 500；若返回 500 条则取本批最大时间戳（秒）作为下一页 start，不加 1（同一秒可能多笔订单，由下游按 tradeId 去重）；不足 500 则为最后一页
+     * 规则：
+     * - API 的 start 按秒且包含起点那一秒；是否有下一页按**原始返回条数 == limit** 判断（不能用过滤后的条数）
+     * - 有下一页时，本批丢弃时间戳等于原始最大秒的交易，下一页从该秒重新拉取，保证同一秒（同一 tx 的多笔成交）完整落在一批内，避免跨批重复/拆分
+     * - 若整批都在同一秒（无法前进），用 offset 在该秒内继续翻页取全，下一页游标为该秒 + 1，避免死循环
+     * - 同一 tx 同 asset 同 side 的多笔成交聚合为一笔（数量求和、价格按数量加权）
      *
      * @param leaderId Leader ID
      * @param startTime 回测开始时间（毫秒）
@@ -56,8 +61,49 @@ class BacktestDataService(
         val leader = leaderRepository.findById(leaderId).orElse(null)
             ?: throw IllegalArgumentException("Leader 不存在: $leaderId")
 
-        val dataApi = retrofitFactory.createDataApi()
         val endSeconds = endTime / 1000
+        val activities = fetchActivitiesWithRetry(leader.leaderAddress, cursorStartSeconds, endSeconds, limit, offset = null)
+        logger.info("本批获取 ${activities.size} 条原始活动")
+
+        if (activities.size < limit) {
+            return LeaderTradesBatchResult(trades = toTrades(activities, startTime, endTime), nextCursorSeconds = null)
+        }
+
+        val maxSeconds = activities.maxOf { it.timestamp }
+        if (maxSeconds > cursorStartSeconds) {
+            // 最大那一秒可能被 limit 截断，留给下一页完整拉取
+            val complete = activities.filter { it.timestamp < maxSeconds }
+            return LeaderTradesBatchResult(trades = toTrades(complete, startTime, endTime), nextCursorSeconds = maxSeconds)
+        }
+
+        // 整批都在同一秒：在该秒内按 offset 翻页取全，然后越过该秒
+        val sameSecond = activities.toMutableList()
+        var offset = limit
+        var page = 1
+        while (page < MAX_SAME_SECOND_PAGES) {
+            val more = fetchActivitiesWithRetry(leader.leaderAddress, maxSeconds, maxSeconds, limit, offset)
+            sameSecond.addAll(more.filter { it.timestamp == maxSeconds })
+            if (more.size < limit) break
+            offset += limit
+            page++
+        }
+        if (page >= MAX_SAME_SECOND_PAGES) {
+            logger.warn("同一秒内活动数量超过上限，超出部分可能缺失: leaderId=$leaderId, second=$maxSeconds, fetched=${sameSecond.size}")
+        }
+        return LeaderTradesBatchResult(trades = toTrades(sameSecond, startTime, endTime), nextCursorSeconds = maxSeconds + 1)
+    }
+
+    /**
+     * 请求一页用户活动（失败重试，最终失败抛异常，不把失败当作空数据）
+     */
+    private suspend fun fetchActivitiesWithRetry(
+        user: String,
+        startSeconds: Long,
+        endSeconds: Long,
+        limit: Int,
+        offset: Int?
+    ): List<UserActivityResponse> {
+        val dataApi = retrofitFactory.createDataApi()
         val maxRetries = 5
         val retryDelay = 1000L
 
@@ -65,12 +111,12 @@ class BacktestDataService(
         for (attempt in 1..maxRetries) {
             try {
                 val response = dataApi.getUserActivity(
-                    user = leader.leaderAddress,
+                    user = user,
                     type = listOf("TRADE"),
-                    start = cursorStartSeconds,
+                    start = startSeconds,
                     end = endSeconds,
                     limit = limit,
-                    offset = null,
+                    offset = offset,
                     sortBy = "TIMESTAMP",
                     sortDirection = "ASC"
                 )
@@ -78,49 +124,7 @@ class BacktestDataService(
                 if (!response.isSuccessful || response.body() == null) {
                     throw Exception("从 Data API 获取用户活动失败: code=${response.code()}, message=${response.message()}")
                 }
-
-                val activities = response.body()!!
-                logger.info("本批获取 ${activities.size} 条活动（第 $attempt 次尝试）")
-
-                val trades = activities.mapNotNull { activity ->
-                    try {
-                        if (activity.type != "TRADE") return@mapNotNull null
-                        if (activity.side == null || activity.price == null || activity.size == null || activity.usdcSize == null) {
-                            logger.warn("活动数据缺少必要字段，跳过: activity=$activity")
-                            return@mapNotNull null
-                        }
-                        val tradeTimestamp = activity.timestamp * 1000
-                        if (tradeTimestamp < startTime || tradeTimestamp > endTime) {
-                            logger.debug("交易时间超出范围，跳过: timestamp=$tradeTimestamp")
-                            return@mapNotNull null
-                        }
-                        TradeData(
-                            tradeId = activity.transactionHash ?: "${activity.timestamp}_${activity.conditionId}_${activity.side}",
-                            marketId = activity.conditionId,
-                            marketTitle = activity.title,
-                            marketSlug = activity.slug,
-                            side = activity.side.uppercase(),
-                            outcome = activity.outcome ?: activity.outcomeIndex?.toString() ?: "",
-                            outcomeIndex = activity.outcomeIndex,
-                            price = activity.price.toSafeBigDecimal(),
-                            size = activity.size.toSafeBigDecimal(),
-                            amount = activity.usdcSize.toSafeBigDecimal(),
-                            timestamp = tradeTimestamp
-                        )
-                    } catch (e: Exception) {
-                        logger.warn("转换活动数据失败: activity=$activity, error=${e.message}", e)
-                        null
-                    }
-                }
-
-                // 下一页 start 用本批最大 timestamp（秒），不加 1：同一秒可能有多笔订单，依赖下游按 tradeId 去重
-                val nextCursorSeconds: Long? = if (trades.size < limit) {
-                    null
-                } else {
-                    val maxTs = trades.maxOf { it.timestamp }
-                    maxTs / 1000
-                }
-                return LeaderTradesBatchResult(trades = trades, nextCursorSeconds = nextCursorSeconds)
+                return response.body()!!
             } catch (e: Exception) {
                 lastException = e
                 logger.warn("第 $attempt/$maxRetries 次获取批次失败: ${e.message}")
@@ -130,8 +134,91 @@ class BacktestDataService(
                 }
             }
         }
-        val errorMsg = "重试 $maxRetries 次后仍然失败，cursorStart=$cursorStartSeconds"
+        val errorMsg = "重试 $maxRetries 次后仍然失败，cursorStart=$startSeconds, offset=$offset"
         logger.error(errorMsg, lastException)
         throw Exception(errorMsg, lastException)
+    }
+
+    /**
+     * 原始活动 -> 回测交易：过滤非法/超出时间范围的数据，并把同一 tx 同 asset 同 side 的多笔成交聚合
+     */
+    private fun toTrades(activities: List<UserActivityResponse>, startTime: Long, endTime: Long): List<TradeData> {
+        val valid = activities.filter { activity ->
+            if (activity.type != "TRADE") return@filter false
+            if (activity.side == null || activity.price == null || activity.size == null || activity.usdcSize == null) {
+                logger.warn("活动数据缺少必要字段，跳过: activity=$activity")
+                return@filter false
+            }
+            val tradeTimestamp = activity.timestamp * 1000
+            if (tradeTimestamp < startTime || tradeTimestamp > endTime) {
+                logger.debug("交易时间超出范围，跳过: timestamp=$tradeTimestamp")
+                return@filter false
+            }
+            true
+        }
+        return aggregateFills(valid)
+    }
+
+    /**
+     * 聚合同一 tx 同 asset 同 side 的成交（数量、金额求和，价格按数量加权），保持时间升序
+     * tradeId：tx 内只有一组成交时为 txHash，否则追加 outcomeIndex/side 区分
+     */
+    fun aggregateFills(activities: List<UserActivityResponse>): List<TradeData> {
+        data class FillKey(val tx: String, val conditionId: String, val asset: String, val side: String)
+
+        val groups = LinkedHashMap<FillKey, MutableList<UserActivityResponse>>()
+        for (activity in activities) {
+            val side = activity.side!!.uppercase()
+            val tx = activity.transactionHash ?: "${activity.timestamp}_${activity.conditionId}_$side"
+            val asset = activity.asset ?: activity.outcomeIndex?.toString() ?: ""
+            groups.getOrPut(FillKey(tx, activity.conditionId, asset, side)) { mutableListOf() }.add(activity)
+        }
+        val groupsPerTx = groups.keys.groupingBy { it.tx }.eachCount()
+
+        return groups.mapNotNull { (key, fills) ->
+            try {
+                val first = fills.first()
+                var totalSize = BigDecimal.ZERO
+                var totalAmount = BigDecimal.ZERO
+                var weightedPrice = BigDecimal.ZERO
+                for (fill in fills) {
+                    val size = fill.size!!.toSafeBigDecimal()
+                    totalSize = totalSize.add(size)
+                    totalAmount = totalAmount.add(fill.usdcSize!!.toSafeBigDecimal())
+                    weightedPrice = weightedPrice.add(fill.price!!.toSafeBigDecimal().multiply(size))
+                }
+                val price = if (totalSize > BigDecimal.ZERO) {
+                    weightedPrice.divide(totalSize, 8, RoundingMode.HALF_UP).stripTrailingZeros()
+                } else {
+                    first.price!!.toSafeBigDecimal()
+                }
+                val tradeId = if ((groupsPerTx[key.tx] ?: 1) > 1) {
+                    "${key.tx}:${first.outcomeIndex ?: key.asset.takeLast(8)}:${key.side}"
+                } else {
+                    key.tx
+                }
+                TradeData(
+                    tradeId = tradeId,
+                    marketId = first.conditionId,
+                    marketTitle = first.title,
+                    marketSlug = first.slug,
+                    side = key.side,
+                    outcome = first.outcome ?: first.outcomeIndex?.toString() ?: "",
+                    outcomeIndex = first.outcomeIndex,
+                    price = price,
+                    size = totalSize,
+                    amount = totalAmount,
+                    timestamp = fills.minOf { it.timestamp } * 1000
+                )
+            } catch (e: Exception) {
+                logger.warn("转换活动数据失败: fills=$fills, error=${e.message}", e)
+                null
+            }
+        }.sortedBy { it.timestamp }
+    }
+
+    companion object {
+        /** 同一秒内 offset 翻页的最大页数（防止异常数据导致死循环） */
+        private const val MAX_SAME_SECOND_PAGES = 20
     }
 }

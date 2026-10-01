@@ -7,6 +7,7 @@ import com.wrbug.polymarketbot.repository.BacktestTaskRepository
 import com.wrbug.polymarketbot.repository.CopyTradingRepository
 import com.wrbug.polymarketbot.repository.LeaderRepository
 import com.wrbug.polymarketbot.service.common.BlockchainService
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingValidation
 import com.wrbug.polymarketbot.util.CategoryValidator
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -48,8 +49,8 @@ class LeaderService(
                 return Result.failure(IllegalArgumentException("该 Leader 地址已存在"))
             }
             
-            // 4. 验证 Leader 地址不能与自己的地址相同
-            if (accountRepository.existsByWalletAddress(request.leaderAddress)) {
+            // 4. 验证 Leader 地址不能与自己的地址相同（代理钱包或 EOA，忽略大小写）
+            if (CopyTradingValidation.isOwnAccountAddress(request.leaderAddress, accountRepository.findAll())) {
                 return Result.failure(IllegalArgumentException("Leader 地址不能与自己的账户地址相同"))
             }
             

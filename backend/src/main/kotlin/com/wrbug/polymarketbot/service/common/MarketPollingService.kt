@@ -90,8 +90,7 @@ class MarketPollingService(
     private suspend fun checkAndUpdateMissingMarkets() {
         try {
             // 1. 获取所有买入订单的市场ID（去重）
-            val allOrders = copyOrderTrackingRepository.findAll()
-            val marketIds = allOrders.map { it.marketId }.distinct()
+            val marketIds = copyOrderTrackingRepository.findDistinctMarketIds()
             
             if (marketIds.isEmpty()) {
                 logger.debug("没有找到任何订单，跳过市场信息检查")

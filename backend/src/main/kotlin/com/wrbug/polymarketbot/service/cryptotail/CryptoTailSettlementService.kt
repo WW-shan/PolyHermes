@@ -24,12 +24,14 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import jakarta.annotation.PreDestroy
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.math.RoundingMode
 
 /**
  * 加密价差策略结算轮询服务
  * 定时扫描「状态成功但未结算」的触发记录，通过 Gamma 获取 conditionId、链上查询结算结果，计算收益并回写。
- * 实际成交价与成交量使用 Data API 的 activity 接口获取（getUserActivity），比 CLOB getOrder 更准确；失败时回退为触发时的 amountUsdc + 固定价 0.99。
+ * 实际成交价与成交量使用 Data API 的 activity 接口获取（getUserActivity），按下单时保存的交易哈希过滤；
+ * activity 失败时本轮不落库，周期结束超过 6 小时仍失败才按估算值落库并标记 ESTIMATED。
  */
 @Service
 class CryptoTailSettlementService(
@@ -101,8 +103,8 @@ class CryptoTailSettlementService(
     }
 
     /**
-     * 处理单条触发记录：解析 conditionId -> 查链上结算 -> 若已结算则计算 pnl 并更新。
-     * 通过 copy() 生成新实体再 save，不直接修改原实体；实际成交价与投入金额从 Data API activity 获取并更新 triggerPrice、amountUsdc。
+     * 处理单条触发记录：解析 conditionId -> 拉取 activity 成交 -> 查链上结算 -> 若已结算则计算 pnl 并更新。
+     * activity 失败或无匹配成交时本轮不落库（下轮重试）；周期结束超过 [ESTIMATE_AFTER_MS] 仍拿不到才按估算值落库并标记 ESTIMATED。
      * @return true 表示本条已结算并更新
      */
     private suspend fun settleOne(trigger: CryptoTailStrategyTrigger): Boolean {
@@ -110,38 +112,47 @@ class CryptoTailSettlementService(
         val strategy = strategyRepository.findById(trigger.strategyId).orElse(null) ?: return false
         val conditionId = resolveConditionId(strategy, trigger) ?: return false
         val fill = fetchActivityFill(trigger, strategy, conditionId)
-        val (newTriggerPrice, newAmountUsdc) = if (fill != null && fill.price.gt(BigDecimal.ZERO) && fill.size.gt(BigDecimal.ZERO)) {
-            val amountUsdc = fill.usdcSize?.takeIf { it.gt(BigDecimal.ZERO) }
+        val hasFill = fill != null && fill.price.gt(BigDecimal.ZERO) && fill.size.gt(BigDecimal.ZERO)
+        val newTriggerPrice = if (hasFill) fill!!.price else trigger.triggerPrice
+        val newAmountUsdc = if (hasFill) {
+            fill!!.usdcSize?.takeIf { it.gt(BigDecimal.ZERO) }
                 ?: fill.price.multi(fill.size).setScale(pnlScale, RoundingMode.HALF_UP)
-            Pair(fill.price, amountUsdc)
         } else {
-            Pair(trigger.triggerPrice, trigger.amountUsdc)
+            trigger.amountUsdc
         }
 
-        val (_, payouts) = blockchainService.getCondition(conditionId).getOrNull() ?: run {
-            if (fill != null) {
-                val updated = trigger.copy(triggerPrice = newTriggerPrice, amountUsdc = newAmountUsdc)
-                triggerRepository.save(updated)
-            }
+        val (denominator, payouts) = blockchainService.getCondition(conditionId).getOrNull() ?: run {
+            saveFillIfChanged(trigger, hasFill, newTriggerPrice, newAmountUsdc, conditionId)
             return false
         }
-        if (payouts.isEmpty()) {
-            if (fill != null) {
-                val updated = trigger.copy(triggerPrice = newTriggerPrice, amountUsdc = newAmountUsdc)
-                triggerRepository.save(updated)
-            }
+        val payoutRatio = payoutRatio(denominator, payouts, trigger.outcomeIndex)
+        if (payoutRatio == null) {
+            // 未结算、或链上数据不完整（长度不符 / 分母为 0 / 分子和不等于分母），下轮重试
+            saveFillIfChanged(trigger, hasFill, newTriggerPrice, newAmountUsdc, conditionId)
             return false
         }
-        val winnerIndex = payouts.indexOfFirst { it == java.math.BigInteger.ONE }
-        if (winnerIndex < 0) return false
+        val winnerIndex = winnerIndex(denominator, payouts)
 
-        val won = trigger.outcomeIndex == winnerIndex
-        val pnl = if (fill != null && fill.price.gt(BigDecimal.ZERO) && fill.size.gt(BigDecimal.ZERO)) {
-            CryptoTailPnlCalculator.pnlFromFill(fill.price, fill.size, fill.usdcSize, won)
-        } else {
-            CryptoTailPnlCalculator.pnlFallback(trigger.amountUsdc, won)
+        val periodEndMs = (trigger.periodStartUnix + strategy.intervalSeconds) * 1000L
+        val source = settlementSource(hasFill, !trigger.transactionHashes.isNullOrBlank(), periodEndMs, System.currentTimeMillis())
+        if (source == null) {
+            logger.debug("加密价差策略结算暂无 activity 成交，下轮重试: triggerId=${trigger.id}")
+            return false
         }
-        val now = System.currentTimeMillis()
+        val pnl = if (hasFill) {
+            CryptoTailPnlCalculator.pnlFromFillWithPayout(fill!!.price, fill.size, fill.usdcSize, payoutRatio)
+        } else {
+            val estimated = CryptoTailPnlCalculator.pnlEstimated(trigger.amountUsdc, trigger.triggerPrice, payoutRatio)
+                ?: return false
+            logger.warn(
+                "加密价差策略结算长期拿不到 activity 成交，按估算值落库: triggerId=${trigger.id}, " +
+                    "triggerPrice=${trigger.triggerPrice}, amountUsdc=${trigger.amountUsdc}, pnl=$estimated"
+            )
+            estimated
+        }
+        if (source == SOURCE_TIME_WINDOW) {
+            logger.warn("加密价差策略结算按时间窗聚合成交（无交易哈希，可能不精确）: triggerId=${trigger.id}, orderId=${trigger.orderId}")
+        }
 
         val updated = trigger.copy(
             triggerPrice = newTriggerPrice,
@@ -150,11 +161,24 @@ class CryptoTailSettlementService(
             resolved = true,
             winnerOutcomeIndex = winnerIndex,
             realizedPnl = pnl,
-            settledAt = now
+            settledAt = System.currentTimeMillis(),
+            settlementSource = source
         )
         triggerRepository.save(updated)
-        logger.debug("加密价差策略结算已更新: triggerId=${trigger.id}, winnerOutcomeIndex=$winnerIndex, won=$won, pnl=$pnl")
+        logger.debug("加密价差策略结算已更新: triggerId=${trigger.id}, winnerOutcomeIndex=$winnerIndex, payoutRatio=$payoutRatio, pnl=$pnl, source=$source")
         return true
+    }
+
+    /** 未结算时仅回写 activity 实际成交价/金额（用于展示），没有新数据则不写库 */
+    private fun saveFillIfChanged(
+        trigger: CryptoTailStrategyTrigger,
+        hasFill: Boolean,
+        price: BigDecimal,
+        amountUsdc: BigDecimal,
+        conditionId: String
+    ) {
+        if (!hasFill) return
+        triggerRepository.save(trigger.copy(triggerPrice = price, amountUsdc = amountUsdc, conditionId = conditionId))
     }
 
     private suspend fun resolveConditionId(strategy: CryptoTailStrategy, trigger: CryptoTailStrategyTrigger): String? {
@@ -216,7 +240,8 @@ class CryptoTailSettlementService(
                 return null
             }
             val activities = response.body()!!
-            val fill = aggregateActivityFills(activities, conditionId, trigger.outcomeIndex)
+            val txHashes = CryptoTailTriggerRecorder.splitTransactionHashes(trigger.transactionHashes)
+            val fill = aggregateActivityFills(activities, conditionId, trigger.outcomeIndex, txHashes)
             if (fill == null) {
                 logger.debug("加密价差策略结算 activity 无匹配成交: triggerId=${trigger.id}, conditionId=$conditionId, outcomeIndex=${trigger.outcomeIndex}, 条数=${activities.size}")
             }
@@ -231,16 +256,58 @@ class CryptoTailSettlementService(
         /** 单次 activity 查询上限（接口最大 500），保证扫到同一笔 FAK 订单的全部成交 */
         private const val ACTIVITY_LIMIT = 500
 
+        /** 周期结束后超过该时长仍拿不到 activity 成交，才按估算值落库 */
+        internal const val ESTIMATE_AFTER_MS = 6 * 60 * 60 * 1000L
+
+        const val SOURCE_TX_HASH = "TX_HASH"
+        const val SOURCE_TIME_WINDOW = "TIME_WINDOW"
+        const val SOURCE_ESTIMATED = "ESTIMATED"
+
+        /** 二元市场 outcome 数 */
+        private const val BINARY_OUTCOME_COUNT = 2
+
+        /**
+         * 链上结算赔付比例 payoutNumerator / payoutDenominator（赢 1、输 0、平局 0.5）。
+         * 防御式校验：分母为 0、payouts 长度不等于 outcome 数、分子和不等于分母（有查询失败被跳过）时视为未结算，返回 null。
+         */
+        internal fun payoutRatio(denominator: BigInteger, payouts: List<BigInteger>, outcomeIndex: Int): BigDecimal? {
+            if (denominator.signum() <= 0) return null
+            if (payouts.size != BINARY_OUTCOME_COUNT) return null
+            if (outcomeIndex !in payouts.indices) return null
+            if (payouts.any { it.signum() < 0 }) return null
+            if (payouts.fold(BigInteger.ZERO) { a, b -> a.add(b) } != denominator) return null
+            return BigDecimal(payouts[outcomeIndex]).divide(BigDecimal(denominator), 18, RoundingMode.HALF_UP)
+        }
+
+        /**
+         * 结算数据来源；返回 null 表示本轮不落库、下轮重试。
+         * 有成交：有交易哈希为 TX_HASH，否则 TIME_WINDOW；无成交：周期结束超过 [ESTIMATE_AFTER_MS] 才允许 ESTIMATED。
+         */
+        internal fun settlementSource(hasFill: Boolean, hasTxHashes: Boolean, periodEndMs: Long, nowMs: Long): String? = when {
+            hasFill && hasTxHashes -> SOURCE_TX_HASH
+            hasFill -> SOURCE_TIME_WINDOW
+            nowMs - periodEndMs >= ESTIMATE_AFTER_MS -> SOURCE_ESTIMATED
+            else -> null
+        }
+
+        /** 全额赔付的 outcome 索引；平局（如 50/50）没有单一赢家，返回 null */
+        internal fun winnerIndex(denominator: BigInteger, payouts: List<BigInteger>): Int? =
+            payouts.indexOfFirst { it == denominator }.takeIf { it >= 0 }
+
         /**
          * 聚合同一笔订单的全部成交：FAK 订单可能扫过多档挂单，产生多条 TRADE，
          * 只取其中一条会低估成交量与成本。价格取成交量加权均价。
+         * 传入下单响应的交易哈希时只聚合这些交易，避免混入同市场同方向的其他买单；
+         * 旧数据没有哈希时按条件聚合（可能不精确）。
          */
         internal fun aggregateActivityFills(
             activities: List<com.wrbug.polymarketbot.api.UserActivityResponse>,
             conditionId: String,
-            outcomeIndex: Int?
+            outcomeIndex: Int?,
+            transactionHashes: Set<String> = emptySet()
         ): ActivityFill? {
             val matches = activities.filter { a ->
+                (transactionHashes.isEmpty() || a.transactionHash?.lowercase() in transactionHashes) &&
                 a.type == "TRADE" &&
                     a.conditionId == conditionId &&
                     a.outcomeIndex != null && a.outcomeIndex in 0..1 &&

@@ -168,7 +168,7 @@ class CryptoTailMonitorService(
             var autoMinSpreadUp: BigDecimal? = null
             var autoMinSpreadDown: BigDecimal? = null
             if (strategy.spreadMode.name.uppercase() == "AUTO") {
-                val autoSpreads = binanceKlineAutoSpreadService.computeAndCache(
+                val autoSpreads = binanceKlineAutoSpreadService.computeReadOnly(
                     strategy.marketSlugPrefix,
                     strategy.intervalSeconds,
                     periodStartUnix
@@ -356,7 +356,18 @@ class CryptoTailMonitorService(
         }
 
         val nowSeconds = System.currentTimeMillis() / 1000
-        val isSwitch = currentPeriodWebSocket != null
+        // 只有当前连接订阅的周期确实已结束才算周期切换；订阅者增减（订阅集合变化）不能把下一周期提升为当前周期
+        val periodRolled = currentPeriodTokenToStrategy.get().values.flatten().any { e ->
+            val interval = e.strategy.intervalSeconds
+            interval > 0 && (nowSeconds / interval) * interval != e.periodStartUnix
+        }
+        val isSwitch = currentPeriodWebSocket != null && periodRolled
+        if (!isSwitch && (currentPeriodWebSocket != null || nextPeriodWebSocket != null)) {
+            // 周期内订阅集合变化：关闭现有连接，按当前周期与下一周期重建
+            closeCurrentPeriodWebSocket()
+            nextPeriodWebSocket?.close(1000, "subscription_change")
+            nextPeriodWebSocket = null
+        }
 
         if (isSwitch) {
             // 周期切换：关闭当前周期连接，下一晋升为当前，新建下一周期连接
@@ -491,7 +502,7 @@ class CryptoTailMonitorService(
                 }
 
                 "AUTO" -> {
-                    val autoSpreads = binanceKlineAutoSpreadService.computeAndCache(
+                    val autoSpreads = binanceKlineAutoSpreadService.computeReadOnly(
                         strategy.marketSlugPrefix,
                         strategy.intervalSeconds,
                         periodStartUnix

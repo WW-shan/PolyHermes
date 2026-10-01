@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
+import org.springframework.transaction.annotation.Transactional
 
 @Repository
 interface LeaderResearchRunRepository : JpaRepository<LeaderResearchRun, Long> {
@@ -79,10 +80,64 @@ interface LeaderActivityEventRepository : JpaRepository<LeaderActivityEvent, Lon
     fun findByUsableForDiscoveryTrueAndEventTimeGreaterThanEqual(eventTime: Long): List<LeaderActivityEvent>
     fun findByPaperProcessingStatusInAndUsableForPaperTrueOrderByEventTimeAsc(statuses: Collection<LeaderPaperProcessingStatus>, pageable: Pageable): Page<LeaderActivityEvent>
 
+    /** 仅取纸跟钱包的待处理事件，避免其他钱包的 NEW 事件占满批次导致纸跟卡死 */
+    fun findByPaperProcessingStatusInAndUsableForPaperTrueAndNormalizedWalletInOrderByEventTimeAsc(
+        statuses: Collection<LeaderPaperProcessingStatus>,
+        wallets: Collection<String>,
+        pageable: Pageable
+    ): Page<LeaderActivityEvent>
+
+    /**
+     * 把非纸跟钱包的待处理事件批量标记为 FILTERED（不参与纸跟）
+     * @return 更新行数
+     */
+    @Modifying
+    @Query(
+        "update LeaderActivityEvent e set e.paperProcessingStatus = :filtered, e.updatedAt = :now " +
+            "where e.paperProcessingStatus in :statuses and e.usableForPaper = true " +
+            "and (e.normalizedWallet is null or e.normalizedWallet not in :paperWallets)"
+    )
+    fun markNonPaperWalletEvents(
+        @Param("statuses") statuses: Collection<LeaderPaperProcessingStatus>,
+        @Param("paperWallets") paperWallets: Collection<String>,
+        @Param("filtered") filtered: LeaderPaperProcessingStatus,
+        @Param("now") now: Long
+    ): Int
+
+    /** 无纸跟候选时把全部待处理事件标记为 FILTERED */
+    @Modifying
+    @Query(
+        "update LeaderActivityEvent e set e.paperProcessingStatus = :filtered, e.updatedAt = :now " +
+            "where e.paperProcessingStatus in :statuses and e.usableForPaper = true"
+    )
+    fun markAllPendingPaperEvents(
+        @Param("statuses") statuses: Collection<LeaderPaperProcessingStatus>,
+        @Param("filtered") filtered: LeaderPaperProcessingStatus,
+        @Param("now") now: Long
+    ): Int
+
     fun deleteByEventTimeLessThanAndPaperProcessingStatusIn(
         eventTime: Long,
         statuses: Collection<LeaderPaperProcessingStatus>
     ): Long
+
+    /**
+     * 分批删除过期活动事件（单条 SQL，自带事务，避免派生删除逐条 remove 且无事务时报 TransactionRequiredException）
+     * @param statuses 状态名（LeaderPaperProcessingStatus.name）
+     * @return 删除行数
+     */
+    @Transactional
+    @Modifying
+    @Query(
+        value = "DELETE FROM leader_activity_event WHERE event_time < :eventTime " +
+            "AND paper_processing_status IN (:statuses) LIMIT :batchSize",
+        nativeQuery = true
+    )
+    fun deleteBatchByEventTimeLessThanAndStatusIn(
+        @Param("eventTime") eventTime: Long,
+        @Param("statuses") statuses: Collection<String>,
+        @Param("batchSize") batchSize: Int
+    ): Int
 
     @Modifying
     @Query(

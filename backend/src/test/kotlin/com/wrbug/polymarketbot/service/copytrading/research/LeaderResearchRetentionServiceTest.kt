@@ -16,16 +16,18 @@ class LeaderResearchRetentionServiceTest {
     private val sessionRepository: LeaderPaperSessionRepository = mock()
 
     @Test
-    fun `cleanup deletes only terminal activity events and terminal paper sessions`() {
+    fun `cleanup deletes expired activity events in batches including stale NEW and terminal paper sessions`() {
         val staleSessions = listOf(
             LeaderPaperSession(id = 1, candidateId = 1, status = LeaderPaperSessionStatus.COMPLETED),
             LeaderPaperSession(id = 2, candidateId = 2, status = LeaderPaperSessionStatus.FAILED)
         )
-        val terminalActivityStatuses = listOf(
+        val activityStatuses = listOf(
             LeaderPaperProcessingStatus.PROCESSED,
             LeaderPaperProcessingStatus.FILTERED,
-            LeaderPaperProcessingStatus.FAILED
-        )
+            LeaderPaperProcessingStatus.FAILED,
+            LeaderPaperProcessingStatus.NEW,
+            LeaderPaperProcessingStatus.RETRYABLE
+        ).map { it.name }
         val terminalSessionStatuses = listOf(
             LeaderPaperSessionStatus.COMPLETED,
             LeaderPaperSessionStatus.FAILED
@@ -43,11 +45,12 @@ class LeaderResearchRetentionServiceTest {
             maxPaperSessionsPerRun = 100
         )
         Mockito.`when`(
-            activityRepository.deleteByEventTimeLessThanAndPaperProcessingStatusIn(
+            activityRepository.deleteBatchByEventTimeLessThanAndStatusIn(
                 activityCutoff,
-                terminalActivityStatuses
+                activityStatuses,
+                LeaderResearchRetentionService.ACTIVITY_DELETE_BATCH_SIZE
             )
-        ).thenReturn(7)
+        ).thenReturn(LeaderResearchRetentionService.ACTIVITY_DELETE_BATCH_SIZE, 7)
         Mockito.`when`(
             sessionRepository.findByUpdatedAtLessThanAndStatusIn(
                 paperCutoff,
@@ -58,11 +61,12 @@ class LeaderResearchRetentionServiceTest {
 
         val result = service.cleanup(now = now)
 
-        assertEquals(7, result.deletedActivityEvents)
+        assertEquals(LeaderResearchRetentionService.ACTIVITY_DELETE_BATCH_SIZE + 7L, result.deletedActivityEvents)
         assertEquals(2, result.deletedPaperSessions)
-        Mockito.verify(activityRepository).deleteByEventTimeLessThanAndPaperProcessingStatusIn(
+        Mockito.verify(activityRepository, Mockito.times(2)).deleteBatchByEventTimeLessThanAndStatusIn(
             activityCutoff,
-            terminalActivityStatuses
+            activityStatuses,
+            LeaderResearchRetentionService.ACTIVITY_DELETE_BATCH_SIZE
         )
         Mockito.verify(sessionRepository).deleteAll(staleSessions)
     }

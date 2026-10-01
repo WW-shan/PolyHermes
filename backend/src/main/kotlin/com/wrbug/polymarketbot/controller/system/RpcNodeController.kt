@@ -237,18 +237,15 @@ class RpcNodeController(
                 return ResponseEntity.ok(ApiResponse.paramError("节点名称不能为空"))
             }
             
-            // 临时创建节点配置以进行验证（不保存到数据库）
-            // 这里直接复用 addNode 的部分逻辑，但只进行校验
-            val result = rpcNodeService.addNode(request)
-            
+            // 纯校验，不写数据库（原实现是"先新增再删除"）
+            val result = rpcNodeService.validateNodeRequest(request)
+
             result.fold(
-                onSuccess = { node ->
-                    // 添加成功后立即删除（这只是为了校验）
-                    rpcNodeService.deleteNode(node.id!!)
+                onSuccess = { validated ->
                     ResponseEntity.ok(ApiResponse.success(ValidateNodeResponse(
                         valid = true,
                         message = "节点可用",
-                        responseTimeMs = node.responseTimeMs
+                        responseTimeMs = validated.checkResult.responseTimeMs
                     )))
                 },
                 onFailure = { e ->

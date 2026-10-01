@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.service.copytrading.monitor
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import com.wrbug.polymarketbot.api.*
 import com.wrbug.polymarketbot.service.system.RpcNodeService
@@ -11,7 +12,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.slf4j.LoggerFactory
+import java.math.BigDecimal
 import java.math.BigInteger
+import java.math.RoundingMode
 
 /**
  * 链上 WebSocket 工具类
@@ -44,34 +47,63 @@ object OnChainWsUtils {
         }
     }
     
-    // 合约地址
-    const val PUSD_CONTRACT = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"         // V2 pUSD
-    const val USDC_CONTRACT = PUSD_CONTRACT  // 默认使用 pUSD
-    private val COLLATERAL_CONTRACTS = setOf(PUSD_CONTRACT.lowercase())
-    const val ERC1155_CONTRACT = "0x4d97dcd97ec945f40cf65f87097ace5ea0476045"
-    const val ERC20_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-    const val ERC1155_TRANSFER_SINGLE_TOPIC = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62"
-    const val ERC1155_TRANSFER_BATCH_TOPIC = "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb"
-    
+    // V2 交易所合约（标准 + NegRisk），只信任这两个合约发出的 OrderFilled 事件
+    const val EXCHANGE_V2_CONTRACT = "0xe111180000d2663c0091e4f400237545b87b996b"
+    const val NEG_RISK_EXCHANGE_V2_CONTRACT = "0xe2222d279d744050d28e00520010520000310f59"
+    val EXCHANGE_CONTRACTS: List<String> = listOf(EXCHANGE_V2_CONTRACT, NEG_RISK_EXCHANGE_V2_CONTRACT)
+
     /**
-     * ERC20 Transfer 数据类
+     * keccak256("OrderFilled(bytes32,address,address,uint8,uint256,uint256,uint256,uint256,bytes32,bytes32)")
+     * topics: [topic0, orderHash, maker, taker]；data: side, tokenId, makerAmountFilled, takerAmountFilled, fee, builder, metadata
      */
-    data class Erc20Transfer(
-        val from: String,
-        val to: String,
-        val value: BigInteger
-    )
-    
+    const val ORDER_FILLED_TOPIC = "0xd543adfd945773f1a62f74f0ee55a5e3b9b1a28262980ba90b1a89f2ea84d8ee"
+
+    private val SHARE_UNIT = BigDecimal("1000000")
+
     /**
-     * ERC1155 Transfer 数据类
+     * V2 交易所 OrderFilled 事件
+     * side 为 maker 订单的方向：0=BUY（maker 付出 USDC 换取份额），1=SELL（maker 付出份额换取 USDC）
      */
-    data class Erc1155Transfer(
-        val from: String,
-        val to: String,
-        val tokenId: BigInteger,
-        val value: BigInteger
+    data class OrderFilledEvent(
+        val exchange: String = "",
+        val orderHash: String = "",
+        val maker: String = "",
+        val taker: String = "",
+        val side: Int = 0,
+        val tokenId: BigInteger = BigInteger.ZERO,
+        val makerAmountFilled: BigInteger = BigInteger.ZERO,
+        val takerAmountFilled: BigInteger = BigInteger.ZERO,
+        val fee: BigInteger = BigInteger.ZERO,
+        val txHash: String = "",
+        val blockNumber: Long? = null,
+        val logIndex: Long? = null
     )
-    
+
+    /**
+     * 某个钱包在一笔交易中、按 (tokenId, side) 聚合后的成交
+     * sharesRaw/usdcRaw/feeRaw 均为 6 位小数的原始整数；价格 = USDC / shares，不含手续费
+     */
+    data class WalletFillGroup(
+        val txHash: String = "",
+        val tokenId: BigInteger = BigInteger.ZERO,
+        val side: String = "",
+        val sharesRaw: BigInteger = BigInteger.ZERO,
+        val usdcRaw: BigInteger = BigInteger.ZERO,
+        val feeRaw: BigInteger = BigInteger.ZERO,
+        val orderHashes: List<String> = emptyList(),
+        val blockNumber: Long? = null
+    ) {
+        val size: BigDecimal get() = sharesRaw.toBigDecimal().divide(SHARE_UNIT, 6, RoundingMode.DOWN)
+        val usdcAmount: BigDecimal get() = usdcRaw.toBigDecimal().divide(SHARE_UNIT, 6, RoundingMode.DOWN)
+        val fee: BigDecimal get() = feeRaw.toBigDecimal().divide(SHARE_UNIT, 6, RoundingMode.DOWN)
+        val price: BigDecimal
+            get() = if (sharesRaw.signum() > 0) {
+                usdcRaw.toBigDecimal().divide(sharesRaw.toBigDecimal(), 8, RoundingMode.HALF_UP)
+            } else {
+                BigDecimal.ZERO
+            }
+    }
+
     /**
      * 市场信息数据类
      */
@@ -82,226 +114,129 @@ object OnChainWsUtils {
     )
     
     /**
-     * 解析 receipt 中的 Transfer 日志
+     * 统一 hash（txHash / orderHash）格式：小写并带 0x 前缀
      */
-    fun parseReceiptTransfers(logs: JsonArray): Pair<List<Erc20Transfer>, List<Erc1155Transfer>> {
-        val erc20 = mutableListOf<Erc20Transfer>()
-        val erc1155 = mutableListOf<Erc1155Transfer>()
-        
-        for (logElement in logs) {
-            val log = logElement.asJsonObject
-            val address = log.get("address")?.asString?.lowercase() ?: continue
-            val topicsArray = log.getAsJsonArray("topics") ?: continue
-            val topics = topicsArray.mapNotNull { it.asString }
-            if (topics.isEmpty()) continue
-            
-            val t0 = topics[0].lowercase()
-            val data = log.get("data")?.asString ?: "0x"
-            
-            // 抵押品 ERC20 Transfer（当前仅匹配 pUSD）
-            if (address in COLLATERAL_CONTRACTS && t0 == ERC20_TRANSFER_TOPIC && topics.size >= 3) {
-                val from = topicToAddress(topics[1])
-                val to = topicToAddress(topics[2])
-                val value = hexToBigInt(data)
-                erc20.add(Erc20Transfer(from, to, value))
-                continue
-            }
-            
-            // ERC1155 TransferSingle
-            if (t0 == ERC1155_TRANSFER_SINGLE_TOPIC && topics.size >= 4) {
-                val from = topicToAddress(topics[2])
-                val to = topicToAddress(topics[3])
-                val bytes = bytesFromHex(data)
-                if (bytes.size >= 64) {
-                    val tokenId = sliceBigInt32(bytes, 0)
-                    val value = sliceBigInt32(bytes, 32)
-                    erc1155.add(Erc1155Transfer(from, to, tokenId, value))
-                }
-                continue
-            }
-            
-            // ERC1155 TransferBatch
-            if (t0 == ERC1155_TRANSFER_BATCH_TOPIC && topics.size >= 4) {
-                val from = topicToAddress(topics[2])
-                val to = topicToAddress(topics[3])
-                val bytes = bytesFromHex(data)
-                if (bytes.size < 64) continue
-                
-                val offIds = sliceBigInt32(bytes, 0).toInt()
-                val offVals = sliceBigInt32(bytes, 32).toInt()
-                if (offIds + 32 > bytes.size || offVals + 32 > bytes.size) continue
-                
-                val nIds = sliceBigInt32(bytes, offIds).toInt()
-                val nVals = sliceBigInt32(bytes, offVals).toInt()
-                if (nIds != nVals) continue
-                
-                val idsStart = offIds + 32
-                val valsStart = offVals + 32
-                for (i in 0 until nIds) {
-                    val ib = idsStart + i * 32
-                    val vb = valsStart + i * 32
-                    if (ib + 32 > bytes.size || vb + 32 > bytes.size) break
-                    val tokenId = sliceBigInt32(bytes, ib)
-                    val value = sliceBigInt32(bytes, vb)
-                    erc1155.add(Erc1155Transfer(from, to, tokenId, value))
-                }
-            }
-        }
-        
-        return Pair(erc20, erc1155)
+    fun normalizeHash(hash: String?): String {
+        val clean = hash?.trim()?.lowercase()?.removePrefix("0x") ?: return ""
+        return if (clean.isEmpty()) "" else "0x$clean"
     }
-    
+
     /**
-     * 通过 CLOB 交易历史获取 Leader 真实成交价（用于无 USDC 转账的 ERC1155-only 场景）
-     * 查询该 token 最近的成交记录，匹配 side 方向的第一条作为成交价
-     * 返回 usdcRaw = price × sizeRaw
+     * 生成下游使用的 trade.id：activity 路径与链上路径对同一笔 (tx, tokenId, side) 必须一致。
+     * 只用 txHash 会让同一 Leader 在同一 tx 内不同 token/方向的成交互相覆盖，因此附加方向与 tokenId 摘要；
+     * 长度控制在 100 以内（processed_trade.leader_trade_id 为 VARCHAR(100)）。
      */
-    private suspend fun fetchEstimatedUsdcRaw(
-        tokenId: String,
-        side: String,
-        sizeRaw: BigInteger,
-        retrofitFactory: RetrofitFactory
-    ): BigInteger? {
-        return try {
-            val clobApi = retrofitFactory.createClobApiWithoutAuth()
-            val response = clobApi.getTrades(asset_id = tokenId)
-            if (!response.isSuccessful || response.body() == null) {
-                logger.warn("CLOB 交易历史查询失败: tokenId=$tokenId, code=${response.code()}")
-                return null
-            }
-            val trades = response.body()!!.data
-            val clobSide = side.lowercase()
-            val matchedTrade = trades.firstOrNull { it.side.equals(clobSide, ignoreCase = true) }
-            if (matchedTrade == null) {
-                logger.warn("CLOB 交易历史中未找到匹配成交: tokenId=$tokenId, side=$clobSide, totalTrades=${trades.size}")
-                return null
-            }
-            val price = matchedTrade.price.toBigDecimal()
-            val usdcRaw = price.multiply(sizeRaw.toBigDecimal())
-                .setScale(0, java.math.RoundingMode.DOWN).toBigInteger()
-            logger.debug("CLOB 交易历史估算: tokenId=$tokenId, side=$clobSide, tradePrice=${matchedTrade.price}, tradeSize=${matchedTrade.size}, sizeRaw=$sizeRaw, usdcRaw=$usdcRaw")
-            usdcRaw
-        } catch (e: Exception) {
-            logger.warn("获取 CLOB 交易历史失败: tokenId=$tokenId, side=$side, error=${e.message}")
-            null
+    fun buildTradeId(txHash: String, tokenId: String, side: String): String {
+        val sideFlag = if (side.equals("SELL", ignoreCase = true)) "S" else "B"
+        return "${normalizeHash(txHash)}:$sideFlag:${tokenId.trim().takeLast(16)}"
+    }
+
+    /**
+     * 解析单条日志为 OrderFilled 事件；非 V2 交易所发出、topic 不匹配或数据不完整时返回 null
+     */
+    fun parseOrderFilledLog(log: JsonObject, fallbackTxHash: String = ""): OrderFilledEvent? {
+        val address = log.get("address")?.takeIf { !it.isJsonNull }?.asString?.lowercase() ?: return null
+        if (address !in EXCHANGE_CONTRACTS) return null
+        val topics = log.getAsJsonArray("topics")?.mapNotNull { if (it.isJsonNull) null else it.asString } ?: return null
+        if (topics.size < 4 || topics[0].lowercase() != ORDER_FILLED_TOPIC) return null
+        val data = log.get("data")?.takeIf { !it.isJsonNull }?.asString ?: return null
+        val bytes = bytesFromHex(data)
+        if (bytes.size < 32 * 5) return null
+        val side = sliceBigInt32(bytes, 0)
+        if (side != BigInteger.ZERO && side != BigInteger.ONE) return null
+        val txHash = log.get("transactionHash")?.takeIf { !it.isJsonNull }?.asString ?: fallbackTxHash
+        return OrderFilledEvent(
+            exchange = address,
+            orderHash = normalizeHash(topics[1]),
+            maker = topicToAddress(topics[2]),
+            taker = topicToAddress(topics[3]),
+            side = side.toInt(),
+            tokenId = sliceBigInt32(bytes, 32),
+            makerAmountFilled = sliceBigInt32(bytes, 64),
+            takerAmountFilled = sliceBigInt32(bytes, 96),
+            fee = sliceBigInt32(bytes, 128),
+            txHash = normalizeHash(txHash),
+            blockNumber = log.get("blockNumber")?.takeIf { !it.isJsonNull }?.asString?.let { hexToBigInt(it).toLong() },
+            logIndex = log.get("logIndex")?.takeIf { !it.isJsonNull }?.asString?.let { hexToBigInt(it).toLong() }
+        )
+    }
+
+    /**
+     * 从 receipt logs 中解析所有 V2 交易所发出的 OrderFilled 事件（其他合约发出的同名事件一律忽略）
+     */
+    fun parseOrderFilledEvents(logs: JsonArray, txHash: String = ""): List<OrderFilledEvent> {
+        return logs.mapNotNull { element ->
+            if (!element.isJsonObject) return@mapNotNull null
+            parseOrderFilledLog(element.asJsonObject, txHash)
         }
     }
 
     /**
-     * 从 Transfer 日志解析交易信息
+     * 按 (tokenId, side) 聚合某钱包自己的订单成交。
+     *
+     * 只统计 maker == 钱包的事件：钱包作为 maker 被撮合时，事件里的 side/金额就是它的订单；
+     * 钱包作为 taker 时，交易所会为其 taker 订单再发一条 maker=钱包、taker=交易所 的 OrderFilled。
+     * taker == 钱包 的那些事件是对手方 maker 订单的成交（mint/merge 撮合时 token 与方向都不同），
+     * 若再按"方向相反"计入会重复计数并产生错误的 token/方向。
      */
-    suspend fun parseTradeFromTransfers(
-        txHash: String,
-        timestamp: Long?,
-        walletAddress: String,
-        erc20Transfers: List<Erc20Transfer>,
-        erc1155Transfers: List<Erc1155Transfer>,
-        retrofitFactory: RetrofitFactory
-    ): TradeResponse? {
+    fun aggregateWalletFills(events: List<OrderFilledEvent>, walletAddress: String): List<WalletFillGroup> {
         val wallet = walletAddress.lowercase()
-        
-        // 计算 USDC 流入和流出
-        val usdcOut = erc20Transfers.filter { it.from.lowercase() == wallet }
-            .fold(BigInteger.ZERO) { acc, t -> acc + t.value }
-        val usdcIn = erc20Transfers.filter { it.to.lowercase() == wallet }
-            .fold(BigInteger.ZERO) { acc, t -> acc + t.value }
-        
-        // 计算 ERC1155 流入和流出（按 tokenId 聚合）
-        val inById = mutableMapOf<BigInteger, BigInteger>()
-        val outById = mutableMapOf<BigInteger, BigInteger>()
-        for (t in erc1155Transfers) {
-            if (t.to.lowercase() == wallet) {
-                inById[t.tokenId] = (inById[t.tokenId] ?: BigInteger.ZERO) + t.value
+        val groups = LinkedHashMap<Pair<BigInteger, String>, WalletFillGroup>()
+        for (event in events) {
+            if (event.maker.lowercase() != wallet) continue
+            val isBuy = event.side == 0
+            val side = if (isBuy) "BUY" else "SELL"
+            val shares = if (isBuy) event.takerAmountFilled else event.makerAmountFilled
+            val usdc = if (isBuy) event.makerAmountFilled else event.takerAmountFilled
+            if (shares.signum() <= 0) continue
+            val key = event.tokenId to side
+            val existing = groups[key]
+            groups[key] = if (existing == null) {
+                WalletFillGroup(
+                    txHash = event.txHash,
+                    tokenId = event.tokenId,
+                    side = side,
+                    sharesRaw = shares,
+                    usdcRaw = usdc,
+                    feeRaw = event.fee,
+                    orderHashes = listOf(event.orderHash),
+                    blockNumber = event.blockNumber
+                )
+            } else {
+                existing.copy(
+                    sharesRaw = existing.sharesRaw + shares,
+                    usdcRaw = existing.usdcRaw + usdc,
+                    feeRaw = existing.feeRaw + event.fee,
+                    orderHashes = (existing.orderHashes + event.orderHash).distinct()
+                )
             }
-            if (t.from.lowercase() == wallet) {
-                outById[t.tokenId] = (outById[t.tokenId] ?: BigInteger.ZERO) + t.value
-            }
         }
-        
-        // 找到最大的流入和流出 tokenId
-        fun best(map: Map<BigInteger, BigInteger>): Pair<BigInteger?, BigInteger> =
-            map.entries.maxByOrNull { it.value }?.let { it.key to it.value } ?: (null to BigInteger.ZERO)
-        
-        val (bestInId, bestInVal) = best(inById)
-        val (bestOutId, bestOutVal) = best(outById)
-        
-        // 判断交易方向
-        var side: String? = null
-        var asset: BigInteger? = null
-        var sizeRaw = BigInteger.ZERO
-        var usdcRaw = BigInteger.ZERO
-        
-        if (bestInId != null && bestInVal > BigInteger.ZERO && usdcOut > BigInteger.ZERO) {
-            // BUY: 收到 token，支付 USDC
-            side = "BUY"
-            asset = bestInId
-            sizeRaw = bestInVal
-            usdcRaw = usdcOut
-        } else if (bestOutId != null && bestOutVal > BigInteger.ZERO && usdcIn > BigInteger.ZERO) {
-            // SELL: 卖出 token，收到 USDC
-            side = "SELL"
-            asset = bestOutId
-            sizeRaw = bestOutVal
-            usdcRaw = usdcIn
-        } else if (bestInId != null && bestInVal > BigInteger.ZERO && bestOutId == null
-            && usdcOut == BigInteger.ZERO && usdcIn == BigInteger.ZERO
-        ) {
-            // BUY（无 USDC）: 只收到 ERC1155 token，无 USDC 流动（CLOB 内部结算等场景）
-            side = "BUY"
-            asset = bestInId
-            sizeRaw = bestInVal
-            usdcRaw = fetchEstimatedUsdcRaw(bestInId.toString(), "BUY", bestInVal, retrofitFactory)
-                ?: run {
-                    logger.warn("无法获取估算价格（ERC1155-only BUY）: txHash=$txHash, tokenId=$bestInId")
-                    return null
-                }
-            logger.debug("ERC1155-only BUY: txHash=$txHash, tokenId=$bestInId, sizeRaw=$sizeRaw, usdcRaw=$usdcRaw")
-        } else if (bestOutId != null && bestOutVal > BigInteger.ZERO && bestInId == null
-            && usdcOut == BigInteger.ZERO && usdcIn == BigInteger.ZERO
-        ) {
-            // SELL（无 USDC）: 只发出 ERC1155 token，无 USDC 流动
-            side = "SELL"
-            asset = bestOutId
-            sizeRaw = bestOutVal
-            usdcRaw = fetchEstimatedUsdcRaw(bestOutId.toString(), "SELL", bestOutVal, retrofitFactory)
-                ?: run {
-                    logger.warn("无法获取估算价格（ERC1155-only SELL）: txHash=$txHash, tokenId=$bestOutId")
-                    return null
-                }
-            logger.debug("ERC1155-only SELL: txHash=$txHash, tokenId=$bestOutId, sizeRaw=$sizeRaw, usdcRaw=$usdcRaw")
-        } else {
-            // 无法判断交易方向
-            logger.debug("无法判断交易方向: txHash=$txHash, bestInId=$bestInId, bestInVal=$bestInVal, bestOutId=$bestOutId, bestOutVal=$bestOutVal, usdcOut=$usdcOut, usdcIn=$usdcIn")
-            return null
-        }
-        
-        // 计算价格和数量（USDC 有 6 位小数，shares 也有 6 位小数）
-        val usdcSize = usdcRaw.toBigDecimal().divide(BigInteger("1000000").toBigDecimal(), 8, java.math.RoundingMode.DOWN)
-        val size = sizeRaw.toBigDecimal().divide(BigInteger("1000000").toBigDecimal(), 8, java.math.RoundingMode.DOWN)
-        val price = if (size.signum() > 0) {
-            usdcSize.divide(size, 8, java.math.RoundingMode.DOWN)
-        } else {
-            return null
-        }
-        
-        // 尝试通过 Gamma API 查询市场信息（通过 tokenId）；失败时仍保留链上 tokenId 供后续按 tokenId 补查市场
-        val marketInfo = fetchMarketByTokenId(asset.toString(), retrofitFactory)
-        
-        // 创建 TradeResponse：tokenId 始终写入链上解析得到的 asset（与 CLOB 一致），便于 Gamma 失败时在 processBuyTrade 中按 tokenId 再查
+        return groups.values.toList()
+    }
+
+    /**
+     * 将聚合后的成交转换为下游使用的 TradeResponse（market/outcome 由调用方按 tokenId 查询后传入）
+     */
+    fun toTradeResponse(
+        group: WalletFillGroup,
+        timestampMillis: Long?,
+        walletAddress: String,
+        marketInfo: MarketInfo?
+    ): TradeResponse {
         return TradeResponse(
-            id = txHash,
+            id = buildTradeId(group.txHash, group.tokenId.toString(), group.side),
             market = marketInfo?.conditionId ?: "",
-            side = side,
-            price = price.toPlainString(),
-            size = size.toPlainString(),
-            timestamp = (timestamp ?: System.currentTimeMillis() / 1000).toString(),
+            side = group.side,
+            price = group.price.stripTrailingZeros().toPlainString(),
+            size = group.size.stripTrailingZeros().toPlainString(),
+            timestamp = (timestampMillis ?: System.currentTimeMillis()).toString(),
             user = walletAddress,
             outcomeIndex = marketInfo?.outcomeIndex,
             outcome = marketInfo?.outcome,
-            tokenId = asset.toString()
+            tokenId = group.tokenId.toString()
         )
     }
-    
+
     /**
      * 通过 Gamma API 查询市场信息（通过 tokenId）
      * 使用 Retrofit 接口，支持 clob_token_ids 参数
@@ -314,14 +249,23 @@ object OnChainWsUtils {
                 clobTokenIds = listOf(tokenId),
                 includeTag = null
             )
-            
+
             if (!marketsResponse.isSuccessful || marketsResponse.body() == null) {
                 return null
             }
-            
-            val markets = marketsResponse.body()!!
-            val market = markets.firstOrNull()
-            
+
+            // 已结束市场默认查询返回 []，需要带 closed=true 再查一次
+            val market = marketsResponse.body()!!.firstOrNull() ?: run {
+                val closedResponse = gammaApi.listMarkets(
+                    conditionIds = null,
+                    clobTokenIds = listOf(tokenId),
+                    includeTag = null,
+                    closed = true
+                )
+                if (!closedResponse.isSuccessful) return null
+                closedResponse.body()?.firstOrNull()
+            }
+
             if (market == null) {
                 return null
             }

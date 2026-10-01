@@ -213,7 +213,19 @@ class CopyTradingWebSocketService(
                 // 处理交易
                 scope.launch {
                     try {
-                        copyOrderTrackingService.processTrade(leaderId, trade, "activity-ws")
+                        val attempts = if (trade.side.equals("BUY", ignoreCase = true)) 2 else 1
+                        repeat(attempts) { index ->
+                            val result = copyOrderTrackingService.processTrade(leaderId, trade, "activity-ws")
+                            if (result.isSuccess) return@launch
+                            if (index + 1 < attempts) {
+                                delay(500L)
+                            } else {
+                                logger.error(
+                                    "处理交易失败，未写入成功去重状态: leaderId=$leaderId, tradeId=${trade.id}",
+                                    result.exceptionOrNull()
+                                )
+                            }
+                        }
                     } catch (e: Exception) {
                         logger.error("处理交易失败: leaderId=$leaderId, tradeId=${trade.id}", e)
                     }
@@ -260,4 +272,3 @@ class CopyTradingWebSocketService(
         }
     }
 }
-
