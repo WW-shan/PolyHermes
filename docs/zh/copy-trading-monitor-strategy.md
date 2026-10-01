@@ -243,6 +243,8 @@ if (nodeResult.isSuccess) {
 - **RPC 节点配置存储在数据库**（`rpc_node_config` 表），不从配置文件读取
 - 支持多个节点配置，按优先级选择
 - 支持健康检查，自动选择可用节点
+- HTTP JSON-RPC 只读请求遇到节点错误时，会在同一次请求中尝试其他已启用节点，并逐个校验 Polygon `chainId`
+- 交易提交遇到超时等结果不确定的错误不会自动重发；只有请求发送前的 `chainId` 校验拒绝时才切换节点
 - 前端可以通过系统设置页面配置 RPC 节点
 - 配置变更后，WS 重连时会自动使用新配置
 
@@ -650,4 +652,3 @@ suspend fun processTrade(leaderId: Long, trade: TradeResponse, source: String): 
   - 最高效：内存锁，无网络开销，支持协程并发
 - ❌ **不推荐**：仅依赖数据库唯一约束（存在 TOCTOU 问题，可能创建重复订单）
 - ❌ **不推荐**：数据库锁或分布式锁（单实例场景过于复杂）
-

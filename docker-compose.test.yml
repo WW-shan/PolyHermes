@@ -14,9 +14,11 @@ services:
       - DB_USERNAME=${DB_USERNAME:-root}
       - DB_PASSWORD=${DB_PASSWORD:-}
       - SERVER_PORT=8000
-      - JWT_SECRET=${JWT_SECRET:-test-jwt-secret-key-for-testing-only}
-      - ADMIN_RESET_PASSWORD_KEY=${ADMIN_RESET_PASSWORD_KEY:-test-reset-key-for-testing-only}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${CRYPTO_SECRET_KEY:-test-encryption-key-for-testing-only}}
+      # 测试环境同样必须显式提供密钥（不再内置公开默认值），生成方式：openssl rand -hex 32
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (openssl rand -hex 32)}
+      - ADMIN_RESET_PASSWORD_KEY=${ADMIN_RESET_PASSWORD_KEY:?ADMIN_RESET_PASSWORD_KEY must be set (openssl rand -hex 32)}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${CRYPTO_SECRET_KEY:?ENCRYPTION_KEY must be set (openssl rand -hex 32)}}
+      - CRYPTO_SECRET_KEY=${CRYPTO_SECRET_KEY:-}
       - LOG_LEVEL_ROOT=DEBUG
       - LOG_LEVEL_APP=DEBUG
       # 【测试环境】允许检测 pre-release 版本
@@ -34,8 +36,9 @@ services:
   mysql-test:
     image: mysql:8.2
     container_name: polyhermes-mysql-test
+    # 默认只绑定到本机回环地址；如确需远程访问，改为 "${MYSQL_PORT:-3308}:3306"
     ports:
-      - "${MYSQL_PORT:-3308}:3306"  # 使用不同端口
+      - "127.0.0.1:${MYSQL_PORT:-3308}:3306"  # 使用不同端口
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-testpassword}

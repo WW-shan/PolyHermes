@@ -132,9 +132,9 @@ The spread filter controls whether to trigger based on Binance BTC/USDC K-line v
 
 **Spread Direction**:
 
-- **Min spread**: Triggers only when Binance K-line spread **≥** the set value  
+- **Min spread**: Direction-aware. Buying Up requires close − open **≥** the set value; buying Down requires open − close **≥** the set value. A large move in the opposite direction never triggers
   - Use when you want to trade only when volatility is "large enough" (avoid entering when volatility is too small).
-- **Max spread**: Triggers only when Binance K-line spread **≤** the set value  
+- **Max spread**: Triggers only when Binance K-line spread **≤** the set value
   - Use when you want to trade only when volatility is "small enough" (avoid entering when volatility is too high).
 
 **Three Spread Modes**:
@@ -146,9 +146,9 @@ The spread filter controls whether to trigger based on Binance BTC/USDC K-line v
 
 **Mode 2: Fixed (FIXED)**
 - Set a fixed spread value (unit: USDC)
-- **Min spread**: Triggers when K-line spread ≥ set value  
+- **Min spread**: Triggers when K-line spread ≥ set value
   - Example: Set 30, spread ≥ 30 → triggered ✅, spread < 30 → not triggered
-- **Max spread**: Triggers when K-line spread ≤ set value  
+- **Max spread**: Triggers when K-line spread ≤ set value
   - Example: Set 50, spread ≤ 50 → triggered ✅, spread > 50 → not triggered
 - **Suitable for**: You have a clear spread threshold in mind
 
@@ -159,7 +159,7 @@ The spread filter controls whether to trigger based on Binance BTC/USDC K-line v
   2. Filter by direction (Up direction only looks at rising K-lines, Down direction only looks at falling K-lines)
   3. Remove outliers (using IQR method)
   4. Calculate average spread × 0.8 as effective spread
-- **Min spread**: Triggers when K-line spread ≥ effective spread  
+- **Min spread**: Triggers when K-line spread ≥ effective spread
 - **Max spread**: Triggers when K-line spread ≤ effective spread
 - **Suitable for**: Want automatic adjustment based on historical data without setting a specific value
 

@@ -105,6 +105,10 @@ jwt.secret=${JWT_SECRET:change-me-in-production}
 
 # Encryption key (legacy CRYPTO_SECRET_KEY is also supported)
 encryption.key=${ENCRYPTION_KEY:${CRYPTO_SECRET_KEY:${jwt.secret}}}
+# Legacy candidate keys: when the current key fails, CRYPTO_SECRET_KEY and JWT_SECRET are tried; legacy data is re-encrypted on startup
+encryption.legacy-keys=${CRYPTO_SECRET_KEY:}
+
+# Secret validation: under the prod profile, missing/default/shorter-than-32-byte secrets abort startup; dev only logs ERROR
 ```
 
 4. **Start Backend Service**

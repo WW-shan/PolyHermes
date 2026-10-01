@@ -35,10 +35,12 @@ services:
       # ⚠️ 安全警告：以下两个环境变量不能使用默认值，否则容器启动会失败
       # 请在 .env 文件中设置，或通过环境变量传入
       # 生成随机密钥：openssl rand -hex 32 (ADMIN_RESET_PASSWORD_KEY) 或 openssl rand -hex 64 (JWT_SECRET)
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
-      - ADMIN_RESET_PASSWORD_KEY=${ADMIN_RESET_PASSWORD_KEY:-change-me-in-production}
-      # 数据加密密钥：优先 ENCRYPTION_KEY，兼容旧变量 CRYPTO_SECRET_KEY
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${CRYPTO_SECRET_KEY:-${JWT_SECRET:-change-me-in-production}}}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (openssl rand -hex 32)}
+      - ADMIN_RESET_PASSWORD_KEY=${ADMIN_RESET_PASSWORD_KEY:?ADMIN_RESET_PASSWORD_KEY must be set (openssl rand -hex 32)}
+      # 数据加密密钥：优先 ENCRYPTION_KEY，兼容旧变量 CRYPTO_SECRET_KEY，都未设置时回退 JWT_SECRET
+      # 旧部署数据可能由 JWT_SECRET 或 CRYPTO_SECRET_KEY 加密：后端会依次尝试这些旧密钥解密，并在启动时用当前密钥重新加密
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${CRYPTO_SECRET_KEY:-${JWT_SECRET}}}
+      - CRYPTO_SECRET_KEY=${CRYPTO_SECRET_KEY:-}
       # 日志级别配置（可选，默认值：root=WARN, app=INFO）
       # 可选值：TRACE, DEBUG, INFO, WARN, ERROR, OFF
       - LOG_LEVEL_ROOT=${LOG_LEVEL_ROOT:-WARN}
@@ -58,8 +60,10 @@ services:
   mysql:
     image: mysql:8.2
     container_name: polyhermes-mysql
+    # 默认只绑定到本机回环地址，避免数据库暴露到公网
+    # 如确需远程访问，改为 "${MYSQL_PORT:-3307}:3306"（并配置防火墙与强密码）
     ports:
-      - "${MYSQL_PORT:-3307}:3306"
+      - "127.0.0.1:${MYSQL_PORT:-3307}:3306"
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-rootpassword}

@@ -6,7 +6,7 @@
 
 - **60 秒 Chainlink TWAP**：5/15 分钟加密 Up/Down 市场按 60 秒 Chainlink TWAP 结算，不再使用 Binance 单点快照。
 - **数据源优先级**：后端优先订阅 Polymarket RTDS `crypto_prices_twap_sixty`（`wss://ws-live-data.polymarket.com`），缓存周期开盘与最新 TWAP；RTDS 尚未就绪时回退 Binance K 线。
-- **Taker delay**：2026-09-04 起加密市场 taker delay 为 150ms。策略在时间窗口结束前预留 150ms，避免市价单进入延迟窗口后越过可交易边界。
+- **Taker delay**：加密市场 taker delay 按 250ms 处理，另加 150ms 网络余量。策略在时间窗口结束前预留 400ms，且在提交订单前再次校验窗口，避免市价单进入延迟窗口后越过可交易边界。
 - **Taker fee**：Crypto 分类费率为 `0.07`，Sports 为 `0.05`，公式为 `fee = shares × feeRate × price × (1 - price)`，按 5 位小数舍入。Crypto Tail、回测和跟单已实现盈亏会扣除相应 taker 手续费。
 
 ## 1. 数据源

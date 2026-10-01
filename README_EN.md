@@ -294,8 +294,9 @@ DB_USERNAME=root
 DB_PASSWORD=your_password_here
 SPRING_PROFILES_ACTIVE=prod
 SERVER_PORT=80
-JWT_SECRET=your-jwt-secret-key-change-in-production
-ADMIN_RESET_PASSWORD_KEY=your-admin-reset-key-change-in-production
+JWT_SECRET=$(openssl rand -hex 32)
+ADMIN_RESET_PASSWORD_KEY=$(openssl rand -hex 32)
+ENCRYPTION_KEY=$(openssl rand -hex 32)
 EOF
 
 # Build and start
@@ -365,6 +366,10 @@ cd frontend
 | `ENCRYPTION_KEY` | Encryption key (for encrypting stored private keys and API Keys) | - |
 
 > Existing deployments may continue to use `CRYPTO_SECRET_KEY`. When both are set, `ENCRYPTION_KEY` takes precedence. Keep this key permanently; changing or losing it makes stored encrypted private keys unrecoverable.
+>
+> Upgrade note: old Docker deployments actually encrypted private keys with `JWT_SECRET`. Keep the old `JWT_SECRET` / `CRYPTO_SECRET_KEY` when upgrading; the backend tries `ENCRYPTION_KEY` -> `CRYPTO_SECRET_KEY` -> `JWT_SECRET` and re-encrypts legacy data with the current key on startup.
+>
+> Under the `prod` profile, the container and backend refuse to start if `JWT_SECRET`, `ADMIN_RESET_PASSWORD_KEY` or `ENCRYPTION_KEY` is missing, a public default value, or shorter than 32 bytes (generate with `openssl rand -hex 32`).
 
 #### Proxy Configuration
 

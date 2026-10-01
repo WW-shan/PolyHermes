@@ -8,35 +8,57 @@ echo "========================================="
 echo "  PolyHermes 容器启动"
 echo "========================================="
 
-# 默认值常量
-DEFAULT_JWT_SECRET="change-me-in-production"
-DEFAULT_ADMIN_RESET_KEY="change-me-in-production"
+# 公开默认值/示例值黑名单（与后端 SecretKeyValidator 保持一致）
+INSECURE_SECRETS="change-me-in-production your-secret-key-change-in-production your-secret-key changeme change-me secret password"
+MIN_SECRET_BYTES=32
+
+# 检查单个密钥：不能为空、不能是公开默认值、长度不少于 32 字节
+check_secret() {
+    local name="$1"
+    local value="$2"
+    local lower
+    lower=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+    if [ -z "$value" ]; then
+        echo "❌ 错误: $name 未配置"
+        return 1
+    fi
+    for bad in $INSECURE_SECRETS; do
+        if [ "$lower" = "$bad" ]; then
+            echo "❌ 错误: $name 不能使用公开默认值 '$value'"
+            return 1
+        fi
+    done
+    case "$lower" in
+        *change-me*|*change-in-production*)
+            echo "❌ 错误: $name 不能使用示例值 '$value'"
+            return 1
+            ;;
+    esac
+    if [ "$(printf '%s' "$value" | wc -c | tr -d ' ')" -lt "$MIN_SECRET_BYTES" ]; then
+        echo "❌ 错误: $name 长度不足 ${MIN_SECRET_BYTES} 字节"
+        return 1
+    fi
+    return 0
+}
 
 # 检查安全配置
 check_security_config() {
     local errors=0
-    
-    # 检查 JWT_SECRET
-    if [ -z "$JWT_SECRET" ] || [ "$JWT_SECRET" = "$DEFAULT_JWT_SECRET" ]; then
-        echo "❌ 错误: JWT_SECRET 不能使用默认值 '${DEFAULT_JWT_SECRET}'"
-        echo "   请设置环境变量 JWT_SECRET 为安全的随机字符串"
-        errors=$((errors + 1))
-    fi
-    
-    # 检查 ADMIN_RESET_PASSWORD_KEY
-    if [ -z "$ADMIN_RESET_PASSWORD_KEY" ] || [ "$ADMIN_RESET_PASSWORD_KEY" = "$DEFAULT_ADMIN_RESET_KEY" ]; then
-        echo "❌ 错误: ADMIN_RESET_PASSWORD_KEY 不能使用默认值 '${DEFAULT_ADMIN_RESET_KEY}'"
-        echo "   请设置环境变量 ADMIN_RESET_PASSWORD_KEY 为安全的随机字符串"
-        errors=$((errors + 1))
-    fi
-    
+    # 与后端 encryption.key 的取值顺序一致：ENCRYPTION_KEY → CRYPTO_SECRET_KEY → JWT_SECRET
+    local effective_encryption_key="${ENCRYPTION_KEY:-${CRYPTO_SECRET_KEY:-$JWT_SECRET}}"
+
+    check_secret "JWT_SECRET" "$JWT_SECRET" || errors=$((errors + 1))
+    check_secret "ADMIN_RESET_PASSWORD_KEY" "$ADMIN_RESET_PASSWORD_KEY" || errors=$((errors + 1))
+    check_secret "ENCRYPTION_KEY" "$effective_encryption_key" || errors=$((errors + 1))
+
     if [ $errors -gt 0 ]; then
         echo ""
         echo "⚠️  安全配置检查失败，容器将不会启动"
-        echo "   请在 docker-compose.yml 或 .env 文件中设置正确的值"
+        echo "   请在 .env 文件中设置随机密钥（生成方式：openssl rand -hex 32）"
+        echo "   注意：已有部署请保留原 ENCRYPTION_KEY / CRYPTO_SECRET_KEY / JWT_SECRET，修改后已加密的私钥将无法解密"
         exit 1
     fi
-    
+
     echo "✅ 安全配置检查通过"
 }
 
@@ -70,7 +92,12 @@ sleep 2
 
 # 2. 启动后端服务（后台运行，端口 8000）
 echo "🚀 启动后端服务..."
-java -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE:-prod} &
+# 后端以非 root 用户 appuser 运行（保留环境变量）；更新服务需要替换前端文件并 reload nginx，仍以 root 运行
+if [ "$(id -u)" = "0" ] && id appuser > /dev/null 2>&1 && command -v runuser > /dev/null 2>&1; then
+    runuser -u appuser -- java -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE:-prod} &
+else
+    java -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE:-prod} &
+fi
 BACKEND_PID=$!
 echo "✅ 后端服务已启动 (PID: $BACKEND_PID, Port: 8000)"
 

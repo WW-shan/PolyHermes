@@ -98,6 +98,10 @@ jwt.secret=${JWT_SECRET:change-me-in-production}
 
 # 加密密钥（用于加密存储私钥和 API Key；兼容旧变量 CRYPTO_SECRET_KEY）
 encryption.key=${ENCRYPTION_KEY:${CRYPTO_SECRET_KEY:${jwt.secret}}}
+# 旧候选密钥：当前密钥解密失败时依次尝试 CRYPTO_SECRET_KEY、JWT_SECRET，启动时自动用当前密钥重新加密
+encryption.legacy-keys=${CRYPTO_SECRET_KEY:}
+
+# 密钥校验：prod profile 下缺失/默认值/短于 32 字节的密钥会拒绝启动；dev profile 只打印 ERROR 日志
 ```
 
 4. **启动后端服务**

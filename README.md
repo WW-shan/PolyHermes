@@ -295,8 +295,9 @@ DB_USERNAME=root
 DB_PASSWORD=your_password_here
 SPRING_PROFILES_ACTIVE=prod
 SERVER_PORT=80
-JWT_SECRET=your-jwt-secret-key-change-in-production
-ADMIN_RESET_PASSWORD_KEY=your-admin-reset-key-change-in-production
+JWT_SECRET=$(openssl rand -hex 32)
+ADMIN_RESET_PASSWORD_KEY=$(openssl rand -hex 32)
+ENCRYPTION_KEY=$(openssl rand -hex 32)
 EOF
 
 # 构建并启动
@@ -366,6 +367,10 @@ cd frontend
 | `ENCRYPTION_KEY` | 加密密钥（用于加密存储私钥和 API Key） | - |
 
 > 旧部署可继续使用 `CRYPTO_SECRET_KEY`；两者同时存在时优先使用 `ENCRYPTION_KEY`。该密钥必须长期保存，修改或丢失后已加密的私钥将无法解密。
+>
+> 升级说明：旧版本 Docker 部署实际使用 `JWT_SECRET` 加密私钥。升级时请保留原 `JWT_SECRET` / `CRYPTO_SECRET_KEY`，后端会依次尝试 `ENCRYPTION_KEY` → `CRYPTO_SECRET_KEY` → `JWT_SECRET` 解密，并在启动时用当前密钥重新加密。
+>
+> `prod` 环境下，`JWT_SECRET`、`ADMIN_RESET_PASSWORD_KEY`、`ENCRYPTION_KEY` 缺失、使用公开默认值或短于 32 字节时，容器和后端都会拒绝启动（`openssl rand -hex 32` 生成）。
 
 #### 代理配置
 

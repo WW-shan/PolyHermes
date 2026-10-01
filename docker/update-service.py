@@ -64,6 +64,24 @@ update_status = {
 # GitHub Release 查询缓存，避免页面自动检查触发未认证 API 限流
 RELEASE_CACHE_TTL_SECONDS = 300
 RELEASE_CACHE_FILE = Path(os.getenv('POLYHERMES_RELEASE_CACHE', str(UPDATES_DIR / 'release-cache.json')))
+
+# 后端 Java 进程的运行用户（降权运行；更新服务本身需要 root 以替换前端文件并 reload nginx）
+BACKEND_RUN_USER = os.getenv('POLYHERMES_BACKEND_USER', 'appuser')
+
+
+def backend_command():
+    """构造后端启动命令：以 root 运行且降权用户存在时，用 runuser 以 BACKEND_RUN_USER 身份启动 Java"""
+    cmd = ['java', '-jar', str(BACKEND_JAR), '--spring.profiles.active=prod']
+    try:
+        import pwd
+        if os.geteuid() == 0 and BACKEND_RUN_USER and shutil.which('runuser'):
+            pwd.getpwnam(BACKEND_RUN_USER)
+            return ['runuser', '-u', BACKEND_RUN_USER, '--'] + cmd
+    except (KeyError, ImportError):
+        logger.warning(f"降权用户 {BACKEND_RUN_USER} 不存在，后端将以当前用户运行")
+    return cmd
+
+
 release_cache = {
     'data': None,
     'timestamp': 0.0
@@ -181,19 +199,39 @@ def compare_versions(v1, v2):
         return 0
 
 
+def make_world_readable(path):
+    """nginx worker（www-data）与后端（appuser）均为非 root，更新后的文件需保证可读"""
+    try:
+        path = Path(path)
+        targets = [path] + (list(path.rglob('*')) if path.is_dir() else [])
+        for target in targets:
+            mode = target.stat().st_mode
+            extra = 0o555 if target.is_dir() else 0o444
+            os.chmod(target, mode | extra)
+    except Exception as e:
+        logger.warning(f"设置文件权限失败: {path}: {e}")
+
+
 def check_admin_permission(req):
-    """检查管理员权限"""
+    """检查管理员权限
+
+    后端鉴权失败时也可能返回 HTTP 200 + body code 非 0，
+    因此必须同时满足 HTTP 200 且响应体 JSON 的 code == 0 才算通过
+    """
     auth_header = req.headers.get('Authorization')
-    if not auth_header:
+    if not auth_header or not auth_header.startswith('Bearer '):
         return False
-    
+
     try:
         response = requests.get(
             f'{BACKEND_URL}/api/auth/verify',
             headers={'Authorization': auth_header},
             timeout=3
         )
-        return response.status_code == 200
+        if response.status_code != 200:
+            return False
+        body = response.json()
+        return isinstance(body, dict) and type(body.get('code')) is int and body.get('code') == 0
     except Exception as e:
         logger.error(f"权限验证失败: {e}")
         return False
@@ -287,6 +325,9 @@ def restore_backup(backup_dir):
         # 解压备份
         with tarfile.open(frontend_backup, 'r:gz') as tar:
             extract_tar_safely(tar, FRONTEND_DIR)
+        make_world_readable(FRONTEND_DIR)
+    if BACKEND_JAR.exists():
+        make_world_readable(BACKEND_JAR)
     
     # 恢复版本信息
     backup_version = backup_dir / 'version.json'
@@ -323,10 +364,8 @@ def rollback_update(backup_dir):
 
     backend_log_file = LOG_FILE.parent / 'backend-rollback.log'
     with open(backend_log_file, 'a') as backend_log:
-        subprocess.Popen([
-            'java', '-jar', str(BACKEND_JAR),
-            '--spring.profiles.active=prod'
-        ], stdout=backend_log, stderr=subprocess.STDOUT, start_new_session=True)
+        subprocess.Popen(
+            backend_command(), stdout=backend_log, stderr=subprocess.STDOUT, start_new_session=True)
 
     subprocess.run(['nginx', '-s', 'reload'], check=True)
     logger.info(f"旧版本后端已重启，日志: {backend_log_file}")
@@ -413,6 +452,8 @@ def perform_update(target_version):
         if FRONTEND_DIR.exists():
             shutil.rmtree(FRONTEND_DIR)
         shutil.copytree(new_frontend, FRONTEND_DIR)
+        make_world_readable(FRONTEND_DIR)
+        make_world_readable(BACKEND_JAR)
         logger.info("前端文件已更新")
         
         # 更新版本信息
@@ -429,10 +470,8 @@ def perform_update(target_version):
         backend_log_file = LOG_FILE.parent / 'backend-update.log'
         backend_log = open(backend_log_file, 'w')
         
-        backend_process = subprocess.Popen([
-            'java', '-jar', str(BACKEND_JAR),
-            '--spring.profiles.active=prod'
-        ], stdout=backend_log, stderr=subprocess.STDOUT, start_new_session=True)
+        backend_process = subprocess.Popen(
+            backend_command(), stdout=backend_log, stderr=subprocess.STDOUT, start_new_session=True)
         
         logger.info(f"后端进程已启动 (PID: {backend_process.pid})")
         
@@ -536,10 +575,8 @@ def perform_update(target_version):
             
             # 重启后端（使用旧版本）
             logger.info("重启旧版本后端服务...")
-            subprocess.Popen([
-                'java', '-jar', str(BACKEND_JAR),
-                '--spring.profiles.active=prod'
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            subprocess.Popen(
+                backend_command(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             
             subprocess.run(['nginx', '-s', 'reload'], check=True)
 

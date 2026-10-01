@@ -145,9 +145,13 @@ RUN echo "{\"version\":\"${VERSION}\",\"tag\":\"${GIT_TAG}\",\"buildTime\":\"$(d
 RUN useradd -m -u 1000 appuser
 
 # 设置目录权限
+# - /app 归 appuser（后端 Java 以 appuser 运行）
+# - nginx worker 以 www-data 运行，需要写入 /var/lib/nginx、/var/cache/nginx 下的临时目录；静态文件保持 root 所有、全局可读
 RUN mkdir -p /var/log/nginx /var/lib/nginx /var/cache/nginx /var/run && \
     chown -R appuser:appuser /app && \
-    chown -R root:root /usr/share/nginx/html /var/log/nginx /var/lib/nginx /var/cache/nginx /etc/nginx /var/run
+    chown -R root:root /usr/share/nginx/html /var/log/nginx /etc/nginx /var/run && \
+    chown -R www-data:www-data /var/lib/nginx /var/cache/nginx && \
+    chmod -R a+rX /usr/share/nginx/html
 
 # 暴露端口
 EXPOSE 80

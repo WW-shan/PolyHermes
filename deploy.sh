@@ -90,6 +90,7 @@ create_env_file() {
         DB_PASSWORD=$(generate_random_string 32)
         JWT_SECRET=$(generate_random_string 64)
         ADMIN_RESET_KEY=$(generate_random_string 32)
+        ENCRYPTION_KEY=$(generate_random_string 32)
         
         cat > .env <<EOF
 # 数据库配置
@@ -111,6 +112,9 @@ JWT_SECRET=${JWT_SECRET}
 
 # 管理员密码重置密钥（已自动生成随机值，生产环境建议修改）
 ADMIN_RESET_PASSWORD_KEY=${ADMIN_RESET_KEY}
+
+# 数据加密密钥（用于加密存储私钥和 API Key，必须长期保存，修改或丢失后已加密数据将无法解密）
+ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
 # 日志级别配置（可选，默认值：root=WARN, app=INFO）
 # 可选值：TRACE, DEBUG, INFO, WARN, ERROR, OFF
