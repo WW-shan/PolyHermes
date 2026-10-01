@@ -97,10 +97,10 @@ const CopyTradingList: React.FC = () => {
           fetchStatistics(ct.id)
         })
       } else {
-        message.error(response.data.msg || t('copyTradingList.fetchFailed') || '获取跟单列表失败')
+        message.error(response.data.msg || t('copyTradingList.fetchFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('copyTradingList.fetchFailed') || '获取跟单列表失败')
+      message.error(error.message || t('copyTradingList.fetchFailed'))
     } finally {
       setLoading(false)
     }
@@ -157,13 +157,13 @@ const CopyTradingList: React.FC = () => {
         enabled: !copyTrading.enabled
       })
       if (response.data.code === 0) {
-        message.success(copyTrading.enabled ? (t('copyTradingList.stopSuccess') || '停止跟单成功') : (t('copyTradingList.startSuccess') || '开启跟单成功'))
+        message.success(copyTrading.enabled ? (t('copyTradingList.stopSuccess')) : (t('copyTradingList.startSuccess')))
         fetchCopyTradings()
       } else {
-        message.error(response.data.msg || t('copyTradingList.updateStatusFailed') || '更新跟单状态失败')
+        message.error(response.data.msg || t('copyTradingList.updateStatusFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('copyTradingList.updateStatusFailed') || '更新跟单状态失败')
+      message.error(error.message || t('copyTradingList.updateStatusFailed'))
     }
   }
   
@@ -171,35 +171,35 @@ const CopyTradingList: React.FC = () => {
     try {
       const response = await apiService.copyTrading.delete({ copyTradingId })
       if (response.data.code === 0) {
-        message.success(t('copyTradingList.deleteSuccess') || '删除跟单成功')
+        message.success(t('copyTradingList.deleteSuccess'))
         fetchCopyTradings()
       } else {
-        message.error(response.data.msg || t('copyTradingList.deleteFailed') || '删除跟单失败')
+        message.error(response.data.msg || t('copyTradingList.deleteFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('copyTradingList.deleteFailed') || '删除跟单失败')
+      message.error(error.message || t('copyTradingList.deleteFailed'))
     }
   }
   
   const columns = [
     {
-      title: t('copyTradingList.configName') || '配置名',
+      title: t('copyTradingList.configName'),
       key: 'configName',
       width: isMobile ? 100 : 150,
       render: (_: any, record: CopyTrading) => (
         <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 500 }}>
-          {record.configName || t('copyTradingList.configNameNotProvided') || '未提供'}
+          {record.configName || t('copyTradingList.configNameNotProvided')}
         </div>
       )
     },
     {
-      title: t('copyTradingList.wallet') || '钱包',
+      title: t('copyTradingList.wallet'),
       key: 'account',
       width: isMobile ? 100 : 150,
       render: (_: any, record: CopyTrading) => (
         <div>
           <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 500 }}>
-            {record.accountName || `${t('copyTradingList.account') || '账户'} ${record.accountId}`}
+            {record.accountName || `${t('copyTradingList.account')} ${record.accountId}`}
           </div>
           <div style={{ fontSize: isMobile ? 11 : 12, color: '#999', marginTop: 2 }}>
             {isMobile 
@@ -211,20 +211,20 @@ const CopyTradingList: React.FC = () => {
       )
     },
     {
-      title: t('copyTradingList.copyMode') || '跟单模式',
+      title: t('copyTradingList.copyMode'),
       key: 'copyMode',
       width: isMobile ? 100 : 120,
       render: (_: any, record: CopyTrading) => (
         <Tag color={record.copyMode === 'RATIO' ? 'blue' : 'green'}>
           {record.copyMode === 'RATIO' 
-            ? `${t('copyTradingList.ratioMode') || '比例'} ${(parseFloat(record.copyRatio || '0') * 100).toFixed(2).replace(/\.0+$/, '')}%`
-            : `${t('copyTradingList.fixedAmountMode') || '固定'} ${formatUSDC(record.fixedAmount || '0')}`
+            ? `${t('copyTradingList.ratioMode')} ${(parseFloat(record.copyRatio || '0') * 100).toFixed(2).replace(/\.0+$/, '')}%`
+            : `${t('copyTradingList.fixedAmountMode')} ${formatUSDC(record.fixedAmount || '0')}`
           }
         </Tag>
       )
     },
     {
-      title: t('copyTradingList.leader') || 'Leader',
+      title: t('copyTradingList.leader'),
       key: 'leader',
       width: isMobile ? 100 : 150,
       render: (_: any, record: CopyTrading) => (
@@ -242,7 +242,7 @@ const CopyTradingList: React.FC = () => {
       )
     },
     {
-      title: t('common.status') || '状态',
+      title: t('common.status'),
       dataIndex: 'enabled',
       key: 'enabled',
       width: isMobile ? 80 : 100,
@@ -250,8 +250,8 @@ const CopyTradingList: React.FC = () => {
         <Switch
           checked={enabled}
           onChange={() => handleToggleStatus(record)}
-          checkedChildren={t('copyTradingList.enabled') || '开启'}
-          unCheckedChildren={t('copyTradingList.disabled') || '停止'}
+          checkedChildren={t('copyTradingList.enabled')}
+          unCheckedChildren={t('copyTradingList.disabled')}
         />
       )
     },
@@ -263,7 +263,7 @@ const CopyTradingList: React.FC = () => {
         const stats = statisticsMap[record.id]
         if (!stats) {
           return loadingStatistics.has(record.id) ? (
-            <span style={{ fontSize: isMobile ? 11 : 12 }}>{t('common.loading') || '加载中...'}</span>
+            <span style={{ fontSize: isMobile ? 11 : 12 }}>{t('common.loading')}</span>
           ) : (
             <span style={{ fontSize: isMobile ? 11 : 12 }}>-</span>
           )
@@ -295,7 +295,7 @@ const CopyTradingList: React.FC = () => {
       }
     },
     {
-      title: t('common.actions') || '操作',
+      title: t('common.actions'),
       key: 'action',
       width: isMobile ? 100 : 160,
       fixed: 'right' as const,
@@ -303,7 +303,7 @@ const CopyTradingList: React.FC = () => {
         const menuItems: MenuProps['items'] = [
           {
             key: 'matchedOrders',
-            label: t('copyTradingList.matchedOrders') || '已成交订单',
+            label: t('copyTradingList.matchedOrders'),
             icon: <UnorderedListOutlined />,
             onClick: () => {
               setOrdersModalCopyTradingId(record.id.toString())
@@ -313,7 +313,7 @@ const CopyTradingList: React.FC = () => {
           },
           {
             key: 'filteredOrders',
-            label: t('copyTradingList.filteredOrders') || '已过滤订单',
+            label: t('copyTradingList.filteredOrders'),
             icon: <UnorderedListOutlined />,
             onClick: () => {
               setFilteredOrdersModalCopyTradingId(record.id.toString())
@@ -324,7 +324,7 @@ const CopyTradingList: React.FC = () => {
 
         return (
           <Space size={4}>
-            <Tooltip title={t('common.edit') || '编辑'}>
+            <Tooltip title={t('common.edit')}>
               <div
                 onClick={() => {
                   setEditModalCopyTradingId(record.id.toString())
@@ -347,7 +347,7 @@ const CopyTradingList: React.FC = () => {
               </div>
             </Tooltip>
 
-            <Tooltip title={t('copyTradingList.statistics') || '统计'}>
+            <Tooltip title={t('copyTradingList.statistics')}>
               <div
                 onClick={() => {
                   setStatisticsModalCopyTradingId(record.id.toString())
@@ -371,7 +371,7 @@ const CopyTradingList: React.FC = () => {
             </Tooltip>
 
             <Dropdown menu={{ items: menuItems }} trigger={['click']}>
-              <Tooltip title={t('copyTradingList.orders') || '订单'}>
+              <Tooltip title={t('copyTradingList.orders')}>
                 <div
                   style={{
                     display: 'flex',
@@ -392,12 +392,12 @@ const CopyTradingList: React.FC = () => {
             </Dropdown>
 
             <Popconfirm
-              title={t('copyTradingList.deleteConfirm') || '确定要删除这个跟单关系吗？'}
+              title={t('copyTradingList.deleteConfirm')}
               onConfirm={() => handleDelete(record.id)}
-              okText={t('common.confirm') || '确定'}
-              cancelText={t('common.cancel') || '取消'}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
             >
-              <Tooltip title={t('common.delete') || '删除'}>
+              <Tooltip title={t('common.delete')}>
                 <div
                   style={{
                     display: 'flex',
@@ -425,8 +425,8 @@ const CopyTradingList: React.FC = () => {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-        <h2 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>{t('copyTradingList.title') || '跟单配置管理'}</h2>
-        <Tooltip title={t('copyTradingList.addCopyTrading') || '新增跟单'}>
+        <h2 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>{t('copyTradingList.title')}</h2>
+        <Tooltip title={t('copyTradingList.addCopyTrading')}>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -440,7 +440,7 @@ const CopyTradingList: React.FC = () => {
       <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} styles={{ body: { padding: isMobile ? '12px' : '24px' } }}>
         <div style={{ marginBottom: 16, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <Select
-            placeholder={t('copyTradingList.filterWallet') || '筛选钱包'}
+            placeholder={t('copyTradingList.filterWallet')}
             allowClear
             style={{ width: isMobile ? '100%' : 200 }}
             value={filters.accountId}
@@ -448,13 +448,13 @@ const CopyTradingList: React.FC = () => {
           >
             {accounts.map(account => (
               <Option key={account.id} value={account.id}>
-                {account.accountName || `${t('copyTradingList.account') || '账户'} ${account.id}`}
+                {account.accountName || `${t('copyTradingList.account')} ${account.id}`}
               </Option>
             ))}
           </Select>
           
           <LeaderSelect
-            placeholder={t('copyTradingList.filterLeader') || '筛选 Leader'}
+            placeholder={t('copyTradingList.filterLeader')}
             allowClear
             style={{ width: isMobile ? '100%' : 200 }}
             value={filters.leaderId}
@@ -463,14 +463,14 @@ const CopyTradingList: React.FC = () => {
           />
           
           <Select
-            placeholder={t('common.status') || '状态'}
+            placeholder={t('common.status')}
             allowClear
             style={{ width: isMobile ? '100%' : 150 }}
             value={filters.enabled}
             onChange={(value) => setFilters({ ...filters, enabled: value !== undefined ? value : undefined })}
           >
-            <Option value={true}>{t('common.enabled') || '开启'}</Option>
-            <Option value={false}>{t('common.disabled') || '停止'}</Option>
+            <Option value={true}>{t('common.enabled')}</Option>
+            <Option value={false}>{t('common.disabled')}</Option>
           </Select>
         </div>
         
@@ -482,7 +482,7 @@ const CopyTradingList: React.FC = () => {
                 <Spin size="large" />
               </div>
             ) : copyTradings.length === 0 ? (
-              <Empty description={t('copyTradingList.noData') || '暂无跟单配置'} />
+              <Empty description={t('copyTradingList.noData')} />
             ) : (
               <List
                 dataSource={copyTradings}
@@ -508,19 +508,19 @@ const CopyTradingList: React.FC = () => {
                         color: '#fff'
                       }}>
                         <div style={{ fontSize: '15px', fontWeight: '600', marginBottom: '2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span>{record.configName || t('copyTradingList.configNameNotProvided') || '未提供'}</span>
+                          <span>{record.configName || t('copyTradingList.configNameNotProvided')}</span>
                           <Switch
                             checked={record.enabled}
                             onChange={() => handleToggleStatus(record)}
-                            checkedChildren={t('copyTradingList.enabled') || '开启'}
-                            unCheckedChildren={t('copyTradingList.disabled') || '停止'}
+                            checkedChildren={t('copyTradingList.enabled')}
+                            unCheckedChildren={t('copyTradingList.disabled')}
                             size="small"
                           />
                         </div>
                         <div style={{ fontSize: '12px', opacity: '0.9' }}>
                           {record.copyMode === 'RATIO' 
-                            ? `${t('copyTradingList.ratioMode') || '比例'} ${(parseFloat(record.copyRatio || '0') * 100).toFixed(0).replace(/\.0+$/, '')}%`
-                            : `${t('copyTradingList.fixedAmountMode') || '固定'} $${formatUSDC(record.fixedAmount || '0')}`
+                            ? `${t('copyTradingList.ratioMode')} ${(parseFloat(record.copyRatio || '0') * 100).toFixed(0).replace(/\.0+$/, '')}%`
+                            : `${t('copyTradingList.fixedAmountMode')} $${formatUSDC(record.fixedAmount || '0')}`
                           }
                         </div>
                       </div>
@@ -560,7 +560,7 @@ const CopyTradingList: React.FC = () => {
                           {stats && (
                             <div style={{ textAlign: 'right' }}>
                               <div style={{ fontSize: '10px', color: '#8c8c8c' }}>
-                                {t('copyTradingList.profitRate') || '收益率'}
+                                {t('copyTradingList.profitRate')}
                               </div>
                               <div style={{ 
                                 fontSize: '12px', 
@@ -583,7 +583,7 @@ const CopyTradingList: React.FC = () => {
                       }}>
                         <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
                           <WalletOutlined style={{ fontSize: '12px', marginRight: '4px', color: '#1890ff' }} />
-                          <span>{t('copyTradingList.wallet') || '账户'}: {record.accountName || `#${record.accountId}`}</span>
+                          <span>{t('copyTradingList.wallet')}: {record.accountName || `#${record.accountId}`}</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center' }}>
                           <UserOutlined style={{ fontSize: '12px', marginRight: '4px', color: '#722ed1' }} />
@@ -598,7 +598,7 @@ const CopyTradingList: React.FC = () => {
                         justifyContent: 'space-around',
                         alignItems: 'center'
                       }}>
-                        <Tooltip title={t('common.edit') || '编辑'}>
+                        <Tooltip title={t('common.edit')}>
                           <div
                             onClick={() => {
                               setEditModalCopyTradingId(record.id.toString())
@@ -607,11 +607,11 @@ const CopyTradingList: React.FC = () => {
                             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}
                           >
                             <EditOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
-                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.edit') || '编辑'}</span>
+                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.edit')}</span>
                           </div>
                         </Tooltip>
 
-                        <Tooltip title={t('copyTradingList.statistics') || '统计'}>
+                        <Tooltip title={t('copyTradingList.statistics')}>
                           <div
                             onClick={() => {
                               setStatisticsModalCopyTradingId(record.id.toString())
@@ -620,11 +620,11 @@ const CopyTradingList: React.FC = () => {
                             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}
                           >
                             <BarChartOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
-                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('copyTradingList.statistics') || '统计'}</span>
+                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('copyTradingList.statistics')}</span>
                           </div>
                         </Tooltip>
 
-                        <Tooltip title={t('copyTradingList.orders') || '订单'}>
+                        <Tooltip title={t('copyTradingList.orders')}>
                           <div
                             onClick={() => {
                               setOrdersModalCopyTradingId(record.id.toString())
@@ -634,20 +634,20 @@ const CopyTradingList: React.FC = () => {
                             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}
                           >
                             <UnorderedListOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
-                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('copyTradingList.orders') || '订单'}</span>
+                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('copyTradingList.orders')}</span>
                           </div>
                         </Tooltip>
 
                         <Popconfirm
-                          title={t('copyTradingList.deleteConfirm') || '确定要删除这个跟单关系吗？'}
+                          title={t('copyTradingList.deleteConfirm')}
                           onConfirm={() => handleDelete(record.id)}
-                          okText={t('common.confirm') || '确定'}
-                          cancelText={t('common.cancel') || '取消'}
+                          okText={t('common.confirm')}
+                          cancelText={t('common.cancel')}
                         >
-                          <Tooltip title={t('common.delete') || '删除'}>
+                          <Tooltip title={t('common.delete')}>
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}>
                               <DeleteOutlined style={{ fontSize: '18px', color: '#ff4d4f' }} />
-                              <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.delete') || '删除'}</span>
+                              <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.delete')}</span>
                             </div>
                           </Tooltip>
                         </Popconfirm>

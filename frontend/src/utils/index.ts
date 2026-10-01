@@ -16,30 +16,56 @@ export const formatNumber = (value: string | number | undefined | null, maxDecim
   }
 
   const num = typeof value === 'string' ? parseFloat(value) : value
-  if (isNaN(num)) {
+  if (typeof num !== 'number' || !isFinite(num)) {
     return ''
   }
 
-  // 处理小数位数
-  let numStr: string
-  if (maxDecimals !== undefined) {
-    const multiplier = Math.pow(10, maxDecimals)
-    const truncated = Math.floor(num * multiplier) / multiplier
-    numStr = truncated.toFixed(maxDecimals).replace(/\.?0+$/, '')
-  } else {
-    numStr = num.toString().replace(/\.?0+$/, '')
-  }
+  // 转为普通十进制字符串（避免科学计数法），再用字符串截断小数位，避免浮点乘除误差（如 1.13 → 1.1299）
+  const plain = toPlainDecimalString(num)
+  const negative = plain.startsWith('-')
+  const unsigned = negative ? plain.slice(1) : plain
+  let [integerPart, decimalPart = ''] = unsigned.split('.')
 
-  // 分离整数和小数部分
-  const parts = numStr.split('.')
-  const integerPart = parts[0]
-  const decimalPart = parts[1]
+  if (maxDecimals !== undefined) {
+    decimalPart = decimalPart.slice(0, Math.max(0, maxDecimals))
+  }
+  // 只去除小数部分的尾随零（整数部分的 0 保留，如 100 → "100"、0 → "0"）
+  decimalPart = decimalPart.replace(/0+$/, '')
 
   // 为整数部分添加千分位分隔符
   const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 
-  // 组合结果
-  return decimalPart ? `${formattedInteger}.${decimalPart}` : formattedInteger
+  // 截断后为 0 时不显示负号（如 -0.00001 保留 4 位 → "0"）
+  const isZero = /^0*$/.test(integerPart) && decimalPart === ''
+  const sign = negative && !isZero ? '-' : ''
+
+  return decimalPart ? `${sign}${formattedInteger}.${decimalPart}` : `${sign}${formattedInteger}`
+}
+
+/**
+ * 数字转为不含科学计数法的十进制字符串
+ * 使用 JS 的最短往返表示（如 0.1 + 0.2 → "0.30000000000000004"，1.13 → "1.13"）
+ */
+const toPlainDecimalString = (num: number): string => {
+  const str = num.toString()
+  if (!/e/i.test(str)) {
+    return str
+  }
+  const negative = num < 0
+  const [mantissa, expStr] = Math.abs(num).toString().toLowerCase().split('e')
+  const exp = parseInt(expStr, 10)
+  const [intPart, fracPart = ''] = mantissa.split('.')
+  const digits = intPart + fracPart
+  const pointPos = intPart.length + exp
+  let result: string
+  if (pointPos <= 0) {
+    result = '0.' + '0'.repeat(-pointPos) + digits
+  } else if (pointPos >= digits.length) {
+    result = digits + '0'.repeat(pointPos - digits.length)
+  } else {
+    result = digits.slice(0, pointPos) + '.' + digits.slice(pointPos)
+  }
+  return (negative ? '-' : '') + result
 }
 
 /**
@@ -171,3 +197,20 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
   }
 }
 
+
+/**
+ * 解析百分比输入框（如跟单比例）的显示值
+ * 空输入返回空（表示未填写，使用默认值），而不是被夹到最小值；超出上限时取上限
+ * 返回空字符串时 InputNumber 会把值置为 null
+ */
+export const parsePercentInput = (value: string | undefined, max: number = 10000): number => {
+  const cleaned = (value || '').toString().replace(/%/g, '').trim()
+  if (cleaned === '') {
+    return '' as unknown as number
+  }
+  const parsed = parseFloat(cleaned)
+  if (isNaN(parsed)) {
+    return '' as unknown as number
+  }
+  return parsed > max ? max : parsed
+}

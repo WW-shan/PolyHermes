@@ -19,9 +19,12 @@ export function useWebSocketSubscription<T = any>(
   
   useEffect(() => {
     // 订阅频道（连接已在 App.tsx 中全局建立，这里只需要订阅）
-    const unsubscribe = wsManager.subscribe(channel, (data) => {
-      callbackRef.current(data)
-    }, payload)
+    // 频道为空（如未选择策略）时不订阅，只监听连接状态
+    const unsubscribe = channel
+      ? wsManager.subscribe(channel, (data) => {
+        callbackRef.current(data)
+      }, payload)
+      : () => {}
     
     // 监听连接状态（连接在 App.tsx 中全局管理，这里只监听状态变化）
     const removeConnectionListener = wsManager.onConnectionChange(setConnected)

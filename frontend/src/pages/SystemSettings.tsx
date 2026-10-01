@@ -89,9 +89,9 @@ const SystemSettings: React.FC = () => {
 
       setCurrentLang(values.language)
       await i18nInstance.changeLanguage(actualLang)
-      message.success(t('languageSettings.changeSuccess') || '语言设置已保存')
+      message.success(t('languageSettings.changeSuccess'))
     } catch (error) {
-      message.error(t('languageSettings.changeFailed') || '语言设置保存失败')
+      message.error(t('languageSettings.changeFailed'))
     }
   }
 
@@ -102,11 +102,11 @@ const SystemSettings: React.FC = () => {
       if (response.data.code === 0 && response.data.data) {
         const config = response.data.data
         setSystemConfig(config)
-        // 将已配置的值填充到输入框中
+        // 后端返回的是掩码值，不填入输入框（仅作为占位提示），留空提交即保持原值
         relayerForm.setFieldsValue({
-          builderApiKey: config.builderApiKeyDisplay || '',
-          builderSecret: config.builderSecretDisplay || '',
-          builderPassphrase: config.builderPassphraseDisplay || '',
+          builderApiKey: '',
+          builderSecret: '',
+          builderPassphrase: '',
         })
         autoRedeemForm.setFieldsValue({
           autoRedeemEnabled: config.autoRedeemEnabled
@@ -121,18 +121,20 @@ const SystemSettings: React.FC = () => {
     setRelayerLoading(true)
     try {
       const updateData: BuilderApiKeyUpdateRequest = {}
-      if (values.builderApiKey && values.builderApiKey.trim()) {
-        updateData.builderApiKey = values.builderApiKey.trim()
+      // 只提交用户实际输入的新值；空值或掩码值（含 ****）表示保持原值，不提交
+      const isNewValue = (value?: string) => !!value && !!value.trim() && !value.includes('****')
+      if (isNewValue(values.builderApiKey)) {
+        updateData.builderApiKey = values.builderApiKey!.trim()
       }
-      if (values.builderSecret && values.builderSecret.trim()) {
-        updateData.builderSecret = values.builderSecret.trim()
+      if (isNewValue(values.builderSecret)) {
+        updateData.builderSecret = values.builderSecret!.trim()
       }
-      if (values.builderPassphrase && values.builderPassphrase.trim()) {
-        updateData.builderPassphrase = values.builderPassphrase.trim()
+      if (isNewValue(values.builderPassphrase)) {
+        updateData.builderPassphrase = values.builderPassphrase!.trim()
       }
 
       if (!updateData.builderApiKey && !updateData.builderSecret && !updateData.builderPassphrase) {
-        message.warning(t('builderApiKey.noChanges') || '没有需要更新的字段')
+        message.warning(t('builderApiKey.noChanges'))
         setRelayerLoading(false)
         return
       }
@@ -157,13 +159,13 @@ const SystemSettings: React.FC = () => {
     try {
       const response = await apiService.systemConfig.updateAutoRedeem({ enabled: values.autoRedeemEnabled })
       if (response.data.code === 0) {
-        message.success(t('systemSettings.autoRedeem.saveSuccess') || '自动赎回配置已保存')
+        message.success(t('systemSettings.autoRedeem.saveSuccess'))
         fetchSystemConfig()
       } else {
-        message.error(response.data.msg || t('systemSettings.autoRedeem.saveFailed') || '保存自动赎回配置失败')
+        message.error(response.data.msg || t('systemSettings.autoRedeem.saveFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('systemSettings.autoRedeem.saveFailed') || '保存自动赎回配置失败')
+      message.error(error.message || t('systemSettings.autoRedeem.saveFailed'))
     } finally {
       setAutoRedeemLoading(false)
     }
@@ -245,7 +247,7 @@ const SystemSettings: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: '16px' }}>
-        <Title level={2} style={{ margin: 0 }}>{t('systemSettings.title') || '通用设置'}</Title>
+        <Title level={2} style={{ margin: 0 }}>{t('systemSettings.title')}</Title>
       </div>
 
       {/* 系统更新 */}
@@ -256,7 +258,7 @@ const SystemSettings: React.FC = () => {
         title={
           <Space>
             <GlobalOutlined />
-            <span>{t('systemSettings.language.title') || '多语言设置'}</span>
+            <span>{t('systemSettings.language.title')}</span>
           </Space>
         }
         style={{ marginBottom: '16px' }}
@@ -269,13 +271,13 @@ const SystemSettings: React.FC = () => {
           initialValues={{ language: currentLang }}
         >
           <Form.Item
-            label={t('systemSettings.language.currentLanguage') || '当前语言'}
+            label={t('systemSettings.language.currentLanguage')}
             name="language"
-            rules={[{ required: true, message: t('systemSettings.language.languageRequired') || '请选择语言' }]}
+            rules={[{ required: true, message: t('systemSettings.language.languageRequired') }]}
           >
             <Select
               options={[
-                { value: 'auto', label: t('languageSettings.followSystem') || '跟随系统' },
+                { value: 'auto', label: t('languageSettings.followSystem') },
                 { value: 'zh-CN', label: '简体中文' },
                 { value: 'zh-TW', label: '繁體中文' },
                 { value: 'en', label: 'English' }
@@ -285,7 +287,7 @@ const SystemSettings: React.FC = () => {
           {currentLang === 'auto' && (
             <Form.Item>
               <Text type="secondary" style={{ fontSize: '12px' }}>
-                {t('languageSettings.currentSystemLanguage') || '当前系统语言'}: {
+                {t('languageSettings.currentSystemLanguage')}: {
                   detectSystemLanguage() === 'zh-CN' ? '简体中文' :
                     detectSystemLanguage() === 'zh-TW' ? '繁體中文' : 'English'
                 }
@@ -298,7 +300,7 @@ const SystemSettings: React.FC = () => {
               htmlType="submit"
               icon={<SaveOutlined />}
             >
-              {t('common.save') || '保存设置'}
+              {t('common.save')}
             </Button>
           </Form.Item>
         </Form>
@@ -309,7 +311,7 @@ const SystemSettings: React.FC = () => {
         title={
           <Space>
             <NotificationOutlined />
-            <span>{t('systemSettings.notification.title') || '消息推送设置'}</span>
+            <span>{t('systemSettings.notification.title')}</span>
           </Space>
         }
         style={{ marginBottom: '16px' }}
@@ -341,7 +343,7 @@ const SystemSettings: React.FC = () => {
         title={
           <Space>
             <KeyOutlined />
-            <span>{t('systemSettings.relayer.title') || 'Relayer 配置'}</span>
+            <span>{t('systemSettings.relayer.title')}</span>
           </Space>
         }
         style={{ marginBottom: '16px' }}
@@ -349,7 +351,7 @@ const SystemSettings: React.FC = () => {
         {/* Builder API Key 配置 */}
         <div style={{ marginBottom: '24px' }}>
           <Title level={4} style={{ marginBottom: '16px' }}>
-            {t('builderApiKey.title') || 'Builder API Key'}
+            {t('builderApiKey.title')}
           </Title>
           <Alert
             message={t('builderApiKey.alertTitle')}
@@ -396,7 +398,9 @@ const SystemSettings: React.FC = () => {
               name="builderApiKey"
             >
               <Input
-                placeholder={t('builderApiKey.apiKeyPlaceholder')}
+                placeholder={systemConfig?.builderApiKeyConfigured
+                  ? t('builderApiKey.configuredPlaceholder', { value: systemConfig.builderApiKeyDisplay || '****' })
+                  : t('builderApiKey.apiKeyPlaceholder')}
                 style={{ fontFamily: 'monospace' }}
               />
             </Form.Item>
@@ -406,7 +410,9 @@ const SystemSettings: React.FC = () => {
               name="builderSecret"
             >
               <Input.Password
-                placeholder={t('builderApiKey.secretPlaceholder')}
+                placeholder={systemConfig?.builderSecretConfigured
+                  ? t('builderApiKey.configuredPlaceholder', { value: systemConfig.builderSecretDisplay || '****' })
+                  : t('builderApiKey.secretPlaceholder')}
                 style={{ fontFamily: 'monospace' }}
                 iconRender={(visible) => (visible ? <span>👁️</span> : <span>👁️‍🗨️</span>)}
               />
@@ -417,7 +423,9 @@ const SystemSettings: React.FC = () => {
               name="builderPassphrase"
             >
               <Input.Password
-                placeholder={t('builderApiKey.passphrasePlaceholder')}
+                placeholder={systemConfig?.builderPassphraseConfigured
+                  ? t('builderApiKey.configuredPlaceholder', { value: systemConfig.builderPassphraseDisplay || '****' })
+                  : t('builderApiKey.passphrasePlaceholder')}
                 style={{ fontFamily: 'monospace' }}
                 iconRender={(visible) => (visible ? <span>👁️</span> : <span>👁️‍🗨️</span>)}
               />
@@ -430,7 +438,7 @@ const SystemSettings: React.FC = () => {
                 icon={<SaveOutlined />}
                 loading={relayerLoading}
               >
-                {t('common.save') || '保存配置'}
+                {t('common.save')}
               </Button>
             </Form.Item>
           </Form>
@@ -439,7 +447,7 @@ const SystemSettings: React.FC = () => {
         {/* 自动赎回配置 */}
         <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: '24px' }}>
           <Title level={4} style={{ marginBottom: '16px' }}>
-            {t('systemSettings.autoRedeem.title') || '自动赎回'}
+            {t('systemSettings.autoRedeem.title')}
           </Title>
           <Form
             form={autoRedeemForm}
@@ -448,9 +456,9 @@ const SystemSettings: React.FC = () => {
             size={isMobile ? 'middle' : 'large'}
           >
             <Form.Item
-              label={t('systemSettings.autoRedeem.label') || '启用自动赎回'}
+              label={t('systemSettings.autoRedeem.label')}
               name="autoRedeemEnabled"
-              tooltip={t('systemSettings.autoRedeem.tooltip') || '开启后，系统将自动赎回所有账户中可赎回的仓位。需要配置 Builder API Key 才能生效。'}
+              tooltip={t('systemSettings.autoRedeem.tooltip')}
               valuePropName="checked"
             >
               <Switch loading={autoRedeemLoading} />
@@ -458,8 +466,8 @@ const SystemSettings: React.FC = () => {
 
             {!systemConfig?.builderApiKeyConfigured && (
               <Alert
-                message={t('systemSettings.autoRedeem.builderApiKeyNotConfigured') || 'Builder API Key 未配置'}
-                description={t('systemSettings.autoRedeem.builderApiKeyNotConfiguredDesc') || '自动赎回功能需要配置 Builder API Key 才能生效。'}
+                message={t('systemSettings.autoRedeem.builderApiKeyNotConfigured')}
+                description={t('systemSettings.autoRedeem.builderApiKeyNotConfiguredDesc')}
                 type="warning"
                 showIcon
                 style={{ marginBottom: '16px' }}
@@ -473,7 +481,7 @@ const SystemSettings: React.FC = () => {
                 icon={<SaveOutlined />}
                 loading={autoRedeemLoading}
               >
-                {t('common.save') || '保存配置'}
+                {t('common.save')}
               </Button>
             </Form.Item>
           </Form>
@@ -485,7 +493,7 @@ const SystemSettings: React.FC = () => {
         title={
           <Space>
             <LinkOutlined />
-            <span>{t('systemSettings.proxy.title') || '代理设置'}</span>
+            <span>{t('systemSettings.proxy.title')}</span>
           </Space>
         }
         style={{ marginBottom: '16px' }}
@@ -497,7 +505,7 @@ const SystemSettings: React.FC = () => {
           size={isMobile ? 'middle' : 'large'}
         >
           <Form.Item
-            label={t('proxySettings.enabled') || '启用代理'}
+            label={t('proxySettings.enabled')}
             name="enabled"
             valuePropName="checked"
           >
@@ -505,45 +513,45 @@ const SystemSettings: React.FC = () => {
           </Form.Item>
 
           <Form.Item
-            label={t('proxySettings.host') || '代理主机'}
+            label={t('proxySettings.host')}
             name="host"
             rules={[
-              { required: true, message: t('proxySettings.hostRequired') || '请输入代理主机地址' },
-              { pattern: /^[\w\.-]+$/, message: t('proxySettings.hostInvalid') || '请输入有效的主机地址' }
+              { required: true, message: t('proxySettings.hostRequired') },
+              { pattern: /^[\w\.-]+$/, message: t('proxySettings.hostInvalid') }
             ]}
           >
-            <Input placeholder={t('proxySettings.hostPlaceholder') || '例如：127.0.0.1 或 proxy.example.com'} />
+            <Input placeholder={t('proxySettings.hostPlaceholder')} />
           </Form.Item>
 
           <Form.Item
-            label={t('proxySettings.port') || '代理端口'}
+            label={t('proxySettings.port')}
             name="port"
             rules={[
-              { required: true, message: t('proxySettings.portRequired') || '请输入代理端口' },
-              { type: 'number', min: 1, max: 65535, message: t('proxySettings.portInvalid') || '端口必须在 1-65535 之间' }
+              { required: true, message: t('proxySettings.portRequired') },
+              { type: 'number', min: 1, max: 65535, message: t('proxySettings.portInvalid') }
             ]}
           >
             <InputNumber
               min={1}
               max={65535}
               style={{ width: '100%' }}
-              placeholder={t('proxySettings.portPlaceholder') || '例如：8888'}
+              placeholder={t('proxySettings.portPlaceholder')}
             />
           </Form.Item>
 
           <Form.Item
-            label={t('proxySettings.username') || '代理用户名（可选）'}
+            label={t('proxySettings.username')}
             name="username"
           >
-            <Input placeholder={t('proxySettings.usernamePlaceholder') || '如果代理需要认证，请输入用户名'} />
+            <Input placeholder={t('proxySettings.usernamePlaceholder')} />
           </Form.Item>
 
           <Form.Item
-            label={t('proxySettings.password') || '代理密码（可选）'}
+            label={t('proxySettings.password')}
             name="password"
-            help={currentProxyConfig ? (t('proxySettings.passwordHelpUpdate') || '留空则不更新密码，输入新密码则更新') : (t('proxySettings.passwordHelp') || '如果代理需要认证，请输入密码')}
+            help={currentProxyConfig ? (t('proxySettings.passwordHelpUpdate')) : (t('proxySettings.passwordHelp'))}
           >
-            <Input.Password placeholder={currentProxyConfig ? (t('proxySettings.passwordPlaceholderUpdate') || '留空则不更新密码') : (t('proxySettings.passwordPlaceholder') || '如果代理需要认证，请输入密码')} />
+            <Input.Password placeholder={currentProxyConfig ? (t('proxySettings.passwordPlaceholderUpdate')) : (t('proxySettings.passwordPlaceholder'))} />
           </Form.Item>
 
           <Form.Item>
@@ -554,21 +562,21 @@ const SystemSettings: React.FC = () => {
                 icon={<SaveOutlined />}
                 loading={proxyLoading}
               >
-                {t('common.save') || '保存配置'}
+                {t('common.save')}
               </Button>
               <Button
                 icon={<CheckCircleOutlined />}
                 onClick={handleProxyCheck}
                 loading={proxyChecking}
               >
-                {t('proxySettings.check') || '检查代理'}
+                {t('proxySettings.check')}
               </Button>
               {proxyCheckResult && (
                 <Button
                   icon={<ReloadOutlined />}
                   onClick={fetchProxyConfig}
                 >
-                  {t('common.refresh') || '刷新配置'}
+                  {t('common.refresh')}
                 </Button>
               )}
             </Space>
@@ -578,14 +586,14 @@ const SystemSettings: React.FC = () => {
         {proxyCheckResult && (
           <Alert
             type={proxyCheckResult.success ? 'success' : 'error'}
-            message={proxyCheckResult.success ? (t('proxySettings.checkSuccess') || '代理检查成功') : (t('proxySettings.checkFailed') || '代理检查失败')}
+            message={proxyCheckResult.success ? (t('proxySettings.checkSuccess')) : (t('proxySettings.checkFailed'))}
             description={
               <div>
                 <Text>{proxyCheckResult.message}</Text>
                 {(proxyCheckResult.responseTime !== undefined || proxyCheckResult.latency !== undefined) && (
                   <div style={{ marginTop: '8px' }}>
                     <Text type="secondary">
-                      {t('proxySettings.latency') || '延迟'}: {(proxyCheckResult.latency ?? proxyCheckResult.responseTime) ?? 0}ms
+                      {t('proxySettings.latency')}: {(proxyCheckResult.latency ?? proxyCheckResult.responseTime) ?? 0}ms
                     </Text>
                   </div>
                 )}

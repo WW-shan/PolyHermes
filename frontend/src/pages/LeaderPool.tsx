@@ -214,13 +214,14 @@ const LeaderPool: React.FC = () => {
     const values = await planForm.validateFields()
     const response = await apiService.leaderPool.updatePlan({
       poolId: planModalItem.id,
-      suggestedFixedAmount: values.suggestedFixedAmount?.toString(),
+      // 可选字段清空时发送空字符串（后端识别为清空），不能发送 undefined（会被视为不修改）
+      suggestedFixedAmount: values.suggestedFixedAmount != null ? values.suggestedFixedAmount.toString() : '',
       suggestedMaxDailyOrders: values.suggestedMaxDailyOrders,
-      suggestedMaxDailyLoss: values.suggestedMaxDailyLoss?.toString(),
-      suggestedMinPrice: values.suggestedMinPrice?.toString(),
-      suggestedMaxPrice: values.suggestedMaxPrice?.toString(),
-      suggestedMaxPositionValue: values.suggestedMaxPositionValue?.toString(),
-      notes: values.notes
+      suggestedMaxDailyLoss: values.suggestedMaxDailyLoss != null ? values.suggestedMaxDailyLoss.toString() : '',
+      suggestedMinPrice: values.suggestedMinPrice != null ? values.suggestedMinPrice.toString() : '',
+      suggestedMaxPrice: values.suggestedMaxPrice != null ? values.suggestedMaxPrice.toString() : '',
+      suggestedMaxPositionValue: values.suggestedMaxPositionValue != null ? values.suggestedMaxPositionValue.toString() : '',
+      notes: values.notes ?? ''
     })
     if (response.data.code === 0) {
       message.success(t('leaderPool.planUpdated'))

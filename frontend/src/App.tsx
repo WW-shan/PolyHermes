@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { ConfigProvider, notification, Spin } from 'antd'
+import { ConfigProvider, notification, Spin, Result } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import zhTW from 'antd/locale/zh_TW'
 import enUS from 'antd/locale/en_US'
@@ -44,6 +44,8 @@ import type { OrderPushMessage } from './types'
 import { apiService } from './services/api'
 import { hasToken } from './utils'
 import ClobMigrationModal, { STORAGE_KEY as CLOB_MIGRATION_KEY } from './components/ClobMigrationModal'
+import ErrorBoundary from './components/ErrorBoundary'
+import { useAuthStore } from './store/authStore'
 
 /**
  * 路由保护组件
@@ -61,6 +63,32 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   }
   
   return <Layout>{children}</Layout>
+}
+
+/**
+ * 管理员路由：非管理员访问系统管理页面时显示无权限提示（后端同样会拦截）
+ */
+const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { t } = useTranslation()
+  const isAdmin = useAuthStore(state => state.isAdmin)
+  const fetchAdminStatus = useAuthStore(state => state.fetchAdminStatus)
+  useEffect(() => {
+    if (isAdmin === null && hasToken()) {
+      fetchAdminStatus()
+    }
+  }, [isAdmin, fetchAdminStatus])
+
+  if (isAdmin === null) {
+    return <ProtectedRoute><Spin style={{ display: 'block', margin: '80px auto' }} /></ProtectedRoute>
+  }
+  if (!isAdmin) {
+    return (
+      <ProtectedRoute>
+        <Result status="403" title="403" subTitle={t('permission.adminRequired')} />
+      </ProtectedRoute>
+    )
+  }
+  return <ProtectedRoute>{children}</ProtectedRoute>
 }
 
 function App() {
@@ -255,6 +283,7 @@ function App() {
   return (
     <ConfigProvider locale={getAntdLocale()}>
       <BrowserRouter>
+        <ErrorBoundary>
         <Routes>
           {/* 公开路由（不需要鉴权） */}
           <Route path="/login" element={<Login />} />
@@ -290,13 +319,14 @@ function App() {
           <Route path="/statistics" element={<ProtectedRoute><Statistics /></ProtectedRoute>} />
           <Route path="/users" element={<ProtectedRoute><UserList /></ProtectedRoute>} />
           <Route path="/announcements" element={<ProtectedRoute><Announcements /></ProtectedRoute>} />
-          <Route path="/system-settings" element={<ProtectedRoute><SystemSettings /></ProtectedRoute>} />
-          <Route path="/system-settings/notification" element={<ProtectedRoute><NotificationSettingsPage /></ProtectedRoute>} />
-          <Route path="/system-settings/rpc-nodes" element={<ProtectedRoute><RpcNodeSettings /></ProtectedRoute>} />          <Route path="/system-settings/api-health" element={<ProtectedRoute><ApiHealthStatus /></ProtectedRoute>} />
+          <Route path="/system-settings" element={<AdminRoute><SystemSettings /></AdminRoute>} />
+          <Route path="/system-settings/notification" element={<AdminRoute><NotificationSettingsPage /></AdminRoute>} />
+          <Route path="/system-settings/rpc-nodes" element={<AdminRoute><RpcNodeSettings /></AdminRoute>} />          <Route path="/system-settings/api-health" element={<AdminRoute><ApiHealthStatus /></AdminRoute>} />
           
           {/* 默认重定向到登录页 */}
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
+        </ErrorBoundary>
         <ClobMigrationModal open={clobMigrationVisible} onClose={() => setClobMigrationVisible(false)} />
       </BrowserRouter>
     </ConfigProvider>

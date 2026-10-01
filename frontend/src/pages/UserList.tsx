@@ -39,11 +39,11 @@ const UserList: React.FC = () => {
       if (response.data.code === 0 && response.data.data) {
         setUsers(response.data.data)
       } else {
-        message.error(response.data.msg || t('userList.fetchFailed') || '获取用户列表失败')
+        message.error(response.data.msg || t('userList.fetchFailed'))
       }
     } catch (error: any) {
       console.error('获取用户列表失败:', error)
-      const errorMsg = error.response?.data?.msg || error.message || t('userList.fetchFailed') || '获取用户列表失败'
+      const errorMsg = error.response?.data?.msg || error.message || t('userList.fetchFailed')
       message.error(errorMsg)
     } finally {
       setLoading(false)
@@ -61,16 +61,16 @@ const UserList: React.FC = () => {
         password: values.password
       })
       if (response.data.code === 0) {
-        message.success(t('userList.createSuccess') || '创建用户成功')
+        message.success(t('userList.createSuccess'))
         setCreateModalVisible(false)
         createForm.resetFields()
         fetchUsers()
       } else {
-        message.error(response.data.msg || t('userList.createFailed') || '创建用户失败')
+        message.error(response.data.msg || t('userList.createFailed'))
       }
     } catch (error: any) {
       console.error('创建用户失败:', error)
-      const errorMsg = error.response?.data?.msg || error.message || t('userList.createFailed') || '创建用户失败'
+      const errorMsg = error.response?.data?.msg || error.message || t('userList.createFailed')
       message.error(errorMsg)
     }
   }
@@ -84,17 +84,17 @@ const UserList: React.FC = () => {
         newPassword: values.newPassword
       })
       if (response.data.code === 0) {
-        message.success(t('userList.updatePasswordSuccess') || '更新密码成功')
+        message.success(t('userList.updatePasswordSuccess'))
         setUpdatePasswordModalVisible(false)
         setSelectedUser(null)
         updatePasswordForm.resetFields()
         fetchUsers()
       } else {
-        message.error(response.data.msg || t('userList.updatePasswordFailed') || '更新密码失败')
+        message.error(response.data.msg || t('userList.updatePasswordFailed'))
       }
     } catch (error: any) {
       console.error('更新密码失败:', error)
-      const errorMsg = error.response?.data?.msg || error.message || t('userList.updatePasswordFailed') || '更新密码失败'
+      const errorMsg = error.response?.data?.msg || error.message || t('userList.updatePasswordFailed')
       message.error(errorMsg)
     }
   }
@@ -105,7 +105,7 @@ const UserList: React.FC = () => {
         newPassword: values.newPassword
       })
       if (response.data.code === 0) {
-        message.success(t('userList.updateOwnPasswordSuccess') || '修改密码成功，请重新登录')
+        message.success(t('userList.updateOwnPasswordSuccess'))
         setUpdateOwnPasswordModalVisible(false)
         updateOwnPasswordForm.resetFields()
         // 延迟跳转到登录页
@@ -113,11 +113,11 @@ const UserList: React.FC = () => {
           window.location.href = '/login'
         }, 1000)
       } else {
-        message.error(response.data.msg || t('userList.updateOwnPasswordFailed') || '修改密码失败')
+        message.error(response.data.msg || t('userList.updateOwnPasswordFailed'))
       }
     } catch (error: any) {
       console.error('修改密码失败:', error)
-      const errorMsg = error.response?.data?.msg || error.message || t('userList.updateOwnPasswordFailed') || '修改密码失败'
+      const errorMsg = error.response?.data?.msg || error.message || t('userList.updateOwnPasswordFailed')
       message.error(errorMsg)
     }
   }
@@ -126,14 +126,14 @@ const UserList: React.FC = () => {
     try {
       const response = await apiService.users.delete({ userId: user.id })
       if (response.data.code === 0) {
-        message.success(t('userList.deleteSuccess') || '删除用户成功')
+        message.success(t('userList.deleteSuccess'))
         fetchUsers()
       } else {
-        message.error(response.data.msg || t('userList.deleteFailed') || '删除用户失败')
+        message.error(response.data.msg || t('userList.deleteFailed'))
       }
     } catch (error: any) {
       console.error('删除用户失败:', error)
-      const errorMsg = error.response?.data?.msg || error.message || t('userList.deleteFailed') || '删除用户失败'
+      const errorMsg = error.response?.data?.msg || error.message || t('userList.deleteFailed')
       message.error(errorMsg)
     }
   }
@@ -146,30 +146,30 @@ const UserList: React.FC = () => {
       width: 80
     },
     {
-      title: t('userList.username') || '用户名',
+      title: t('userList.username'),
       dataIndex: 'username',
       key: 'username'
     },
     {
-      title: t('userList.role') || '角色',
+      title: t('userList.role'),
       dataIndex: 'isDefault',
       key: 'isDefault',
       width: 100,
       render: (isDefault: boolean) => (
         <Tag color={isDefault ? 'red' : 'blue'}>
-          {isDefault ? t('userList.defaultAccount') || '默认账户' : t('userList.normalUser') || '普通用户'}
+          {isDefault ? t('userList.defaultAccount') : t('userList.normalUser')}
         </Tag>
       )
     },
     {
-      title: t('common.createdAt') || '创建时间',
+      title: t('common.createdAt'),
       dataIndex: 'createdAt',
       key: 'createdAt',
       width: 180,
       render: (timestamp: number) => new Date(timestamp).toLocaleString(i18n.language || 'zh-CN')
     },
     {
-      title: t('common.actions') || '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 200,
       render: (_: any, record: User) => {
@@ -188,13 +188,13 @@ const UserList: React.FC = () => {
                       setUpdatePasswordModalVisible(true)
                     }}
                   >
-                    {t('userList.updatePassword') || '修改密码'}
+                    {t('userList.updatePassword')}
                   </Button>
                   <Popconfirm
-                    title={t('userList.deleteConfirm') || '确定要删除这个用户吗？'}
+                    title={t('userList.deleteConfirm')}
                     onConfirm={() => handleDelete(record)}
-                    okText={t('common.confirm') || '确定'}
-                    cancelText={t('common.cancel') || '取消'}
+                    okText={t('common.confirm')}
+                    cancelText={t('common.cancel')}
                   >
                     <Button
                       type="link"
@@ -202,7 +202,7 @@ const UserList: React.FC = () => {
                       size="small"
                       icon={<DeleteOutlined />}
                     >
-                      {t('common.delete') || '删除'}
+                      {t('common.delete')}
                     </Button>
                   </Popconfirm>
                 </>
@@ -220,7 +220,7 @@ const UserList: React.FC = () => {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-        <Title level={isMobile ? 4 : 3} style={{ margin: 0, fontSize: isMobile ? '18px' : undefined }}>{t('userList.title') || '用户管理'}</Title>
+        <Title level={isMobile ? 4 : 3} style={{ margin: 0, fontSize: isMobile ? '18px' : undefined }}>{t('userList.title')}</Title>
         <Space size={8} wrap>
           <Button
             icon={<KeyOutlined />}
@@ -228,7 +228,7 @@ const UserList: React.FC = () => {
             size={isMobile ? 'middle' : 'large'}
             style={{ borderRadius: '8px', height: isMobile ? '40px' : '48px' }}
           >
-            {isMobile ? (t('userList.updateMyPassword') || '改密') : (t('userList.updateMyPassword') || '修改我的密码')}
+            {isMobile ? (t('userList.updateMyPassword')) : (t('userList.updateMyPassword'))}
           </Button>
           <Button
             icon={<ReloadOutlined />}
@@ -237,10 +237,10 @@ const UserList: React.FC = () => {
             size={isMobile ? 'middle' : 'large'}
             style={{ borderRadius: '8px', height: isMobile ? '40px' : '48px' }}
           >
-            {t('common.refresh') || '刷新'}
+            {t('common.refresh')}
           </Button>
           {isDefaultUser && (
-            <Tooltip title={t('userList.addUser') || '新增用户'}>
+            <Tooltip title={t('userList.addUser')}>
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -262,7 +262,7 @@ const UserList: React.FC = () => {
                 <Spin size="large" />
               </div>
             ) : users.length === 0 ? (
-              <Empty description={t('userList.noData') || '暂无用户数据'} />
+              <Empty description={t('userList.noData')} />
             ) : (
               <List
                 dataSource={users}
@@ -305,15 +305,15 @@ const UserList: React.FC = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                         <div>
                           <div style={{ fontSize: '10px', color: '#8c8c8c' }}>
-                            {t('userList.role') || '角色'}
+                            {t('userList.role')}
                           </div>
                           <Tag color={user.isDefault ? 'red' : 'blue'} style={{ margin: 0 }}>
-                            {user.isDefault ? (t('userList.defaultAccount') || '默认账户') : (t('userList.normalUser') || '普通用户')}
+                            {user.isDefault ? (t('userList.defaultAccount')) : (t('userList.normalUser'))}
                           </Tag>
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontSize: '10px', color: '#8c8c8c' }}>
-                            {t('common.createdAt') || '创建时间'}
+                            {t('common.createdAt')}
                           </div>
                           <div style={{ fontSize: '12px', fontWeight: '500', color: '#666' }}>
                             {new Date(user.createdAt).toLocaleDateString(i18n.language || 'zh-CN')}
@@ -330,7 +330,7 @@ const UserList: React.FC = () => {
                         justifyContent: 'space-around',
                         alignItems: 'center'
                       }}>
-                        <Tooltip title={t('userList.updatePassword') || '修改密码'}>
+                        <Tooltip title={t('userList.updatePassword')}>
                           <div
                             onClick={() => {
                               setSelectedUser(user)
@@ -339,20 +339,20 @@ const UserList: React.FC = () => {
                             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}
                           >
                             <KeyOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
-                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('userList.updatePassword') || '改密'}</span>
+                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('userList.updatePassword')}</span>
                           </div>
                         </Tooltip>
 
                         <Popconfirm
-                          title={t('userList.deleteConfirm') || '确定要删除这个用户吗？'}
+                          title={t('userList.deleteConfirm')}
                           onConfirm={() => handleDelete(user)}
-                          okText={t('common.confirm') || '确定'}
-                          cancelText={t('common.cancel') || '取消'}
+                          okText={t('common.confirm')}
+                          cancelText={t('common.cancel')}
                         >
-                          <Tooltip title={t('common.delete') || '删除'}>
+                          <Tooltip title={t('common.delete')}>
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}>
                               <DeleteOutlined style={{ fontSize: '18px', color: '#ff4d4f' }} />
-                              <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.delete') || '删除'}</span>
+                              <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.delete')}</span>
                             </div>
                           </Tooltip>
                         </Popconfirm>
@@ -372,7 +372,7 @@ const UserList: React.FC = () => {
             pagination={{
               pageSize: isMobile ? 10 : 20,
               showSizeChanger: !isMobile,
-              showTotal: (total) => t('userList.total', { total }) || `共 ${total} 条`
+              showTotal: (total) => t('userList.total', { total })
             }}
             scroll={isMobile ? { x: 600 } : undefined}
           />
@@ -381,15 +381,15 @@ const UserList: React.FC = () => {
 
       {/* 创建用户弹窗 */}
       <Modal
-        title={t('userList.addUser') || '新增用户'}
+        title={t('userList.addUser')}
         open={createModalVisible}
         onCancel={() => {
           setCreateModalVisible(false)
           createForm.resetFields()
         }}
         onOk={() => createForm.submit()}
-        okText={t('userList.createUser') || '创建'}
-        cancelText={t('common.cancel') || '取消'}
+        okText={t('userList.createUser')}
+        cancelText={t('common.cancel')}
       >
         <Form
           form={createForm}
@@ -398,29 +398,29 @@ const UserList: React.FC = () => {
         >
           <Form.Item
             name="username"
-            label={t('userList.username') || '用户名'}
+            label={t('userList.username')}
             rules={[
-              { required: true, message: t('userList.usernameRequired') || '请输入用户名' }
+              { required: true, message: t('userList.usernameRequired') }
             ]}
           >
-            <Input placeholder={t('userList.usernamePlaceholder') || '请输入用户名'} />
+            <Input placeholder={t('userList.usernamePlaceholder')} />
           </Form.Item>
           <Form.Item
             name="password"
-            label={t('userList.password') || '密码'}
+            label={t('userList.password')}
             rules={[
-              { required: true, message: t('userList.passwordRequired') || '请输入密码' },
-              { min: 6, message: t('userList.passwordMinLength') || '密码至少6位' }
+              { required: true, message: t('userList.passwordRequired') },
+              { min: 6, message: t('userList.passwordMinLength') }
             ]}
           >
-            <Input.Password placeholder={t('userList.passwordPlaceholder') || '至少6位'} />
+            <Input.Password placeholder={t('userList.passwordPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* 修改密码弹窗（管理员修改其他用户密码） */}
       <Modal
-        title={t('userList.updatePassword') || '修改密码'}
+        title={t('userList.updatePassword')}
         open={updatePasswordModalVisible}
         onCancel={() => {
           setUpdatePasswordModalVisible(false)
@@ -428,8 +428,8 @@ const UserList: React.FC = () => {
           updatePasswordForm.resetFields()
         }}
         onOk={() => updatePasswordForm.submit()}
-        okText={t('common.confirm') || '确定'}
-        cancelText={t('common.cancel') || '取消'}
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       >
         <Form
           form={updatePasswordForm}
@@ -438,28 +438,28 @@ const UserList: React.FC = () => {
         >
           <Form.Item
             name="newPassword"
-            label={t('userList.newPassword') || '新密码'}
+            label={t('userList.newPassword')}
             rules={[
-              { required: true, message: t('userList.newPasswordRequired') || '请输入新密码' },
-              { min: 6, message: t('userList.passwordMinLength') || '密码至少6位' }
+              { required: true, message: t('userList.newPasswordRequired') },
+              { min: 6, message: t('userList.passwordMinLength') }
             ]}
           >
-            <Input.Password placeholder={t('userList.passwordPlaceholder') || '至少6位'} />
+            <Input.Password placeholder={t('userList.passwordPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* 修改我的密码弹窗（默认账户修改自己密码） */}
       <Modal
-        title={t('userList.updateMyPasswordTitle') || '修改我的密码'}
+        title={t('userList.updateMyPasswordTitle')}
         open={updateOwnPasswordModalVisible}
         onCancel={() => {
           setUpdateOwnPasswordModalVisible(false)
           updateOwnPasswordForm.resetFields()
         }}
         onOk={() => updateOwnPasswordForm.submit()}
-        okText={t('common.confirm') || '确定'}
-        cancelText={t('common.cancel') || '取消'}
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       >
         <Form
           form={updateOwnPasswordForm}
@@ -468,13 +468,13 @@ const UserList: React.FC = () => {
         >
           <Form.Item
             name="newPassword"
-            label={t('userList.newPassword') || '新密码'}
+            label={t('userList.newPassword')}
             rules={[
-              { required: true, message: t('userList.newPasswordRequired') || '请输入新密码' },
-              { min: 6, message: t('userList.passwordMinLength') || '密码至少6位' }
+              { required: true, message: t('userList.newPasswordRequired') },
+              { min: 6, message: t('userList.passwordMinLength') }
             ]}
           >
-            <Input.Password placeholder={t('userList.passwordPlaceholder') || '至少6位'} />
+            <Input.Password placeholder={t('userList.passwordPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>

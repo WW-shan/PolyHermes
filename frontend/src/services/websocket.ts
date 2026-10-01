@@ -61,13 +61,11 @@ class WebSocketManager {
       return
     }
 
+    // 显式调用 connect 表示开启新的会话（如重新登录），复位登出/卸载时设置的标记
+    this.isUnmounting = false
+
     // 如果已经连接或正在连接，直接返回
     if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) {
-      return
-    }
-
-    // 如果正在卸载，不允许连接
-    if (this.isUnmounting) {
       return
     }
 

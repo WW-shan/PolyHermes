@@ -83,15 +83,15 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
   const handleCopyOrderId = async (orderId: string) => {
     const success = await copyToClipboard(orderId)
     if (success) {
-      message.success(t('common.copySuccess') || '已复制到剪贴板')
+      message.success(t('common.copySuccess'))
     } else {
-      message.error(t('common.copyFailed') || '复制失败')
+      message.error(t('common.copyFailed'))
     }
   }
 
   const columns = [
     {
-      title: t('copyTradingOrders.market') || '市场',
+      title: t('copyTradingOrders.market'),
       dataIndex: 'marketId',
       key: 'marketId',
       width: isMobile ? 120 : 200,
@@ -132,7 +132,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
       }
     },
     {
-      title: t('copyTradingOrders.orderId') || '订单ID',
+      title: t('copyTradingOrders.orderId'),
       dataIndex: 'orderId',
       key: 'orderId',
       width: isMobile ? 150 : 200,
@@ -146,7 +146,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
               <span style={{ fontSize: isMobile ? 11 : 12, color: '#999' }}>
-                {t('copyTradingOrders.buy') || '买入'}:
+                {t('copyTradingOrders.buy')}:
               </span>
               <span style={{ fontFamily: 'monospace', fontSize: isMobile ? 11 : 12 }}>
                 {isMobile
@@ -161,13 +161,13 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
                   icon={<CopyOutlined />}
                   onClick={() => handleCopyOrderId(buyOrderId)}
                   style={{ padding: 0, height: 'auto', fontSize: isMobile ? 11 : 12 }}
-                  title={t('common.copy') || '复制'}
+                  title={t('common.copy')}
                 />
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: isMobile ? 11 : 12, color: '#999' }}>
-                {t('copyTradingOrders.sell') || '卖出'}:
+                {t('copyTradingOrders.sell')}:
               </span>
               <span style={{ fontFamily: 'monospace', fontSize: isMobile ? 11 : 12 }}>
                 {isMobile
@@ -182,7 +182,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
                   icon={<CopyOutlined />}
                   onClick={() => handleCopyOrderId(sellOrderId)}
                   style={{ padding: 0, height: 'auto', fontSize: isMobile ? 11 : 12 }}
-                  title={t('common.copy') || '复制'}
+                  title={t('common.copy')}
                 />
               )}
             </div>
@@ -191,7 +191,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
       }
     },
     {
-      title: t('copyTradingOrders.matchedQuantity') || '匹配数量',
+      title: t('copyTradingOrders.matchedQuantity'),
       dataIndex: 'matchedQuantity',
       key: 'matchedQuantity',
       width: isMobile ? 80 : 100,
@@ -200,7 +200,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
       )
     },
     {
-      title: t('copyTradingOrders.buyPrice') || '买入价格',
+      title: t('copyTradingOrders.buyPrice'),
       dataIndex: 'buyPrice',
       key: 'buyPrice',
       width: isMobile ? 80 : 100,
@@ -209,7 +209,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
       )
     },
     {
-      title: t('copyTradingOrders.sellPrice') || '卖出价格',
+      title: t('copyTradingOrders.sellPrice'),
       dataIndex: 'sellPrice',
       key: 'sellPrice',
       width: isMobile ? 80 : 100,
@@ -218,7 +218,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
       )
     },
     {
-      title: t('copyTradingOrders.realizedPnl') || '盈亏',
+      title: t('copyTradingOrders.realizedPnl'),
       dataIndex: 'realizedPnl',
       key: 'realizedPnl',
       width: isMobile ? 100 : 120,
@@ -233,7 +233,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
       )
     },
     {
-      title: t('copyTradingOrders.matchedAt') || '匹配时间',
+      title: t('copyTradingOrders.matchedAt'),
       dataIndex: 'matchedAt',
       key: 'matchedAt',
       width: isMobile ? 120 : 160,
@@ -252,7 +252,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
     <div>
       <div style={{ marginBottom: 16, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <Input
-          placeholder={t('copyTradingOrders.filterMarketTitle') || '筛选市场标题'}
+          placeholder={t('copyTradingOrders.filterMarketTitle')}
           allowClear
           style={{ width: isMobile ? '100%' : 200 }}
           value={filters.marketTitle}
@@ -260,7 +260,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
         />
 
         <Input
-          placeholder={t('copyTradingOrders.filterSellOrderId') || '筛选卖出订单ID'}
+          placeholder={t('copyTradingOrders.filterSellOrderId')}
           allowClear
           style={{ width: isMobile ? '100%' : 200 }}
           value={filters.sellOrderId}
@@ -268,14 +268,14 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
         />
 
         <Input
-          placeholder={t('copyTradingOrders.filterBuyOrderId') || '筛选买入订单ID'}
+          placeholder={t('copyTradingOrders.filterBuyOrderId')}
           allowClear
           style={{ width: isMobile ? '100%' : 200 }}
           value={filters.buyOrderId}
           onChange={(e) => setFilters({ ...filters, buyOrderId: e.target.value || undefined })}
         />
 
-        <Button type="primary" onClick={fetchOrders} icon={<ReloadOutlined />}>{t('common.refresh') || '刷新'}</Button>
+        <Button type="primary" onClick={fetchOrders} icon={<ReloadOutlined />}>{t('common.refresh')}</Button>
       </div>
 
       {isMobile ? (
@@ -286,7 +286,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
             </div>
           ) : orders.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-              {t('copyTradingOrders.noMatchedOrders') || '暂无匹配关系'}
+              {t('copyTradingOrders.noMatchedOrders')}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -313,7 +313,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
                     <div style={{ marginBottom: '12px' }}>
                       {(order.marketTitle || order.marketId) && (
                         <div style={{ marginBottom: '12px' }}>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.market') || '市场'}</div>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.market')}</div>
                           {order.marketTitle ? (
                             (() => {
                               const marketUrl = getPolymarketUrl(order.marketSlug, order.eventSlug, order.marketCategory, order.marketId)
@@ -348,10 +348,10 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
                           )}
                         </div>
                       )}
-                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.orderId') || '订单ID'}</div>
+                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.orderId')}</div>
                     <div style={{ marginBottom: '8px' }}>
                       <div style={{ marginBottom: '4px' }}>
-                        <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>{t('copyTradingOrders.buy') || '买入'}:</div>
+                        <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>{t('copyTradingOrders.buy')}:</div>
                         <div style={{ fontSize: '13px', fontWeight: '500', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span>{order.buyOrderId.slice(0, 8)}...{order.buyOrderId.slice(-6)}</span>
                           {!isAutoGeneratedOrderId(order.buyOrderId) && (
@@ -361,13 +361,13 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
                               icon={<CopyOutlined />}
                               onClick={() => handleCopyOrderId(order.buyOrderId)}
                               style={{ padding: 0, height: 'auto', fontSize: '12px' }}
-                              title={t('common.copy') || '复制'}
+                              title={t('common.copy')}
                             />
                           )}
                         </div>
                       </div>
                       <div>
-                        <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>{t('copyTradingOrders.sell') || '卖出'}:</div>
+                        <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>{t('copyTradingOrders.sell')}:</div>
                         <div style={{ fontSize: '13px', fontWeight: '500', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span>{order.sellOrderId.slice(0, 8)}...{order.sellOrderId.slice(-6)}</span>
                           {!isAutoGeneratedOrderId(order.sellOrderId) && (
@@ -377,7 +377,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
                               icon={<CopyOutlined />}
                               onClick={() => handleCopyOrderId(order.sellOrderId)}
                               style={{ padding: 0, height: 'auto', fontSize: '12px' }}
-                              title={t('common.copy') || '复制'}
+                              title={t('common.copy')}
                             />
                           )}
                         </div>
@@ -388,21 +388,21 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
                     <Divider style={{ margin: '12px 0' }} />
 
                     <div style={{ marginBottom: '12px' }}>
-                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.matchedQuantity') || '匹配数量'}</div>
+                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.matchedQuantity')}</div>
                       <div style={{ fontSize: '14px', fontWeight: '500' }}>
                         {formatUSDC(order.matchedQuantity)}
                       </div>
                     </div>
 
                     <div style={{ marginBottom: '12px' }}>
-                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.priceInfo') || '价格信息'}</div>
+                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.priceInfo')}</div>
                       <div style={{ fontSize: '13px', color: '#333' }}>
-                        {t('copyTradingOrders.buy') || '买入'}: {formatUSDC(order.buyPrice)} | {t('copyTradingOrders.sell') || '卖出'}: {formatUSDC(order.sellPrice)}
+                        {t('copyTradingOrders.buy')}: {formatUSDC(order.buyPrice)} | {t('copyTradingOrders.sell')}: {formatUSDC(order.sellPrice)}
                       </div>
                     </div>
 
                     <div style={{ marginBottom: '16px' }}>
-                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.realizedPnl') || '盈亏'}</div>
+                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('copyTradingOrders.realizedPnl')}</div>
                       <div style={{
                         fontSize: '16px',
                         fontWeight: 'bold',
@@ -414,7 +414,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
 
                     <div style={{ marginBottom: '16px' }}>
                       <div style={{ fontSize: '12px', color: '#999' }}>
-                        {t('copyTradingOrders.matchedAt') || '匹配时间'}: {formattedDate}
+                        {t('copyTradingOrders.matchedAt')}: {formattedDate}
                       </div>
                     </div>
                   </Card>
@@ -434,7 +434,7 @@ const MatchedOrdersTab: React.FC<MatchedOrdersTabProps> = ({ copyTradingId, acti
             pageSize: limit,
             total,
             showSizeChanger: true,
-            showTotal: (total) => `${t('common.total') || '共'} ${total} ${t('common.items') || '条'}`,
+            showTotal: (total) => `${t('common.total')} ${total} ${t('common.items')}`,
             onChange: (newPage, newLimit) => {
               setPage(newPage)
               setLimit(newLimit)

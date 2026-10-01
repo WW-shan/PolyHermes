@@ -22,20 +22,22 @@ const Statistics: React.FC = () => {
     fetchStatistics()
   }, [])
 
-  const fetchStatistics = async () => {
+  // range 显式传入，避免重置后读取到旧闭包中的日期
+  const fetchStatistics = async (range: [Dayjs | null, Dayjs | null] = dateRange) => {
     setLoading(true)
     try {
-      const startTime = dateRange[0] ? dateRange[0].valueOf() : undefined
-      const endTime = dateRange[1] ? dateRange[1].valueOf() : undefined
+      // 日期区间按整天计算：开始日 00:00:00.000 ~ 结束日 23:59:59.999
+      const startTime = range[0] ? range[0].startOf('day').valueOf() : undefined
+      const endTime = range[1] ? range[1].endOf('day').valueOf() : undefined
 
       const response = await apiService.statistics.global({ startTime, endTime })
       if (response.data.code === 0 && response.data.data) {
         setStats(response.data.data)
       } else {
-        message.error(response.data.msg || t('statistics.fetchFailed') || '获取统计信息失败')
+        message.error(response.data.msg || t('statistics.fetchFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('statistics.fetchFailed') || '获取统计信息失败')
+      message.error(error.message || t('statistics.fetchFailed'))
     } finally {
       setLoading(false)
     }
@@ -46,41 +48,40 @@ const Statistics: React.FC = () => {
   }
 
   const handleReset = () => {
-    setDateRange([null, null])
-    // 重置后自动刷新
-    setTimeout(() => {
-      fetchStatistics()
-    }, 100)
+    const emptyRange: [Dayjs | null, Dayjs | null] = [null, null]
+    setDateRange(emptyRange)
+    // 重置后立即用空区间刷新
+    fetchStatistics(emptyRange)
   }
 
   return (
     <div>
       <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <Title level={2} style={{ margin: 0 }}>{t('statistics.title') || '统计信息'}</Title>
+        <Title level={2} style={{ margin: 0 }}>{t('statistics.title')}</Title>
         <Space size="middle" wrap>
           <RangePicker
             value={dateRange}
             onChange={handleDateRangeChange}
             format="YYYY-MM-DD"
-            placeholder={[t('statistics.startDate') || '开始日期', t('statistics.endDate') || '结束日期']}
+            placeholder={[t('statistics.startDate'), t('statistics.endDate')]}
             size={isMobile ? 'middle' : 'large'}
             allowClear
           />
           <Button
             type="primary"
             icon={<ReloadOutlined />}
-            onClick={fetchStatistics}
+            onClick={() => fetchStatistics()}
             loading={loading}
             size={isMobile ? 'middle' : 'large'}
           >
-            {t('statistics.refresh') || '刷新'}
+            {t('statistics.refresh')}
           </Button>
           {(dateRange[0] || dateRange[1]) && (
             <Button
               onClick={handleReset}
               size={isMobile ? 'middle' : 'large'}
             >
-              {t('statistics.reset') || '重置'}
+              {t('statistics.reset')}
             </Button>
           )}
         </Space>
@@ -90,7 +91,7 @@ const Statistics: React.FC = () => {
         <Col xs={24} sm={12} md={8}>
           <Card>
             <Statistic
-              title={t('statistics.totalOrders') || '总订单数'}
+              title={t('statistics.totalOrders')}
               value={formatNumber(stats?.totalOrders || 0)}
               loading={loading}
             />
@@ -99,7 +100,7 @@ const Statistics: React.FC = () => {
         <Col xs={24} sm={12} md={8}>
           <Card>
             <Statistic
-              title={t('statistics.totalPnl') || '总盈亏'}
+              title={t('statistics.totalPnl')}
               value={formatUSDC(stats?.totalPnl || '0')}
               prefix={<>{stats?.totalPnl && parseFloat(stats.totalPnl) >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />} $</>}
               valueStyle={{ color: stats?.totalPnl && parseFloat(stats.totalPnl || '0') >= 0 ? '#3f8600' : '#cf1322' }}
@@ -110,7 +111,7 @@ const Statistics: React.FC = () => {
         <Col xs={24} sm={12} md={8}>
           <Card>
             <Statistic
-              title={t('statistics.winRate') || '胜率'}
+              title={t('statistics.winRate')}
               value={stats?.winRate || '0'}
               precision={2}
               suffix="%"
@@ -121,7 +122,7 @@ const Statistics: React.FC = () => {
         <Col xs={24} sm={12} md={8}>
           <Card>
             <Statistic
-              title={t('statistics.avgPnl') || '平均盈亏'}
+              title={t('statistics.avgPnl')}
               value={formatUSDC(stats?.avgPnl || '0')}
               prefix={<>{stats?.avgPnl && parseFloat(stats.avgPnl || '0') >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />} $</>}
               valueStyle={{ color: stats?.avgPnl && parseFloat(stats.avgPnl || '0') >= 0 ? '#3f8600' : '#cf1322' }}
@@ -132,7 +133,7 @@ const Statistics: React.FC = () => {
         <Col xs={24} sm={12} md={8}>
           <Card>
             <Statistic
-              title={t('statistics.maxProfit') || '最大盈利'}
+              title={t('statistics.maxProfit')}
               value={formatUSDC(stats?.maxProfit || '0')}
               prefix={<><ArrowUpOutlined /> $</>}
               valueStyle={{ color: '#3f8600' }}
@@ -143,7 +144,7 @@ const Statistics: React.FC = () => {
         <Col xs={24} sm={12} md={8}>
           <Card>
             <Statistic
-              title={t('statistics.maxLoss') || '最大亏损'}
+              title={t('statistics.maxLoss')}
               value={formatUSDC(stats?.maxLoss || '0')}
               prefix={<><ArrowDownOutlined /> $</>}
               valueStyle={{ color: '#cf1322' }}

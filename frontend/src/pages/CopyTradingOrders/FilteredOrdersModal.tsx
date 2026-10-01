@@ -60,17 +60,17 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
   
   const getFilterTypeTag = (filterType: string) => {
     const typeMap: Record<string, { color: string; text: string }> = {
-      ORDER_DEPTH: { color: 'orange', text: t('filteredOrdersList.filterTypes.orderDepth') || '订单深度不足' },
-      SPREAD: { color: 'red', text: t('filteredOrdersList.filterTypes.spread') || '价差过大' },
-      ORDERBOOK_DEPTH: { color: 'purple', text: t('filteredOrdersList.filterTypes.orderbookDepth') || '订单簿深度不足' },
-      PRICE_VALIDITY: { color: 'blue', text: t('filteredOrdersList.filterTypes.priceValidity') || '价格不合理' },
-      MARKET_STATUS: { color: 'default', text: t('filteredOrdersList.filterTypes.marketStatus') || '市场状态不可交易' },
-      ORDERBOOK_ERROR: { color: 'default', text: t('filteredOrdersList.filterTypes.orderbookError') || '订单簿获取失败' },
-      ORDERBOOK_EMPTY: { color: 'default', text: t('filteredOrdersList.filterTypes.orderbookEmpty') || '订单簿为空' },
-      PRICE_RANGE: { color: 'purple', text: t('filteredOrdersList.filterTypes.priceRange') || '价格区间不符' },
-      MAX_POSITION_VALUE: { color: 'volcano', text: t('filteredOrdersList.filterTypes.maxPositionValue') || '超过最大仓位金额' },
-      MARKET_END_DATE: { color: 'cyan', text: t('filteredOrdersList.filterTypes.marketEndDate') || '市场截止时间超出限制' },
-      KEYWORD_FILTER: { color: 'geekblue', text: t('filteredOrdersList.filterTypes.keywordFilter') || '关键字过滤' }
+      ORDER_DEPTH: { color: 'orange', text: t('filteredOrdersList.filterTypes.orderDepth') },
+      SPREAD: { color: 'red', text: t('filteredOrdersList.filterTypes.spread') },
+      ORDERBOOK_DEPTH: { color: 'purple', text: t('filteredOrdersList.filterTypes.orderbookDepth') },
+      PRICE_VALIDITY: { color: 'blue', text: t('filteredOrdersList.filterTypes.priceValidity') },
+      MARKET_STATUS: { color: 'default', text: t('filteredOrdersList.filterTypes.marketStatus') },
+      ORDERBOOK_ERROR: { color: 'default', text: t('filteredOrdersList.filterTypes.orderbookError') },
+      ORDERBOOK_EMPTY: { color: 'default', text: t('filteredOrdersList.filterTypes.orderbookEmpty') },
+      PRICE_RANGE: { color: 'purple', text: t('filteredOrdersList.filterTypes.priceRange') },
+      MAX_POSITION_VALUE: { color: 'volcano', text: t('filteredOrdersList.filterTypes.maxPositionValue') },
+      MARKET_END_DATE: { color: 'cyan', text: t('filteredOrdersList.filterTypes.marketEndDate') },
+      KEYWORD_FILTER: { color: 'geekblue', text: t('filteredOrdersList.filterTypes.keywordFilter') }
     }
     const config = typeMap[filterType] || { color: 'default', text: filterType }
     return <Tag color={config.color}>{config.text}</Tag>
@@ -78,7 +78,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
   
   const columns = [
     {
-      title: t('filteredOrdersList.market') || '市场',
+      title: t('filteredOrdersList.market'),
       dataIndex: 'marketTitle',
       key: 'marketTitle',
       width: isMobile ? 150 : 200,
@@ -89,18 +89,18 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
       }
     },
     {
-      title: t('filteredOrdersList.side') || '方向',
+      title: t('filteredOrdersList.side'),
       dataIndex: 'side',
       key: 'side',
       width: isMobile ? 60 : 80,
       render: (side: string) => (
         <Tag color={side === 'BUY' ? 'green' : 'red'}>
-          {side === 'BUY' ? (t('order.buy') || '买入') : (t('order.sell') || '卖出')}
+          {side === 'BUY' ? (t('order.buy')) : (t('order.sell'))}
         </Tag>
       )
     },
     {
-      title: t('filteredOrdersList.price') || '价格',
+      title: t('filteredOrdersList.price'),
       dataIndex: 'price',
       key: 'price',
       width: isMobile ? 80 : 100,
@@ -109,7 +109,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
       )
     },
     {
-      title: t('filteredOrdersList.size') || '数量',
+      title: t('filteredOrdersList.size'),
       dataIndex: 'size',
       key: 'size',
       width: isMobile ? 80 : 100,
@@ -118,14 +118,14 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
       )
     },
     {
-      title: t('filteredOrdersList.filterType') || '过滤类型',
+      title: t('filteredOrdersList.filterType'),
       dataIndex: 'filterType',
       key: 'filterType',
       width: isMobile ? 120 : 150,
       render: (filterType: string) => getFilterTypeTag(filterType)
     },
     {
-      title: t('filteredOrdersList.filterReason') || '过滤原因',
+      title: t('filteredOrdersList.filterReason'),
       dataIndex: 'filterReason',
       key: 'filterReason',
       width: isMobile ? 150 : 250,
@@ -135,7 +135,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
       )
     },
     {
-      title: t('filteredOrdersList.createdAt') || '时间',
+      title: t('filteredOrdersList.createdAt'),
       dataIndex: 'createdAt',
       key: 'createdAt',
       width: isMobile ? 120 : 160,
@@ -155,7 +155,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
   
   return (
     <Modal
-      title={t('copyTradingOrders.filteredOrders') || '已过滤订单'}
+      title={t('copyTradingOrders.filteredOrders')}
       open={open}
       onCancel={onClose}
       footer={null}
@@ -165,20 +165,20 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
     >
       <div style={{ marginBottom: 16 }}>
         <Select
-          placeholder={t('filteredOrdersList.filterByType') || '按类型筛选'}
+          placeholder={t('filteredOrdersList.filterByType')}
           allowClear
           style={{ width: isMobile ? '100%' : 200 }}
           value={filterType}
           onChange={(value) => setFilterType(value || undefined)}
         >
-          <Option value="ORDER_DEPTH">{t('filteredOrdersList.filterTypes.orderDepth') || '订单深度不足'}</Option>
-          <Option value="SPREAD">{t('filteredOrdersList.filterTypes.spread') || '价差过大'}</Option>
-          <Option value="ORDERBOOK_DEPTH">{t('filteredOrdersList.filterTypes.orderbookDepth') || '订单簿深度不足'}</Option>
-          <Option value="PRICE_VALIDITY">{t('filteredOrdersList.filterTypes.priceValidity') || '价格不合理'}</Option>
-          <Option value="MARKET_STATUS">{t('filteredOrdersList.filterTypes.marketStatus') || '市场状态不可交易'}</Option>
-          <Option value="ORDERBOOK_ERROR">{t('filteredOrdersList.filterTypes.orderbookError') || '订单簿获取失败'}</Option>
-          <Option value="ORDERBOOK_EMPTY">{t('filteredOrdersList.filterTypes.orderbookEmpty') || '订单簿为空'}</Option>
-          <Option value="PRICE_RANGE">{t('filteredOrdersList.filterTypes.priceRange') || '价格区间不符'}</Option>
+          <Option value="ORDER_DEPTH">{t('filteredOrdersList.filterTypes.orderDepth')}</Option>
+          <Option value="SPREAD">{t('filteredOrdersList.filterTypes.spread')}</Option>
+          <Option value="ORDERBOOK_DEPTH">{t('filteredOrdersList.filterTypes.orderbookDepth')}</Option>
+          <Option value="PRICE_VALIDITY">{t('filteredOrdersList.filterTypes.priceValidity')}</Option>
+          <Option value="MARKET_STATUS">{t('filteredOrdersList.filterTypes.marketStatus')}</Option>
+          <Option value="ORDERBOOK_ERROR">{t('filteredOrdersList.filterTypes.orderbookError')}</Option>
+          <Option value="ORDERBOOK_EMPTY">{t('filteredOrdersList.filterTypes.orderbookEmpty')}</Option>
+          <Option value="PRICE_RANGE">{t('filteredOrdersList.filterTypes.priceRange')}</Option>
         </Select>
       </div>
       
@@ -190,7 +190,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
             </div>
           ) : filteredOrders.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-              {t('filteredOrdersList.noFilteredOrders') || '暂无已过滤订单'}
+              {t('filteredOrdersList.noFilteredOrders')}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -226,7 +226,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
                         <Tag color={order.side === 'BUY' ? 'green' : 'red'}>
-                          {order.side === 'BUY' ? (t('order.buy') || '买入') : (t('order.sell') || '卖出')}
+                          {order.side === 'BUY' ? (t('order.buy')) : (t('order.sell'))}
                         </Tag>
                         {getFilterTypeTag(order.filterType)}
                       </div>
@@ -235,14 +235,14 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
                     <Divider style={{ margin: '12px 0' }} />
                     
                     <div style={{ marginBottom: '12px' }}>
-                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('filteredOrdersList.orderDetails') || '订单详情'}</div>
+                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('filteredOrdersList.orderDetails')}</div>
                       <div style={{ fontSize: '13px', color: '#333' }}>
-                        {t('filteredOrdersList.price') || '价格'}: {formatUSDC(order.price)} | {t('filteredOrdersList.size') || '数量'}: {formatUSDC(order.size)}
+                        {t('filteredOrdersList.price')}: {formatUSDC(order.price)} | {t('filteredOrdersList.size')}: {formatUSDC(order.size)}
                       </div>
                     </div>
                     
                     <div style={{ marginBottom: '12px' }}>
-                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('filteredOrdersList.filterReason') || '过滤原因'}</div>
+                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('filteredOrdersList.filterReason')}</div>
                       <div style={{ fontSize: '12px', color: '#333' }} title={order.filterReason}>
                         {order.filterReason}
                       </div>
@@ -250,7 +250,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
                     
                     <div style={{ marginBottom: '16px' }}>
                       <div style={{ fontSize: '12px', color: '#999' }}>
-                        {t('filteredOrdersList.createdAt') || '时间'}: {formattedDate}
+                        {t('filteredOrdersList.createdAt')}: {formattedDate}
                       </div>
                     </div>
                   </Card>
@@ -270,7 +270,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
             pageSize: limit,
             total,
             showSizeChanger: true,
-            showTotal: (total) => `${t('common.total') || '共'} ${total} ${t('common.items') || '条'}`,
+            showTotal: (total) => `${t('common.total')} ${total} ${t('common.items')}`,
             onChange: (newPage) => {
               setPage(newPage)
             }

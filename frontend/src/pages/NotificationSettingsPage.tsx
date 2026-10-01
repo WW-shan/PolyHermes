@@ -55,6 +55,8 @@ const NotificationSettingsPage: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingConfig, setEditingConfig] = useState<NotificationConfig | null>(null)
+  // 编辑时已配置的 botToken（后端返回的掩码值）
+  const [maskedBotToken, setMaskedBotToken] = useState<string | undefined>(undefined)
   const [form] = Form.useForm()
   const [testLoading, setTestLoading] = useState(false)
 
@@ -137,6 +139,7 @@ const NotificationSettingsPage: React.FC = () => {
   // 机器人配置相关方法
   const handleCreate = () => {
     setEditingConfig(null)
+    setMaskedBotToken(undefined)
     form.resetFields()
     form.setFieldsValue({
       type: 'telegram',
@@ -180,12 +183,14 @@ const NotificationSettingsPage: React.FC = () => {
       }
     }
 
+    // 后端返回的 botToken 为掩码值：不填入输入框，仅作为"已配置"提示；留空提交即保持原值
+    setMaskedBotToken(botToken || undefined)
     form.setFieldsValue({
       type: config.type,
       name: config.name,
       enabled: config.enabled,
       config: {
-        botToken: botToken,
+        botToken: '',
         chatIds: chatIds
       }
     })
@@ -248,7 +253,8 @@ const NotificationSettingsPage: React.FC = () => {
         name: values.name,
         enabled: values.enabled,
         config: {
-          botToken: values.config.botToken,
+          // 编辑时未输入新 token：回传掩码值，后端识别为保持原值
+          botToken: values.config.botToken?.trim() || (editingConfig?.id ? maskedBotToken ?? '' : ''),
           chatIds: chatIds
         }
       }
@@ -287,7 +293,7 @@ const NotificationSettingsPage: React.FC = () => {
   const getConfigFormComponent = (type: string) => {
     switch (type?.toLowerCase()) {
       case 'telegram':
-        return <TelegramConfigForm form={form} />
+        return <TelegramConfigForm form={form} maskedBotToken={editingConfig?.id ? maskedBotToken : undefined} />
       default:
         return null
     }

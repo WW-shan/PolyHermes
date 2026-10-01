@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Card,
@@ -50,7 +50,7 @@ const CryptoTailStrategyList: React.FC = () => {
   const [marketOptions, setMarketOptions] = useState<CryptoTailMarketOptionDto[]>([])
   const [triggersModalOpen, setTriggersModalOpen] = useState(false)
   const [triggersStrategyId, setTriggersStrategyId] = useState<number | null>(null)
-  const [triggerTab, setTriggerTab] = useState<'success' | 'fail'>('success')
+  const [triggerTab, setTriggerTab] = useState<'success' | 'fail' | 'pending'>('success')
   const [triggerDateRange, setTriggerDateRange] = useState<[Dayjs | null, Dayjs | null]>([null, null])
   const [triggerPage, setTriggerPage] = useState(1)
   const [triggerPageSize, setTriggerPageSize] = useState(20)
@@ -66,6 +66,7 @@ const CryptoTailStrategyList: React.FC = () => {
   const [pnlCurveCustomRange, setPnlCurveCustomRange] = useState<[Dayjs | null, Dayjs | null]>([null, null])
   const [pnlCurveData, setPnlCurveData] = useState<CryptoTailPnlCurveResponse | null>(null)
   const [pnlCurveLoading, setPnlCurveLoading] = useState(false)
+  const pnlCurveRequestSeqRef = useRef(0)
 
   /** 加密行情健康状态：只有 Chainlink TWAP 与币安均不可用时才强提醒。 */
   const [cryptoDataUnhealthy, setCryptoDataUnhealthy] = useState<Array<{ name: string; message: string }>>([])
@@ -227,7 +228,8 @@ const CryptoTailStrategyList: React.FC = () => {
           windowStartSeconds: payload.windowStartSeconds,
           windowEndSeconds: payload.windowEndSeconds,
           minPrice: payload.minPrice,
-          maxPrice: payload.maxPrice,
+          // 清空最高价时发送空字符串（后端识别为清空），undefined 会被视为不修改
+          maxPrice: payload.maxPrice ?? '',
           amountMode: payload.amountMode,
           amountValue: payload.amountValue,
           spreadMode: payload.spreadMode,
@@ -298,7 +300,7 @@ const CryptoTailStrategyList: React.FC = () => {
 
   const loadTriggerRecords = async (
     strategyId: number,
-    status: 'success' | 'fail',
+    status: 'success' | 'fail' | 'pending',
     opts?: TriggerLoadOpts
   ) => {
     const page = opts?.page ?? triggerPage
@@ -360,6 +362,8 @@ const CryptoTailStrategyList: React.FC = () => {
 
   const loadPnlCurve = async () => {
     if (pnlCurveStrategyId == null) return
+    // 请求序号：切换策略/时间范围后丢弃过期响应
+    const seq = ++pnlCurveRequestSeqRef.current
     setPnlCurveLoading(true)
     try {
       const { startDate, endDate } = getPnlCurveTimeRange()
@@ -368,17 +372,24 @@ const CryptoTailStrategyList: React.FC = () => {
         startDate,
         endDate
       })
+      if (seq !== pnlCurveRequestSeqRef.current) return
       if (res.data.code === 0 && res.data.data) {
         setPnlCurveData(res.data.data)
+      } else {
+        setPnlCurveData(null)
       }
     } catch (e) {
+      if (seq !== pnlCurveRequestSeqRef.current) return
       console.error('Failed to load PnL curve:', e)
+      setPnlCurveData(null)
     } finally {
-      setPnlCurveLoading(false)
+      if (seq === pnlCurveRequestSeqRef.current) setPnlCurveLoading(false)
     }
   }
 
   const openPnlCurve = (record: CryptoTailStrategyDto) => {
+    // 清空上一个策略的数据，避免弹窗打开时残留显示
+    setPnlCurveData(null)
     setPnlCurveStrategyId(record.id)
     setPnlCurveStrategyName(record.name ?? record.marketTitle ?? record.marketSlugPrefix ?? '')
     setPnlCurvePreset('all')
@@ -393,7 +404,7 @@ const CryptoTailStrategyList: React.FC = () => {
   }, [pnlCurveModalOpen, pnlCurveStrategyId, pnlCurvePreset, pnlCurveCustomRange])
 
   const onTriggerTabChange = (key: string) => {
-    const next = key === 'success' ? 'success' : 'fail'
+    const next = key === 'pending' ? 'pending' : key === 'success' ? 'success' : 'fail'
     setTriggerTab(next)
     setTriggers([])
     setTriggerPage(1)
@@ -1204,6 +1215,75 @@ const CryptoTailStrategyList: React.FC = () => {
                             <Typography.Text type={text === '-' ? 'secondary' : undefined}>{text}</Typography.Text>
                           )
                         }
+                      }
+                    ]}
+                    pagination={{
+                      current: triggerPage,
+                      pageSize: triggerPageSize,
+                      total: triggersTotal,
+                      showSizeChanger: true,
+                      showTotal: (total) => t('cryptoTailStrategy.triggerRecords.totalCount').replace('{count}', String(total)),
+                      onChange: onTriggerPageChange
+                    }}
+                    scroll={{ x: 540 }}
+                  />
+                </Spin>
+              )
+            },
+            {
+              // 已占位但下单结果尚未回写的记录；长时间停留在此状态需人工核实
+              key: 'pending',
+              label: t('cryptoTailStrategy.triggerRecords.pendingTab'),
+              children: (
+                <Spin spinning={triggersLoading}>
+                  <Alert type="warning" showIcon style={{ marginBottom: 12 }} message={t('cryptoTailStrategy.triggerRecords.pendingHint')} />
+                  <Table
+                    rowKey="id"
+                    size="small"
+                    dataSource={triggerTab === 'pending' ? triggers : []}
+                    locale={{
+                      emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('cryptoTailStrategy.triggerRecords.emptyPending')} />
+                    }}
+                    columns={[
+                      {
+                        title: t('cryptoTailStrategy.triggerRecords.triggerTime'),
+                        dataIndex: 'createdAt',
+                        key: 'createdAt',
+                        width: 172,
+                        render: (ts: number) => <Typography.Text>{new Date(ts).toLocaleString()}</Typography.Text>
+                      },
+                      {
+                        title: t('cryptoTailStrategy.triggerRecords.direction'),
+                        dataIndex: 'outcomeIndex',
+                        key: 'outcomeIndex',
+                        width: 80,
+                        align: 'center',
+                        render: (i: number) =>
+                          i === 0 ? (
+                            <Tag color="green">{t('cryptoTailStrategy.triggerRecords.up')}</Tag>
+                          ) : (
+                            <Tag color="volcano">{t('cryptoTailStrategy.triggerRecords.down')}</Tag>
+                          )
+                      },
+                      {
+                        title: t('cryptoTailStrategy.triggerRecords.triggerPrice'),
+                        dataIndex: 'triggerPrice',
+                        key: 'triggerPrice',
+                        width: 100,
+                        render: (v: string) => (formatNumber(v, 2) || '-')
+                      },
+                      {
+                        title: t('cryptoTailStrategy.triggerRecords.amount'),
+                        dataIndex: 'amountUsdc',
+                        key: 'amountUsdc',
+                        width: 110,
+                        render: (v: string) => `$${formatUSDC(v)}`
+                      },
+                      {
+                        title: t('cryptoTailStrategy.triggerRecords.status'),
+                        key: 'status',
+                        width: 110,
+                        render: () => <Tag color="gold">{t('cryptoTailStrategy.triggerRecords.statusPending')}</Tag>
                       }
                     ]}
                     pagination={{

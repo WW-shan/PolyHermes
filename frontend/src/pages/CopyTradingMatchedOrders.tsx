@@ -48,10 +48,10 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
         setOrders((data.list || []) as MatchedOrderInfo[])
         setTotal(data.total || 0)
       } else {
-        message.error(response.data.msg || '获取匹配关系列表失败')
+        message.error(response.data.msg || t('ordersPage.fetchMatchedFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || '获取匹配关系列表失败')
+      message.error(error.message || t('ordersPage.fetchMatchedFailed'))
     } finally {
       setLoading(false)
     }
@@ -65,7 +65,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
   
   const columns = [
     {
-      title: '卖出订单ID',
+      title: t('ordersPage.sellOrderId'),
       dataIndex: 'sellOrderId',
       key: 'sellOrderId',
       width: isMobile ? 100 : 150,
@@ -79,7 +79,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '买入订单ID',
+      title: t('ordersPage.buyOrderId'),
       dataIndex: 'buyOrderId',
       key: 'buyOrderId',
       width: isMobile ? 100 : 150,
@@ -93,7 +93,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '匹配数量',
+      title: t('ordersPage.matchedQuantity'),
       dataIndex: 'matchedQuantity',
       key: 'matchedQuantity',
       width: isMobile ? 80 : 100,
@@ -102,7 +102,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '买入价格',
+      title: t('ordersPage.buyPrice'),
       dataIndex: 'buyPrice',
       key: 'buyPrice',
       width: isMobile ? 80 : 100,
@@ -111,7 +111,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '卖出价格',
+      title: t('ordersPage.sellPrice'),
       dataIndex: 'sellPrice',
       key: 'sellPrice',
       width: isMobile ? 80 : 100,
@@ -120,7 +120,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '盈亏',
+      title: t('ordersPage.pnl'),
       dataIndex: 'realizedPnl',
       key: 'realizedPnl',
       width: isMobile ? 100 : 120,
@@ -135,7 +135,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '匹配时间',
+      title: t('ordersPage.matchedAt'),
       dataIndex: 'matchedAt',
       key: 'matchedAt',
       width: isMobile ? 120 : 160,
@@ -156,15 +156,15 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
         <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Button icon={<LeftOutlined />} onClick={() => navigate(-1)}>
-              {t('common.back') || '返回'}
+              {t('common.back')}
             </Button>
-            <h2 style={{ margin: 0 }}>匹配关系列表</h2>
+            <h2 style={{ margin: 0 }}>{t('ordersPage.matchedTitle')}</h2>
           </div>
         </div>
         
         <div style={{ marginBottom: 16, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
           <Input
-            placeholder="筛选卖出订单ID"
+            placeholder={t('ordersPage.filterSellOrderId')}
             allowClear
             style={{ width: isMobile ? '100%' : 200 }}
             value={filters.sellOrderId}
@@ -172,14 +172,14 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
           />
           
           <Input
-            placeholder="筛选买入订单ID"
+            placeholder={t('ordersPage.filterBuyOrderId')}
             allowClear
             style={{ width: isMobile ? '100%' : 200 }}
             value={filters.buyOrderId}
             onChange={(e) => setFilters({ ...filters, buyOrderId: e.target.value || undefined })}
           />
           
-          <Button onClick={fetchOrders}>查询</Button>
+          <Button onClick={fetchOrders}>{t('ordersPage.search')}</Button>
         </div>
         
         {isMobile ? (
@@ -191,7 +191,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
               </div>
             ) : orders.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-                暂无匹配关系
+                {t('ordersPage.noMatched')}
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -217,7 +217,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
                     >
                       {/* 订单ID */}
                       <div style={{ marginBottom: '12px' }}>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>卖出订单ID</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.sellOrderId')}</div>
                         <div style={{ 
                           fontSize: '13px', 
                           fontWeight: '500',
@@ -226,7 +226,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
                         }}>
                           {order.sellOrderId.slice(0, 8)}...{order.sellOrderId.slice(-6)}
                         </div>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>买入订单ID</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.buyOrderId')}</div>
                         <div style={{ 
                           fontSize: '13px', 
                           fontWeight: '500',
@@ -240,7 +240,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
                       
                       {/* 匹配信息 */}
                       <div style={{ marginBottom: '12px' }}>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>匹配数量</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.matchedQuantity')}</div>
                         <div style={{ fontSize: '14px', fontWeight: '500' }}>
                           {formatUSDC(order.matchedQuantity)}
                         </div>
@@ -248,15 +248,15 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
                       
                       {/* 价格信息 */}
                       <div style={{ marginBottom: '12px' }}>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>价格信息</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.priceInfo')}</div>
                         <div style={{ fontSize: '13px', color: '#333' }}>
-                          买入: {formatUSDC(order.buyPrice)} | 卖出: {formatUSDC(order.sellPrice)}
+                          {t('ordersPage.buy')}: {formatUSDC(order.buyPrice)} | {t('ordersPage.sell')}: {formatUSDC(order.sellPrice)}
                         </div>
                       </div>
                       
                       {/* 盈亏 */}
                       <div style={{ marginBottom: '16px' }}>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>盈亏</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.pnl')}</div>
                         <div style={{ 
                           fontSize: '16px', 
                           fontWeight: 'bold',
@@ -269,7 +269,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
                       {/* 匹配时间 */}
                       <div style={{ marginBottom: '16px' }}>
                         <div style={{ fontSize: '12px', color: '#999' }}>
-                          匹配时间: {formattedDate}
+                          {t('ordersPage.matchedAt')}: {formattedDate}
                         </div>
                       </div>
                     </Card>
@@ -290,7 +290,7 @@ const CopyTradingMatchedOrdersPage: React.FC = () => {
               pageSize: limit,
               total,
               showSizeChanger: true,
-              showTotal: (total) => `共 ${total} 条`,
+              showTotal: (total) => t('templateList.totalCount', { total }),
               onChange: (newPage, newLimit) => {
                 setPage(newPage)
                 setLimit(newLimit)

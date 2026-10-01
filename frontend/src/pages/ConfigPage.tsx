@@ -15,21 +15,21 @@ const ConfigPage: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: '16px' }}>
-        <Title level={2} style={{ margin: 0 }}>{t('configPage.title') || '全局配置'}</Title>
+        <Title level={2} style={{ margin: 0 }}>{t('configPage.title')}</Title>
       </div>
       
       <Card>
         <Alert
-          message={t('configPage.message') || '配置功能已迁移'}
+          message={t('configPage.message')}
           description={
             <div>
-              <p>{t('configPage.description') || '全局配置功能已迁移到以下页面：'}</p>
+              <p>{t('configPage.description')}</p>
               <ul>
-                <li><strong>{t('configPage.templates') || '跟单模板'}</strong>：{t('configPage.templatesDesc') || '管理跟单参数（比例、金额、风险控制等）'}</li>
-                <li><strong>{t('configPage.copyTrading') || '跟单配置'}</strong>：{t('configPage.copyTradingDesc') || '将账户、模板和 Leader 关联，启用跟单关系'}</li>
-                <li><strong>{t('configPage.systemSettings') || '系统管理'}</strong>：{t('configPage.systemSettingsDesc') || '配置代理、查看 API 健康状态'}</li>
+                <li><strong>{t('configPage.templates')}</strong>：{t('configPage.templatesDesc')}</li>
+                <li><strong>{t('configPage.copyTrading')}</strong>：{t('configPage.copyTradingDesc')}</li>
+                <li><strong>{t('configPage.systemSettings')}</strong>：{t('configPage.systemSettingsDesc')}</li>
               </ul>
-              <p>{t('configPage.footer') || '请使用上述页面进行配置管理。'}</p>
+              <p>{t('configPage.footer')}</p>
             </div>
           }
           type="info"

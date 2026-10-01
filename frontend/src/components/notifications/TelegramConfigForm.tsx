@@ -6,12 +6,14 @@ import { apiService } from '../../services/api'
 
 interface TelegramConfigFormProps {
   form: any
+  /** 编辑时后端返回的掩码 botToken（已配置）；存在时输入框可留空表示保持原值 */
+  maskedBotToken?: string
 }
 
 /**
  * Telegram 配置表单组件
  */
-const TelegramConfigForm: React.FC<TelegramConfigFormProps> = ({ form }) => {
+const TelegramConfigForm: React.FC<TelegramConfigFormProps> = ({ form, maskedBotToken }) => {
   const { t } = useTranslation()
   const [loading, setLoading] = useState(false)
   
@@ -20,7 +22,8 @@ const TelegramConfigForm: React.FC<TelegramConfigFormProps> = ({ form }) => {
    */
   const handleGetChatIds = async () => {
     const botToken = form.getFieldValue(['config', 'botToken'])
-    if (!botToken || botToken.trim() === '') {
+    // 掩码 token 无法用于查询 Chat ID，需要用户输入完整的 token
+    if (!botToken || botToken.trim() === '' || botToken.includes('****')) {
       message.warning(t('notificationSettings.getChatIdsNoToken'))
       return
     }
@@ -83,11 +86,13 @@ const TelegramConfigForm: React.FC<TelegramConfigFormProps> = ({ form }) => {
       >
         <Form.Item
           name={['config', 'botToken']}
-          rules={[{ required: true, message: t('telegramConfig.botTokenRequired') }]}
+          rules={maskedBotToken ? [] : [{ required: true, message: t('telegramConfig.botTokenRequired') }]}
           style={{ marginBottom: 16 }}
         >
           <Input.Password
-            placeholder={t('telegramConfig.botTokenPlaceholder')}
+            placeholder={maskedBotToken
+              ? t('telegramConfig.botTokenConfiguredPlaceholder', { value: maskedBotToken })
+              : t('telegramConfig.botTokenPlaceholder')}
             prefix={t('telegramConfig.botToken')}
             suffix={
               <Button

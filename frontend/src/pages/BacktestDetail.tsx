@@ -4,6 +4,7 @@ import { Card, Descriptions, Button, Tag, Space, Table, message, Row, Col, Stati
 import { ArrowLeftOutlined, ReloadOutlined, DeleteOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { formatUSDC } from '../utils'
+import { buildBacktestPreFilledConfig, type CopyTradingPreFilledConfig } from '../utils/backtestPrefill'
 import { backtestService } from '../services/api'
 import type { BacktestTaskDto, BacktestConfigDto, BacktestStatisticsDto, BacktestTradeDto } from '../types/backtest'
 import { useMediaQuery } from 'react-responsive'
@@ -29,7 +30,7 @@ const BacktestDetail: React.FC = () => {
 
   // 创建跟单配置 Modal
   const [addCopyTradingModalVisible, setAddCopyTradingModalVisible] = useState(false)
-  const [preFilledConfig, setPreFilledConfig] = useState<any>(null)
+  const [preFilledConfig, setPreFilledConfig] = useState<CopyTradingPreFilledConfig | undefined>(undefined)
 
   // 获取回测任务详情
   const fetchTaskDetail = async () => {
@@ -186,21 +187,8 @@ const BacktestDetail: React.FC = () => {
       return
     }
 
-    // 预填充回测任务的配置参数（从 config 中获取）
-    const preFilled = {
-      leaderId: task.leaderId,
-      copyMode: config.copyMode,
-      copyRatio: config.copyMode === 'RATIO' ? parseFloat(config.copyRatio) * 100 : undefined,
-      fixedAmount: config.copyMode === 'FIXED' ? config.fixedAmount : undefined,
-      maxOrderSize: parseFloat(config.maxOrderSize),
-      minOrderSize: parseFloat(config.minOrderSize),
-      maxDailyLoss: parseFloat(config.maxDailyLoss),
-      maxDailyOrders: config.maxDailyOrders,
-      supportSell: config.supportSell,
-      keywordFilterMode: config.keywordFilterMode || 'DISABLED',
-      keywords: config.keywords || [],
-      configName: `回测任务-${task.taskName}`
-    }
+    // 预填充回测任务的全部配置参数（含价格区间、最大仓位），默认创建为停用状态
+    const preFilled = buildBacktestPreFilledConfig(task.leaderId, task.taskName, config, t('backtest.copyConfigNamePrefix'))
 
     console.log('[BacktestDetail] Generated preFilled config:', preFilled)
     console.log('[BacktestDetail] Setting preFilledConfig and opening modal')
@@ -476,7 +464,7 @@ const BacktestDetail: React.FC = () => {
           {/* 资金变化图表 */}
           {allTrades.length > 0 && (
             <Card title={t('backtest.balanceChart')}>
-              <BacktestChart trades={allTrades} />
+              <BacktestChart trades={allTrades} initialBalance={task?.initialBalance} />
             </Card>
           )}
 
@@ -509,12 +497,12 @@ const BacktestDetail: React.FC = () => {
         open={addCopyTradingModalVisible}
         onClose={() => {
           setAddCopyTradingModalVisible(false)
-          setPreFilledConfig(null)
+          setPreFilledConfig(undefined)
         }}
         onSuccess={() => {
           message.success(t('backtest.createCopyTradingSuccess'))
           setAddCopyTradingModalVisible(false)
-          setPreFilledConfig(null)
+          setPreFilledConfig(undefined)
         }}
         preFilledConfig={preFilledConfig}
       />

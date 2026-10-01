@@ -6,6 +6,7 @@ import { useAccountStore } from '../store/accountStore'
 import type { Account } from '../types'
 import { useMediaQuery } from 'react-responsive'
 import { formatUSDC } from '../utils'
+import { CHAIN_TX_PROCESSING_CODE } from '../utils/chainTx'
 import AccountImportForm from '../components/AccountImportForm'
 import AccountSetupStatusBlock from '../components/AccountSetupStatusBlock'
 import apiService from '../services/api'
@@ -38,32 +39,39 @@ const AccountList: React.FC = () => {
       setWrapLoading(prev => ({ ...prev, [account.id]: true }))
       const res = await apiService.accounts.getUsdceBalance(account.id)
       if (res.data.code !== 0 || !res.data.data) {
-        message.error(res.data.msg || '查询 USDC.e 余额失败')
+        message.error(res.data.msg || t('accountList.wrap.balanceFetchFailed'))
         return
       }
       const balance = parseFloat(res.data.data.balance)
       if (balance <= 0) {
-        message.info('USDC.e 余额为 0，无需迁移')
+        message.info(t('accountList.wrap.zeroBalance'))
         return
       }
       Modal.confirm({
-        title: 'USDC.e → pUSD 迁移',
-        content: `检测到 ${balance.toFixed(2)} USDC.e，将全部 wrap 为 pUSD。确认继续？`,
-        okText: '确认迁移',
-        cancelText: '取消',
+        title: t('accountList.wrap.title'),
+        content: t('accountList.wrap.confirmContent', { amount: balance.toFixed(2) }),
+        okText: t('accountList.wrap.confirmOk'),
+        cancelText: t('common.cancel'),
         onOk: async () => {
-          const wrapRes = await apiService.accounts.wrapToPusd(account.id)
-          if (wrapRes.data.code === 0) {
-            const txHash = wrapRes.data.data?.transactionHash
-            message.success(txHash ? `迁移成功，交易: ${txHash.slice(0, 10)}...` : '迁移成功（无需操作）')
-            fetchAccountBalance(account.id)
-          } else {
-            message.error(wrapRes.data.msg || '迁移失败')
+          try {
+            const wrapRes = await apiService.accounts.wrapToPusd(account.id)
+            if (wrapRes.data.code === 0) {
+              const txHash = wrapRes.data.data?.transactionHash
+              message.success(txHash ? t('accountList.wrap.successWithTx', { tx: `${txHash.slice(0, 10)}...` }) : t('accountList.wrap.successNoop'))
+              fetchAccountBalance(account.id)
+            } else if (wrapRes.data.code === CHAIN_TX_PROCESSING_CODE) {
+              Modal.warning({ title: t('chainTx.processingTitle'), content: wrapRes.data.msg || t('chainTx.processing') })
+            } else {
+              message.error(wrapRes.data.msg || t('accountList.wrap.failed'))
+            }
+          } catch (err: any) {
+            // 捕获异常，避免确认框 onOk 抛出未处理的 Promise 拒绝
+            message.error(err.response?.data?.msg || err.message || t('accountList.wrap.failed'))
           }
         }
       })
     } catch (e: any) {
-      message.error(e.message || '迁移失败')
+      message.error(e.message || t('accountList.wrap.failed'))
     } finally {
       setWrapLoading(prev => ({ ...prev, [account.id]: false }))
     }
@@ -132,14 +140,14 @@ const AccountList: React.FC = () => {
 
   const handleCopy = (text: string) => {
     if (!text) {
-      message.warning(t('accountList.copyFailed') || '复制失败：地址为空')
+      message.warning(t('accountList.copyFailed'))
       return
     }
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(() => {
         message.success({
-          content: t('accountList.copySuccess') || '已复制到剪贴板',
+          content: t('accountList.copySuccess'),
           duration: 2
         })
       }).catch((err) => {
@@ -167,15 +175,15 @@ const AccountList: React.FC = () => {
       const successful = document.execCommand('copy')
       if (successful) {
         message.success({
-          content: t('accountList.copySuccess') || '已复制到剪贴板',
+          content: t('accountList.copySuccess'),
           duration: 2
         })
       } else {
-        message.error(t('accountList.copyFailed') || '复制失败')
+        message.error(t('accountList.copyFailed'))
       }
     } catch (err) {
       console.error('复制失败:', err)
-      message.error(t('accountList.copyFailed') || '复制失败')
+      message.error(t('accountList.copyFailed'))
     } finally {
       document.body.removeChild(textArea)
     }
@@ -955,18 +963,18 @@ const AccountList: React.FC = () => {
             size={isMobile ? 'middle' : 'large'}
           >
             <Alert
-              message={t('accountList.editTip') || '编辑账户'}
-              description={t('accountList.editTipDesc') || '只能编辑账户名称，API 凭证需要通过导入账户功能更新。'}
+              message={t('accountList.editTip')}
+              description={t('accountList.editTipDesc')}
               type="info"
               showIcon
               style={{ marginBottom: '24px' }}
             />
 
             <Form.Item
-              label={t('accountList.accountName') || '账户名称'}
+              label={t('accountList.accountName')}
               name="accountName"
             >
-              <Input placeholder={t('accountList.accountNamePlaceholder') || '请输入账户名称（可选）'} />
+              <Input placeholder={t('accountList.accountNamePlaceholder')} />
             </Form.Item>
 
             <Form.Item>

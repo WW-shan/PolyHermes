@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
 import type { CopyTradingTemplate } from '../types'
 import { useMediaQuery } from 'react-responsive'
-import { formatUSDC } from '../utils'
+import { formatUSDC, parsePercentInput } from '../utils'
 
 const TemplateList: React.FC = () => {
   const { t, i18n } = useTranslation()
@@ -32,10 +32,10 @@ const TemplateList: React.FC = () => {
       if (response.data.code === 0 && response.data.data) {
         setTemplates(response.data.data.list || [])
       } else {
-        message.error(response.data.msg || t('templateList.fetchFailed') || '获取模板列表失败')
+        message.error(response.data.msg || t('templateList.fetchFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('templateList.fetchFailed') || '获取模板列表失败')
+      message.error(error.message || t('templateList.fetchFailed'))
     } finally {
       setLoading(false)
     }
@@ -45,13 +45,13 @@ const TemplateList: React.FC = () => {
     try {
       const response = await apiService.templates.delete({ templateId })
       if (response.data.code === 0) {
-        message.success(t('templateList.deleteSuccess') || '删除模板成功')
+        message.success(t('templateList.deleteSuccess'))
         fetchTemplates()
       } else {
-        message.error(response.data.msg || t('templateList.deleteFailed') || '删除模板失败')
+        message.error(response.data.msg || t('templateList.deleteFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('templateList.deleteFailed') || '删除模板失败')
+      message.error(error.message || t('templateList.deleteFailed'))
     }
   }
   
@@ -61,7 +61,7 @@ const TemplateList: React.FC = () => {
     
     // 填充表单数据
     copyForm.setFieldsValue({
-      templateName: `${template.templateName}-${t('templateList.copySuffix') || '副本'}`,
+      templateName: `${template.templateName}-${t('templateList.copySuffix')}`,
       copyMode: template.copyMode,
       copyRatio: template.copyRatio ? parseFloat(template.copyRatio) * 100 : 100,
       fixedAmount: template.fixedAmount ? parseFloat(template.fixedAmount) : undefined,
@@ -83,7 +83,7 @@ const TemplateList: React.FC = () => {
   const handleCopySubmit = async (values: any) => {
     // 前端校验：如果填写了 minOrderSize，必须 >= 1
     if (values.copyMode === 'RATIO' && values.minOrderSize !== undefined && values.minOrderSize !== null && values.minOrderSize !== '' && Number(values.minOrderSize) < 1) {
-      message.error(t('templateList.minAmountError') || '最小金额必须 >= 1')
+      message.error(t('templateList.minAmountError'))
       return
     }
     
@@ -91,16 +91,16 @@ const TemplateList: React.FC = () => {
     if (values.copyMode === 'FIXED') {
       const fixedAmount = values.fixedAmount
       if (fixedAmount === undefined || fixedAmount === null || fixedAmount === '') {
-        message.error(t('templateList.fixedAmountRequired') || '请输入固定跟单金额')
+        message.error(t('templateList.fixedAmountRequired'))
         return
       }
       const amount = Number(fixedAmount)
       if (isNaN(amount)) {
-        message.error(t('templateList.invalidNumber') || '请输入有效的数字')
+        message.error(t('templateList.invalidNumber'))
         return
       }
       if (amount < 1) {
-        message.error(t('templateList.fixedAmountError') || '固定金额必须 >= 1，请重新输入')
+        message.error(t('templateList.fixedAmountError'))
         return
       }
     }
@@ -126,15 +126,15 @@ const TemplateList: React.FC = () => {
       })
       
       if (response.data.code === 0) {
-        message.success(t('templateList.copySuccess') || '复制模板成功')
+        message.success(t('templateList.copySuccess'))
         setCopyModalVisible(false)
         copyForm.resetFields()
         fetchTemplates()
       } else {
-        message.error(response.data.msg || t('templateList.copyFailed') || '复制模板失败')
+        message.error(response.data.msg || t('templateList.copyFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('templateList.copyFailed') || '复制模板失败')
+      message.error(error.message || t('templateList.copyFailed'))
     } finally {
       setCopyLoading(false)
     }
@@ -152,27 +152,27 @@ const TemplateList: React.FC = () => {
   
   const columns = [
     {
-      title: t('templateList.templateName') || '模板名称',
+      title: t('templateList.templateName'),
       dataIndex: 'templateName',
       key: 'templateName',
       render: (text: string) => <strong>{text}</strong>
     },
     {
-      title: t('templateList.copyMode') || '跟单模式',
+      title: t('templateList.copyMode'),
       dataIndex: 'copyMode',
       key: 'copyMode',
       render: (mode: string) => (
         <Tag color={mode === 'RATIO' ? 'blue' : 'green'}>
-          {mode === 'RATIO' ? t('templateList.ratio') || '比例' : t('templateList.fixedAmount') || '固定金额'}
+          {mode === 'RATIO' ? t('templateList.ratio') : t('templateList.fixedAmount')}
         </Tag>
       )
     },
     {
-      title: t('templateList.copyConfig') || '跟单配置',
+      title: t('templateList.copyConfig'),
       key: 'copyConfig',
       render: (_: any, record: CopyTradingTemplate) => {
         if (record.copyMode === 'RATIO') {
-          return `${t('templateList.ratio') || '比例'} ${record.copyRatio}x`
+          return `${t('templateList.ratio')} ${record.copyRatio}x`
         } else if (record.copyMode === 'FIXED' && record.fixedAmount) {
           return `$${formatUSDC(record.fixedAmount)}`
         }
@@ -180,17 +180,17 @@ const TemplateList: React.FC = () => {
       }
     },
     {
-      title: t('templateList.supportSell') || '跟单卖出',
+      title: t('templateList.supportSell'),
       dataIndex: 'supportSell',
       key: 'supportSell',
       render: (support: boolean) => (
         <Tag color={support ? 'green' : 'red'}>
-          {support ? t('common.yes') || '是' : t('common.no') || '否'}
+          {support ? t('common.yes') : t('common.no')}
         </Tag>
       )
     },
     {
-      title: t('common.createdAt') || '创建时间',
+      title: t('common.createdAt'),
       dataIndex: 'createdAt',
       key: 'createdAt',
       render: (timestamp: number) => {
@@ -208,13 +208,13 @@ const TemplateList: React.FC = () => {
       defaultSortOrder: 'descend' as const
     },
     {
-      title: t('common.actions') || '操作',
+      title: t('common.actions'),
       key: 'action',
       width: isMobile ? 120 : 120,
       fixed: 'right' as const,
       render: (_: any, record: CopyTradingTemplate) => (
         <Space size={4}>
-          <Tooltip title={t('common.edit') || '编辑'}>
+          <Tooltip title={t('common.edit')}>
             <div
               onClick={() => navigate(`/templates/edit/${record.id}`)}
               style={{
@@ -234,7 +234,7 @@ const TemplateList: React.FC = () => {
             </div>
           </Tooltip>
 
-          <Tooltip title={t('templateList.copy') || '复制'}>
+          <Tooltip title={t('templateList.copy')}>
             <div
               onClick={() => handleCopy(record)}
               style={{
@@ -255,13 +255,13 @@ const TemplateList: React.FC = () => {
           </Tooltip>
 
           <Popconfirm
-            title={t('templateList.deleteConfirm') || '确定要删除这个模板吗？'}
-            description={t('templateList.deleteConfirmDesc') || '删除后无法恢复，请确保没有跟单关系在使用该模板'}
+            title={t('templateList.deleteConfirm')}
+            description={t('templateList.deleteConfirmDesc')}
             onConfirm={() => handleDelete(record.id)}
-            okText={t('common.confirm') || '确定'}
-            cancelText={t('common.cancel') || '取消'}
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
           >
-            <Tooltip title={t('common.delete') || '删除'}>
+            <Tooltip title={t('common.delete')}>
               <div
                 style={{
                   display: 'flex',
@@ -288,17 +288,17 @@ const TemplateList: React.FC = () => {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-        <h2 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>{t('templateList.title') || '跟单模板管理'}</h2>
+        <h2 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>{t('templateList.title')}</h2>
         <Space size={8}>
           <Input
-            placeholder={t('templateList.searchPlaceholder') || '搜索模板名称'}
+            placeholder={t('templateList.searchPlaceholder')}
             allowClear
             style={{ width: isMobile ? 120 : 200 }}
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             suffix={<SearchOutlined />}
           />
-          <Tooltip title={t('templateList.addTemplate') || '新增模板'}>
+          <Tooltip title={t('templateList.addTemplate')}>
             <Button
               type="primary"
               icon={<PlusOutlined />}
@@ -320,7 +320,7 @@ const TemplateList: React.FC = () => {
                 <Spin size="large" />
               </div>
             ) : filteredTemplates.length === 0 ? (
-              <Empty description={t('templateList.noData') || '暂无模板数据'} />
+              <Empty description={t('templateList.noData')} />
             ) : (
               <List
                 dataSource={filteredTemplates}
@@ -348,7 +348,7 @@ const TemplateList: React.FC = () => {
                         </div>
                         <div style={{ fontSize: '12px', opacity: '0.9' }}>
                           {template.copyMode === 'RATIO' 
-                            ? `${t('templateList.ratioMode') || '比例模式'} ${(parseFloat(template.copyRatio || '0') * 100).toFixed(0).replace(/\.0+$/, '')}%`
+                            ? `${t('templateList.ratioMode')} ${(parseFloat(template.copyRatio || '0') * 100).toFixed(0).replace(/\.0+$/, '')}%`
                             : `$${formatUSDC(template.fixedAmount || '0')}`
                           }
                         </div>
@@ -366,20 +366,20 @@ const TemplateList: React.FC = () => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                           <div>
                             <div style={{ fontSize: '10px', color: '#8c8c8c' }}>
-                              {t('templateList.supportSell') || '跟单卖出'}
+                              {t('templateList.supportSell')}
                             </div>
                             <div style={{ fontSize: '12px', fontWeight: '500' }}>
                               <Tag color={template.supportSell ? 'green' : 'red'} style={{ margin: 0, fontSize: '10px' }}>
-                                {template.supportSell ? (t('common.yes') || '是') : (t('common.no') || '否')}
+                                {template.supportSell ? (t('common.yes')) : (t('common.no'))}
                               </Tag>
                             </div>
                           </div>
                           <div style={{ textAlign: 'right' }}>
                             <div style={{ fontSize: '10px', color: '#8c8c8c' }}>
-                              {t('templateList.maxDailyOrders') || '每日最大'}
+                              {t('templateList.maxDailyOrders')}
                             </div>
                             <div style={{ fontSize: '12px', fontWeight: '500', color: '#1890ff' }}>
-                              {template.maxDailyOrders} {t('common.orders') || '单'}
+                              {template.maxDailyOrders} {t('common.orders')}
                             </div>
                           </div>
                         </div>
@@ -393,15 +393,15 @@ const TemplateList: React.FC = () => {
                           color: '#8c8c8c',
                           borderBottom: '1px solid #f0f0f0'
                         }}>
-                          <span style={{ color: '#d48806' }}>{t('templateList.amountLimit') || '金额限制'}: </span>
+                          <span style={{ color: '#d48806' }}>{t('templateList.amountLimit')}: </span>
                           {template.maxOrderSize && (
-                            <span>{t('templateList.max') || '最大'} ${formatUSDC(template.maxOrderSize)}</span>
+                            <span>{t('templateList.max')} ${formatUSDC(template.maxOrderSize)}</span>
                           )}
                           {template.maxOrderSize && template.minOrderSize && <span> | </span>}
                           {template.minOrderSize && (
-                            <span>{t('templateList.min') || '最小'} ${formatUSDC(template.minOrderSize)}</span>
+                            <span>{t('templateList.min')} ${formatUSDC(template.minOrderSize)}</span>
                           )}
-                          {!template.maxOrderSize && !template.minOrderSize && <span style={{ color: '#bfbfbf' }}>{t('templateList.notSet') || '未设置'}</span>}
+                          {!template.maxOrderSize && !template.minOrderSize && <span style={{ color: '#bfbfbf' }}>{t('templateList.notSet')}</span>}
                         </div>
                       )}
 
@@ -411,7 +411,7 @@ const TemplateList: React.FC = () => {
                         fontSize: '11px',
                         color: '#8c8c8c'
                       }}>
-                        {t('common.createdAt') || '创建时间'}: {new Date(template.createdAt).toLocaleString(i18n.language || 'zh-CN', {
+                        {t('common.createdAt')}: {new Date(template.createdAt).toLocaleString(i18n.language || 'zh-CN', {
                           year: 'numeric',
                           month: '2-digit',
                           day: '2-digit',
@@ -427,37 +427,37 @@ const TemplateList: React.FC = () => {
                         justifyContent: 'space-around',
                         alignItems: 'center'
                       }}>
-                        <Tooltip title={t('common.edit') || '编辑'}>
+                        <Tooltip title={t('common.edit')}>
                           <div
                             onClick={() => navigate(`/templates/edit/${template.id}`)}
                             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}
                           >
                             <EditOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
-                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.edit') || '编辑'}</span>
+                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.edit')}</span>
                           </div>
                         </Tooltip>
 
-                        <Tooltip title={t('templateList.copy') || '复制'}>
+                        <Tooltip title={t('templateList.copy')}>
                           <div
                             onClick={() => handleCopy(template)}
                             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}
                           >
                             <CopyOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
-                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('templateList.copy') || '复制'}</span>
+                            <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('templateList.copy')}</span>
                           </div>
                         </Tooltip>
 
                         <Popconfirm
-                          title={t('templateList.deleteConfirm') || '确定要删除这个模板吗？'}
-                          description={t('templateList.deleteConfirmDesc') || '删除后无法恢复，请确保没有跟单关系在使用该模板'}
+                          title={t('templateList.deleteConfirm')}
+                          description={t('templateList.deleteConfirmDesc')}
                           onConfirm={() => handleDelete(template.id)}
-                          okText={t('common.confirm') || '确定'}
-                          cancelText={t('common.cancel') || '取消'}
+                          okText={t('common.confirm')}
+                          cancelText={t('common.cancel')}
                         >
-                          <Tooltip title={t('common.delete') || '删除'}>
+                          <Tooltip title={t('common.delete')}>
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}>
                               <DeleteOutlined style={{ fontSize: '18px', color: '#ff4d4f' }} />
-                              <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.delete') || '删除'}</span>
+                              <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.delete')}</span>
                             </div>
                           </Tooltip>
                         </Popconfirm>
@@ -478,14 +478,14 @@ const TemplateList: React.FC = () => {
             pagination={{
               pageSize: 20,
               showSizeChanger: true,
-              showTotal: (total) => `共 ${total} 条`
+              showTotal: (total) => t('templateList.totalCount', { total })
             }}
           />
         )}
       </Card>
       
       <Modal
-        title="复制模板"
+        title={t('templateList.copyTemplateTitle')}
         open={copyModalVisible}
         onCancel={handleCopyCancel}
         footer={null}
@@ -498,31 +498,31 @@ const TemplateList: React.FC = () => {
           onFinish={handleCopySubmit}
         >
           <Form.Item
-            label="模板名称"
+            label={t('templateAdd.templateName')}
             name="templateName"
-            tooltip="模板的唯一标识名称，用于区分不同的跟单配置模板。模板名称必须唯一，不能与其他模板重名。"
-            rules={[{ required: true, message: '请输入模板名称' }]}
+            tooltip={t('templateAdd.templateNameTooltip')}
+            rules={[{ required: true, message: t('templateAdd.templateNameRequired') }]}
           >
-            <Input placeholder="请输入模板名称" />
+            <Input placeholder={t('templateAdd.templateNamePlaceholder')} />
           </Form.Item>
           
           <Form.Item
-            label="跟单金额模式"
+            label={t('templateAdd.copyMode')}
             name="copyMode"
-            tooltip="选择跟单金额的计算方式。比例模式：跟单金额随 Leader 订单大小按比例变化；固定金额模式：无论 Leader 订单大小如何，跟单金额都固定不变。复制模板时，跟单模式保持原模板设置，不可修改。"
+            tooltip={t('templateAdd.copyModeTooltip')}
             rules={[{ required: true }]}
           >
             <Radio.Group disabled>
-              <Radio value="RATIO">比例模式</Radio>
-              <Radio value="FIXED">固定金额模式</Radio>
+              <Radio value="RATIO">{t('templateAdd.ratioMode')}</Radio>
+              <Radio value="FIXED">{t('templateAdd.fixedAmountMode')}</Radio>
             </Radio.Group>
           </Form.Item>
           
           {copyMode === 'RATIO' && (
             <Form.Item
-              label="跟单比例"
+              label={t('templateAdd.copyRatio')}
               name="copyRatio"
-              tooltip="跟单比例表示跟单金额相对于 Leader 订单金额的百分比。例如：100% 表示 1:1 跟单，50% 表示半仓跟单，200% 表示双倍跟单"
+              tooltip={t('templateAdd.copyRatioTooltip')}
             >
               <InputNumber
                 min={0.01}
@@ -531,12 +531,8 @@ const TemplateList: React.FC = () => {
                 precision={2}
                 style={{ width: '100%' }}
                 suffix="%"
-                placeholder="例如：100 表示 100%（1:1 跟单），默认 100%"
-                parser={(value) => {
-                  const parsed = parseFloat(value || '0')
-                  if (parsed > 10000) return 10000
-                  return parsed
-                }}
+                placeholder={t('templateAdd.copyRatioPlaceholder')}
+                parser={(value) => parsePercentInput(value)}
                 formatter={(value) => {
                   if (!value && value !== 0) return ''
                   const num = parseFloat(value.toString())
@@ -550,19 +546,19 @@ const TemplateList: React.FC = () => {
           
           {copyMode === 'FIXED' && (
             <Form.Item
-              label="固定跟单金额 ($)"
+              label={t('templateAdd.fixedAmount')}
               name="fixedAmount"
               rules={[
-                { required: true, message: '请输入固定跟单金额' },
+                { required: true, message: t('templateAdd.fixedAmountRequired') },
                 { 
                   validator: (_, value) => {
                     if (value !== undefined && value !== null && value !== '') {
                       const amount = Number(value)
                       if (isNaN(amount)) {
-                        return Promise.reject(new Error('请输入有效的数字'))
+                        return Promise.reject(new Error(t('templateAdd.invalidNumber')))
                       }
                       if (amount < 1) {
-                        return Promise.reject(new Error('固定金额必须 >= 1，请重新输入'))
+                        return Promise.reject(new Error(t('templateAdd.fixedAmountError')))
                       }
                     }
                     return Promise.resolve()
@@ -574,7 +570,7 @@ const TemplateList: React.FC = () => {
                 step={0.0001}
                 precision={4}
                 style={{ width: '100%' }}
-                placeholder="固定金额，不随 Leader 订单大小变化，必须 >= 1"
+                placeholder={t('templateAdd.fixedAmountPlaceholder')}
                 formatter={(value) => {
                   if (!value && value !== 0) return ''
                   const num = parseFloat(value.toString())
@@ -588,16 +584,16 @@ const TemplateList: React.FC = () => {
           {copyMode === 'RATIO' && (
             <>
               <Form.Item
-                label="单笔订单最大金额 ($)"
+                label={t('templateAdd.maxOrderSize')}
                 name="maxOrderSize"
-                tooltip="比例模式下，限制单笔跟单订单的最大金额上限，用于防止跟单金额过大，控制风险。例如：设置为 1000，即使计算出的跟单金额超过 1000，也会限制为 $1000。"
+                tooltip={t('templateAdd.maxOrderSizeTooltip')}
               >
                 <InputNumber
                   min={0.01}
                   step={0.0001}
                   precision={4}
                   style={{ width: '100%' }}
-                  placeholder="仅在比例模式下生效（可选）"
+                  placeholder={t('templateAdd.maxOrderSizePlaceholder')}
                   formatter={(value) => {
                     if (!value && value !== 0) return ''
                     const num = parseFloat(value.toString())
@@ -608,9 +604,9 @@ const TemplateList: React.FC = () => {
               </Form.Item>
               
               <Form.Item
-                label="单笔订单最小金额 ($)"
+                label={t('templateAdd.minOrderSize')}
                 name="minOrderSize"
-                tooltip="比例模式下，限制单笔跟单订单的最小金额下限，用于过滤掉金额过小的订单，避免频繁小额交易。如果填写，必须 >= $1。例如：设置为 10，如果计算出的跟单金额小于 10，则跳过该订单。"
+                tooltip={t('templateAdd.minOrderSizeTooltip')}
                 rules={[
                   { 
                     validator: (_, value) => {
@@ -618,7 +614,7 @@ const TemplateList: React.FC = () => {
                         return Promise.resolve()
                       }
                       if (typeof value === 'number' && value < 1) {
-                        return Promise.reject(new Error('最小金额必须 >= 1'))
+                        return Promise.reject(new Error(t('templateAdd.minOrderSizeError')))
                       }
                       return Promise.resolve()
                     }
@@ -630,7 +626,7 @@ const TemplateList: React.FC = () => {
                   step={0.0001}
                   precision={4}
                   style={{ width: '100%' }}
-                  placeholder="仅在比例模式下生效，必须 >= 1（可选）"
+                  placeholder={t('templateAdd.minOrderSizePlaceholder')}
                   formatter={(value) => {
                     if (!value && value !== 0) return ''
                     const num = parseFloat(value.toString())
@@ -643,22 +639,22 @@ const TemplateList: React.FC = () => {
           )}
           
           <Form.Item
-            label="每日最大跟单订单数"
+            label={t('templateAdd.maxDailyOrders')}
             name="maxDailyOrders"
-            tooltip="限制每日最多跟单的订单数量，用于风险控制，防止过度交易。例如：设置为 50，当日跟单订单数达到 50 后，停止跟单，次日重置。"
+            tooltip={t('templateAdd.maxDailyOrdersTooltip')}
           >
             <InputNumber
               min={1}
               step={1}
               style={{ width: '100%' }}
-              placeholder="默认 100（可选）"
+              placeholder={t('templateAdd.maxDailyOrdersPlaceholder')}
             />
           </Form.Item>
           
           <Form.Item
-            label="价格容忍度 (%)"
+            label={t('templateEdit.priceTolerance')}
             name="priceTolerance"
-            tooltip="允许跟单价格在 Leader 价格基础上的调整范围，用于在 Leader 价格 ± 容忍度范围内调整价格，提高成交率。例如：设置为 5%，Leader 价格为 0.5，则跟单价格可在 0.475-0.525 范围内。"
+            tooltip={t('templateEdit.priceToleranceTooltip')}
           >
             <InputNumber
               min={0}
@@ -666,7 +662,7 @@ const TemplateList: React.FC = () => {
               step={0.1}
               precision={2}
               style={{ width: '100%' }}
-              placeholder="默认 5%（可选）"
+              placeholder={t('templateEdit.priceTolerancePlaceholder')}
               formatter={(value) => {
                 if (!value && value !== 0) return ''
                 const num = parseFloat(value.toString())
@@ -677,36 +673,36 @@ const TemplateList: React.FC = () => {
           </Form.Item>
           
           <Form.Item
-            label="跟单卖出"
+            label={t('templateAdd.supportSell')}
             name="supportSell"
-            tooltip="是否跟单 Leader 的卖出订单。开启：跟单 Leader 的买入和卖出订单；关闭：只跟单 Leader 的买入订单，忽略卖出订单。"
+            tooltip={t('templateAdd.supportSellTooltip')}
             valuePropName="checked"
           >
             <Switch />
           </Form.Item>
           
           <Form.Item
-            label={t('templateList.pushFilteredOrders') || '推送已过滤订单'}
+            label={t('templateList.pushFilteredOrders')}
             name="pushFilteredOrders"
-            tooltip={t('templateList.pushFilteredOrdersTooltip') || '开启后，被过滤的订单会推送到 Telegram'}
+            tooltip={t('templateList.pushFilteredOrdersTooltip')}
             valuePropName="checked"
           >
             <Switch />
           </Form.Item>
           
-          <Divider>过滤条件（可选）</Divider>
+          <Divider>{t('templateList.filterConditions')}</Divider>
           
           <Form.Item
-            label="最小订单深度 ($)"
+            label={t('templateAdd.minOrderDepth')}
             name="minOrderDepth"
-            tooltip="检查订单簿的总订单金额（买盘+卖盘），确保市场有足够的流动性。不填写则不启用此过滤"
+            tooltip={t('templateAdd.minOrderDepthTooltip')}
           >
             <InputNumber
               min={0}
               step={0.0001}
               precision={4}
               style={{ width: '100%' }}
-              placeholder="例如：100（可选，不填写表示不启用）"
+              placeholder={t('templateAdd.minOrderDepthPlaceholder')}
               formatter={(value) => {
                 if (!value && value !== 0) return ''
                 const num = parseFloat(value.toString())
@@ -717,16 +713,16 @@ const TemplateList: React.FC = () => {
           </Form.Item>
           
           <Form.Item
-            label="最大价差（绝对价格）"
+            label={t('templateAdd.maxSpread')}
             name="maxSpread"
-            tooltip="最大价差（绝对价格）。避免在价差过大的市场跟单。不填写则不启用此过滤"
+            tooltip={t('templateAdd.maxSpreadTooltip')}
           >
             <InputNumber
               min={0}
               step={0.0001}
               precision={4}
               style={{ width: '100%' }}
-              placeholder="例如：0.05（5美分，可选，不填写表示不启用）"
+              placeholder={t('templateAdd.maxSpreadPlaceholder')}
               formatter={(value) => {
                 if (!value && value !== 0) return ''
                 const num = parseFloat(value.toString())
@@ -736,12 +732,12 @@ const TemplateList: React.FC = () => {
             />
           </Form.Item>
           
-          <Divider>价格区间过滤</Divider>
+          <Divider>{t('templateAdd.priceRangeFilter')}</Divider>
           
           <Form.Item
-            label="价格区间"
+            label={t('templateAdd.priceRange')}
             name="priceRange"
-            tooltip="仅跟单 Leader 交易价格在指定区间内的订单。不填写表示不限制。示例：填写 0.11 和 0.89 表示仅跟单价格在 0.11 到 0.89 之间的订单；只填写最高价 0.89 表示仅跟单价格在 0.89 以下的订单；只填写最低价 0.11 表示仅跟单价格在 0.11 以上的订单。"
+            tooltip={t('templateAdd.priceRangeTooltip')}
           >
             <Space.Compact style={{ display: 'flex' }}>
               <Form.Item name="minPrice" noStyle>
@@ -751,7 +747,7 @@ const TemplateList: React.FC = () => {
                   step={0.0001}
                   precision={4}
                   style={{ width: '50%' }}
-                  placeholder="最低价（留空不限制）"
+                  placeholder={t('templateAdd.minPricePlaceholder')}
                   formatter={(value) => {
                     if (!value && value !== 0) return ''
                     const num = parseFloat(value.toString())
@@ -768,7 +764,7 @@ const TemplateList: React.FC = () => {
                   step={0.0001}
                   precision={4}
                   style={{ width: '50%' }}
-                  placeholder="最高价（留空不限制）"
+                  placeholder={t('templateAdd.maxPricePlaceholder')}
                   formatter={(value) => {
                     if (!value && value !== 0) return ''
                     const num = parseFloat(value.toString())
@@ -787,7 +783,7 @@ const TemplateList: React.FC = () => {
               return (
                 <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
                   <Button onClick={handleCopyCancel}>
-                    取消
+                    {t('common.cancel')}
                   </Button>
                   <Button
                     type="primary"
@@ -795,7 +791,7 @@ const TemplateList: React.FC = () => {
                     loading={copyLoading}
                     disabled={hasErrors}
                   >
-                    创建模板
+                    {t('templateAdd.create')}
                   </Button>
                 </Space>
               )

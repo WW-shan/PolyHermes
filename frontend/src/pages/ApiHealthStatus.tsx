@@ -53,18 +53,18 @@ const ApiHealthStatus: React.FC = () => {
   
   const getStatusText = (status: string) => {
     if (status === 'success') {
-      return t('apiHealthStatus.normal') || '正常'
+      return t('apiHealthStatus.normal')
     } else if (status === 'skipped') {
-      return t('apiHealthStatus.notConfigured') || '未配置'
+      return t('apiHealthStatus.notConfigured')
     } else {
-      return t('apiHealthStatus.abnormal') || '异常'
+      return t('apiHealthStatus.abnormal')
     }
   }
   
   return (
     <div>
       <div style={{ marginBottom: '16px' }}>
-        <Title level={2} style={{ margin: 0 }}>{t('apiHealthStatus.title') || 'API 健康状态'}</Title>
+        <Title level={2} style={{ margin: 0 }}>{t('apiHealthStatus.title')}</Title>
       </div>
       
       <Card 
@@ -75,7 +75,7 @@ const ApiHealthStatus: React.FC = () => {
             loading={checkingApiHealth}
             size="small"
           >
-            {t('common.refresh') || '刷新'}
+            {t('common.refresh')}
           </Button>
         }
       >
@@ -174,7 +174,7 @@ const ApiHealthStatus: React.FC = () => {
                       {item.responseTime !== undefined && item.responseTime !== null && (
                         <div style={{ marginTop: '8px' }}>
                           <Text type="secondary" style={{ fontSize: '12px' }}>
-                            {t('apiHealthStatus.responseTime') || '响应时间'}: <Text strong style={{ color: '#1890ff' }}>{item.responseTime}ms</Text>
+                            {t('apiHealthStatus.responseTime')}: <Text strong style={{ color: '#1890ff' }}>{item.responseTime}ms</Text>
                           </Text>
                         </div>
                       )}

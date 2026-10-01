@@ -31,6 +31,7 @@ import type { ReactNode } from 'react'
 import { removeToken, getVersionText, getVersionInfo } from '../utils'
 import { wsManager } from '../services/websocket'
 import { apiClient } from '../services/api'
+import { useAuthStore } from '../store/authStore'
 import Logo from './Logo'
 
 const { Header, Content, Sider } = AntLayout
@@ -128,11 +129,21 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     return () => clearInterval(interval)
   }, [])
   
-  const menuItems: MenuProps['items'] = [
+  // 管理员权限：非管理员隐藏系统管理菜单（后端也会拦截）
+  const isAdmin = useAuthStore(state => state.isAdmin)
+  const fetchAdminStatus = useAuthStore(state => state.fetchAdminStatus)
+  const resetAdminStatus = useAuthStore(state => state.resetAdminStatus)
+  useEffect(() => {
+    if (isAdmin === null) {
+      fetchAdminStatus()
+    }
+  }, [isAdmin, fetchAdminStatus])
+
+  const allMenuItems: MenuProps['items'] = [
     {
       key: '/announcements',
       icon: <NotificationOutlined />,
-      label: t('menu.announcements') || '公告'
+      label: t('menu.announcements')
     },
     {
       key: '/accounts',
@@ -172,7 +183,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {
           key: '/backtest',
           icon: <LineChartOutlined />,
-          label: t('menu.backtest') || '回测'
+          label: t('menu.backtest')
         }
       ]
     },
@@ -211,27 +222,27 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       key: '/system-management',
       icon: <SettingOutlined />,
-      label: t('menu.systemSettings') || '系统管理',
+      label: t('menu.systemSettings'),
       children: [
         {
           key: '/system-settings',
           icon: <SettingOutlined />,
-          label: t('menu.systemOverview') || '通用设置'
+          label: t('menu.systemOverview')
         },
         {
           key: '/system-settings/notification',
           icon: <NotificationOutlined />,
-          label: t('menu.notifications') || '消息推送设置'
+          label: t('menu.notifications')
         },
         {
           key: '/system-settings/rpc-nodes',
           icon: <ApiOutlined />,
-          label: t('menu.rpcNodes') || 'RPC节点管理'
+          label: t('menu.rpcNodes')
         },
         {
           key: '/system-settings/api-health',
           icon: <CheckCircleOutlined />,
-          label: t('menu.apiHealth') || 'API健康'
+          label: t('menu.apiHealth')
         }
       ]
     },
@@ -242,7 +253,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     }
   ]
   
+  // 仅管理员可见的菜单
+  const adminOnlyMenuKeys = new Set(['/system-management'])
+  const menuItems: MenuProps['items'] = isAdmin
+    ? allMenuItems
+    : allMenuItems.filter(item => !(item && item.key != null && adminOnlyMenuKeys.has(String(item.key))))
+
   const handleLogout = () => {
+    resetAdminStatus()
     removeToken()
     // 断开 WebSocket 连接
     wsManager.disconnect()

@@ -32,7 +32,7 @@ const LanguageSettings: React.FC = () => {
   const [currentLang, setCurrentLang] = useState<string>(getInitialLanguage())
 
   const languages = [
-    { value: 'auto', label: t('languageSettings.followSystem') || '跟随系统' },
+    { value: 'auto', label: t('languageSettings.followSystem') },
     { value: 'zh-CN', label: '简体中文' },
     { value: 'zh-TW', label: '繁體中文' },
     { value: 'en', label: 'English' }
@@ -59,10 +59,10 @@ const LanguageSettings: React.FC = () => {
       
       setCurrentLang(value)
       await i18nInstance.changeLanguage(actualLang)
-      message.success(t('languageSettings.changeSuccess') || '语言切换成功')
+      message.success(t('languageSettings.changeSuccess'))
       // 不需要刷新页面，i18n 和 Ant Design 的 locale 会自动更新
     } catch (error) {
-      message.error(t('languageSettings.changeFailed') || '语言切换失败')
+      message.error(t('languageSettings.changeFailed'))
     }
   }
 
@@ -85,14 +85,14 @@ const LanguageSettings: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: '16px' }}>
-        <Title level={2} style={{ margin: 0 }}>{t('languageSettings.title') || '语言设置'}</Title>
+        <Title level={2} style={{ margin: 0 }}>{t('languageSettings.title')}</Title>
       </div>
       
       <Card>
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
           <div>
             <Typography.Text strong style={{ display: 'block', marginBottom: '8px' }}>
-              {t('languageSettings.currentLanguage') || '当前语言'}
+              {t('languageSettings.currentLanguage')}
             </Typography.Text>
             <Select
               value={currentLang}
@@ -104,7 +104,7 @@ const LanguageSettings: React.FC = () => {
             {currentLang === 'auto' && (
               <div style={{ marginTop: '8px' }}>
                 <Typography.Text type="secondary" style={{ fontSize: '12px' }}>
-                  {t('languageSettings.currentSystemLanguage') || '当前系统语言'}: {
+                  {t('languageSettings.currentSystemLanguage')}: {
                     getDisplayLanguage() === 'zh-CN' ? '简体中文' :
                     getDisplayLanguage() === 'zh-TW' ? '繁體中文' : 'English'
                   }
@@ -114,7 +114,7 @@ const LanguageSettings: React.FC = () => {
           </div>
           <div>
             <Typography.Text type="secondary">
-              {t('languageSettings.description') || '切换语言后，界面将立即更新为新语言。'}
+              {t('languageSettings.description')}
             </Typography.Text>
           </div>
         </Space>

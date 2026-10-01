@@ -3,9 +3,10 @@ import { useSearchParams } from 'react-router-dom'
 import { Table, Card, Button, Select, Tag, Space, Modal, message, Row, Col, Form, Input, InputNumber, Switch, Statistic, Descriptions, List, Empty, Spin, Tooltip, Popconfirm } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { PlusOutlined, ReloadOutlined, DeleteOutlined, StopOutlined, EyeOutlined, RedoOutlined, CopyOutlined, SyncOutlined } from '@ant-design/icons'
-import { formatUSDC } from '../utils'
+import { formatUSDC, parsePercentInput } from '../utils'
+import { buildBacktestPreFilledConfig, type CopyTradingPreFilledConfig } from '../utils/backtestPrefill'
 import { backtestService, apiService } from '../services/api'
-import type { BacktestTaskDto, BacktestListRequest, BacktestCreateRequest, BacktestTradeDto } from '../types/backtest'
+import type { BacktestTaskDto, BacktestListRequest, BacktestCreateRequest, BacktestTradeDto, BacktestConfigDto } from '../types/backtest'
 import type { Leader } from '../types'
 import { useMediaQuery } from 'react-responsive'
 import AddCopyTradingModal from './CopyTradingOrders/AddModal'
@@ -42,7 +43,7 @@ const BacktestList: React.FC = () => {
 
   // 创建跟单配置 Modal
   const [addCopyTradingModalVisible, setAddCopyTradingModalVisible] = useState(false)
-  const [preFilledConfig, setPreFilledConfig] = useState<any>(null)
+  const [preFilledConfig, setPreFilledConfig] = useState<CopyTradingPreFilledConfig | undefined>(undefined)
 
   // 重新测试 Modal 相关状态
   const [rerunModalVisible, setRerunModalVisible] = useState(false)
@@ -53,7 +54,7 @@ const BacktestList: React.FC = () => {
   // 任务详情 Modal 相关状态
   const [detailModalVisible, setDetailModalVisible] = useState(false)
   const [detailTask, setDetailTask] = useState<BacktestTaskDto | null>(null)
-  const [detailConfig, setDetailConfig] = useState<any>(null)
+  const [detailConfig, setDetailConfig] = useState<BacktestConfigDto | null>(null)
   const [detailStatistics, setDetailStatistics] = useState<any>(null)
   const [detailTrades, setDetailTrades] = useState<BacktestTradeDto[]>([])
   const [detailAllTrades, setDetailAllTrades] = useState<BacktestTradeDto[]>([])
@@ -118,6 +119,16 @@ const BacktestList: React.FC = () => {
   }
 
   // 删除任务
+  // 移动端操作二次确认（桌面端使用 Popconfirm）
+  const confirmThen = (title: string, action: () => void) => {
+    Modal.confirm({
+      title,
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: action
+    })
+  }
+
   const handleDelete = async (id: number) => {
     try {
       const response = await backtestService.delete({ id })
@@ -294,39 +305,23 @@ const BacktestList: React.FC = () => {
         console.log('[BacktestList] Fetched task detail, config:', taskConfig)
         
         if (!taskConfig) {
-          message.error(t('backtest.fetchTaskDetailFailed') || '获取任务配置失败')
+          message.error(t('backtest.fetchTaskDetailFailed'))
           return
         }
 
-        // 预填充回测任务的配置参数（从 config 中获取）
-        const preFilled = {
-          leaderId: taskDetail.leaderId,
-          copyMode: taskConfig.copyMode,
-          copyRatio: taskConfig.copyMode === 'RATIO' ? parseFloat(taskConfig.copyRatio) * 100 : undefined,
-          fixedAmount: taskConfig.copyMode === 'FIXED' ? taskConfig.fixedAmount : undefined,
-          maxOrderSize: parseFloat(taskConfig.maxOrderSize),
-          minOrderSize: parseFloat(taskConfig.minOrderSize),
-          maxDailyLoss: parseFloat(taskConfig.maxDailyLoss),
-          maxDailyOrders: taskConfig.maxDailyOrders,
-          supportSell: taskConfig.supportSell,
-          keywordFilterMode: taskConfig.keywordFilterMode || 'DISABLED',
-          keywords: taskConfig.keywords || [],
-          maxPositionValue: taskConfig.maxPositionValue,
-          minPrice: taskConfig.minPrice,
-          maxPrice: taskConfig.maxPrice,
-          configName: `回测任务-${taskDetail.taskName}`
-        }
+        // 预填充回测任务的全部配置参数（含价格区间、最大仓位），默认创建为停用状态
+        const preFilled = buildBacktestPreFilledConfig(taskDetail.leaderId, taskDetail.taskName, taskConfig, t('backtest.copyConfigNamePrefix'))
 
         console.log('[BacktestList] Generated preFilled config:', preFilled)
         console.log('[BacktestList] Setting preFilledConfig and opening modal')
         setPreFilledConfig(preFilled)
         setAddCopyTradingModalVisible(true)
       } else {
-        message.error(response.data.msg || t('backtest.fetchTaskDetailFailed') || '获取任务详情失败')
+        message.error(response.data.msg || t('backtest.fetchTaskDetailFailed'))
       }
     } catch (error) {
       console.error('[BacktestList] Failed to fetch task detail:', error)
-      message.error(t('backtest.fetchTaskDetailFailed') || '获取任务详情失败')
+      message.error(t('backtest.fetchTaskDetailFailed'))
     }
   }
 
@@ -861,7 +856,7 @@ const BacktestList: React.FC = () => {
                         )}
                         {task.status === 'RUNNING' && (
                           <Tooltip title={t('backtest.stop')}>
-                            <div onClick={() => handleStop(task.id)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}>
+                            <div onClick={() => confirmThen(t('backtest.stopConfirm'), () => handleStop(task.id))} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}>
                               <StopOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
                               <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('backtest.stop')}</span>
                             </div>
@@ -877,7 +872,7 @@ const BacktestList: React.FC = () => {
                         )}
                         {(task.status === 'PENDING' || task.status === 'COMPLETED' || task.status === 'STOPPED' || task.status === 'FAILED') && (
                           <Tooltip title={t('common.delete')}>
-                            <div onClick={() => handleDelete(task.id)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}>
+                            <div onClick={() => confirmThen(t('backtest.deleteConfirm'), () => handleDelete(task.id))} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '4px 8px' }}>
                               <DeleteOutlined style={{ fontSize: '18px', color: '#ff4d4f' }} />
                               <span style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>{t('common.delete')}</span>
                             </div>
@@ -976,7 +971,7 @@ const BacktestList: React.FC = () => {
               <Form.Item
                 label={t('backtest.taskName')}
                 name="taskName"
-                rules={[{ required: true, message: t('backtest.taskNameRequired') || '请输入任务名称' }]}
+                rules={[{ required: true, message: t('backtest.taskNameRequired') }]}
               >
                 <Input placeholder={t('backtest.taskName')} />
               </Form.Item>
@@ -985,7 +980,7 @@ const BacktestList: React.FC = () => {
               <Form.Item
                 label={t('backtest.leader')}
                 name="leaderId"
-                rules={[{ required: true, message: t('backtest.leaderRequired') || '请选择 Leader' }]}
+                rules={[{ required: true, message: t('backtest.leaderRequired') }]}
               >
                 <LeaderSelect
                   leaders={leaders}
@@ -1001,8 +996,8 @@ const BacktestList: React.FC = () => {
                 label={t('backtest.initialBalance') + ' ($)'}
                 name="initialBalance"
                 rules={[
-                  { required: true, message: t('backtest.initialBalanceRequired') || '请输入初始资金' },
-                  { type: 'number', min: 1, message: t('backtest.initialBalanceInvalid') || '初始资金必须大于 0' }
+                  { required: true, message: t('backtest.initialBalanceRequired') },
+                  { type: 'number', min: 1, message: t('backtest.initialBalanceInvalid') }
                 ]}
               >
                 <InputNumber
@@ -1018,8 +1013,8 @@ const BacktestList: React.FC = () => {
                 label={t('backtest.backtestDays') + ` (1-15 ${t('common.day')})`}
                 name="backtestDays"
                 rules={[
-                  { required: true, message: t('backtest.backtestDaysRequired') || '请输入回测天数' },
-                  { type: 'number', min: 1, max: 15, message: t('backtest.backtestDaysInvalid') || '回测天数必须在 1-15 之间' }
+                  { required: true, message: t('backtest.backtestDaysRequired') },
+                  { type: 'number', min: 1, max: 15, message: t('backtest.backtestDaysInvalid') }
                 ]}
               >
                 <InputNumber
@@ -1051,10 +1046,10 @@ const BacktestList: React.FC = () => {
               <Form.Item
                 label={t('backtest.copyRatio')}
                 name="copyRatio"
-                tooltip={t('backtest.copyRatioTooltip') || '跟单比例表示跟单金额相对于 Leader 订单金额的百分比。例如：100% 表示 1:1 跟单，50% 表示半仓跟单，200% 表示双倍跟单'}
+                tooltip={t('backtest.copyRatioTooltip')}
                 rules={[
-                  { required: true, message: t('backtest.copyRatioRequired') || '请输入跟单比例' },
-                  { type: 'number', min: 0.01, max: 10000, message: t('backtest.copyRatioInvalid') || '跟单比例必须在 0.01-10000 之间' }
+                  { required: true, message: t('backtest.copyRatioRequired') },
+                  { type: 'number', min: 0.01, max: 10000, message: t('backtest.copyRatioInvalid') }
                 ]}
               >
                 <InputNumber
@@ -1064,12 +1059,8 @@ const BacktestList: React.FC = () => {
                   precision={2}
                   style={{ width: '100%' }}
                   suffix="%"
-                  placeholder={t('backtest.copyRatioPlaceholder') || '例如：100 表示 100%（1:1 跟单），默认 100%'}
-                  parser={(value) => {
-                    const parsed = parseFloat(value || '0')
-                    if (parsed > 10000) return 10000
-                    return parsed
-                  }}
+                  placeholder={t('backtest.copyRatioPlaceholder')}
+                  parser={(value) => parsePercentInput(value)}
                   formatter={(value) => {
                     if (!value && value !== 0) return ''
                     const num = parseFloat(value.toString())
@@ -1086,8 +1077,8 @@ const BacktestList: React.FC = () => {
                 label={t('backtest.fixedAmount') + ' ($)'}
                 name="fixedAmount"
                 rules={[
-                  { required: true, message: t('backtest.fixedAmountRequired') || '请输入固定金额' },
-                  { type: 'number', min: 1, message: t('backtest.fixedAmountInvalid') || '固定金额必须大于 0' }
+                  { required: true, message: t('backtest.fixedAmountRequired') },
+                  { type: 'number', min: 1, message: t('backtest.fixedAmountInvalid') }
                 ]}
               >
                 <InputNumber
@@ -1147,7 +1138,7 @@ const BacktestList: React.FC = () => {
             >
               <InputNumber
                 style={{ width: '100%' }}
-                placeholder={t('backtest.maxPositionValuePlaceholder') || '留空表示不启用最大仓位限制'}
+                placeholder={t('backtest.maxPositionValuePlaceholder')}
                 precision={2}
                 min={0}
               />
@@ -1162,7 +1153,7 @@ const BacktestList: React.FC = () => {
                   <Form.Item name="minPrice" noStyle>
                     <InputNumber
                       style={{ width: '100%' }}
-                      placeholder={t('backtest.minPricePlaceholder') || '最低价（留空不限制）'}
+                      placeholder={t('backtest.minPricePlaceholder')}
                       min={0.01}
                       max={0.99}
                       step={0.0001}
@@ -1180,7 +1171,7 @@ const BacktestList: React.FC = () => {
                   <Form.Item name="maxPrice" noStyle>
                     <InputNumber
                       style={{ width: '100%' }}
-                      placeholder={t('backtest.maxPricePlaceholder') || '最高价（留空不限制）'}
+                      placeholder={t('backtest.maxPricePlaceholder')}
                       min={0.01}
                       max={0.99}
                       step={0.0001}
@@ -1201,7 +1192,7 @@ const BacktestList: React.FC = () => {
               label={t('backtest.supportSell')}
               name="supportSell"
               valuePropName="checked"
-              extra={t('backtest.supportSellHint') || '是否跟随 Leader 卖出'}
+              extra={t('backtest.supportSellHint')}
             >
               <Switch />
             </Form.Item>
@@ -1224,7 +1215,7 @@ const BacktestList: React.FC = () => {
               <Select
                 mode="tags"
                 style={{ width: '100%' }}
-                placeholder={t('backtest.keywordsPlaceholder') || '请输入关键字，按回车添加'}
+                placeholder={t('backtest.keywordsPlaceholder')}
               />
             </Form.Item>
           </div>
@@ -1236,12 +1227,12 @@ const BacktestList: React.FC = () => {
         open={addCopyTradingModalVisible}
         onClose={() => {
           setAddCopyTradingModalVisible(false)
-          setPreFilledConfig(null)
+          setPreFilledConfig(undefined)
         }}
         onSuccess={() => {
           message.success(t('backtest.createCopyTradingSuccess'))
           setAddCopyTradingModalVisible(false)
-          setPreFilledConfig(null)
+          setPreFilledConfig(undefined)
         }}
         preFilledConfig={preFilledConfig}
       />
@@ -1270,23 +1261,8 @@ const BacktestList: React.FC = () => {
                 {t('backtest.rerun')}
               </Button>
               <Button type="primary" icon={<CopyOutlined />} onClick={() => {
-                const preFilled = {
-                  leaderId: detailTask.leaderId,
-                  copyMode: detailConfig.copyMode,
-                  copyRatio: detailConfig.copyMode === 'RATIO' ? parseFloat(detailConfig.copyRatio) * 100 : undefined,
-                  fixedAmount: detailConfig.copyMode === 'FIXED' ? detailConfig.fixedAmount : undefined,
-                  maxOrderSize: parseFloat(detailConfig.maxOrderSize),
-                  minOrderSize: parseFloat(detailConfig.minOrderSize),
-                  maxDailyLoss: parseFloat(detailConfig.maxDailyLoss),
-                  maxDailyOrders: detailConfig.maxDailyOrders,
-                  supportSell: detailConfig.supportSell,
-                  keywordFilterMode: detailConfig.keywordFilterMode,
-                  keywords: detailConfig.keywords || [],
-                  maxPositionValue: detailConfig.maxPositionValue,
-                  minPrice: detailConfig.minPrice,
-                  maxPrice: detailConfig.maxPrice,
-                  configName: `回测任务-${detailTask.taskName}`
-                }
+                // 预填充回测任务的全部配置参数（含价格区间、最大仓位），默认创建为停用状态
+                const preFilled = buildBacktestPreFilledConfig(detailTask.leaderId, detailTask.taskName, detailConfig, t('backtest.copyConfigNamePrefix'))
                 setPreFilledConfig(preFilled)
                 setAddCopyTradingModalVisible(true)
                 setDetailModalVisible(false)
@@ -1496,7 +1472,7 @@ const BacktestList: React.FC = () => {
             {/* 资金变化图表 */}
             {detailAllTrades.length > 0 && (
               <Card title={t('backtest.balanceChart')} size="small">
-                <BacktestChart trades={detailAllTrades} />
+                <BacktestChart trades={detailAllTrades} initialBalance={detailTask?.initialBalance} />
               </Card>
             )}
 

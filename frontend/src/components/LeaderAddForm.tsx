@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Form, Input, Button, Space } from 'antd'
+import { Form, Input, Button, Space, message } from 'antd'
 import { apiService } from '../services/api'
 import { useMediaQuery } from 'react-responsive'
 import { useTranslation } from 'react-i18next'
@@ -21,7 +21,7 @@ const LeaderAddForm: React.FC<LeaderAddFormProps> = ({
   const { t } = useTranslation()
   const isMobile = useMediaQuery({ maxWidth: 768 })
   const [loading, setLoading] = useState(false)
-  
+
   const handleSubmit = async (values: any) => {
     setLoading(true)
     try {
@@ -31,22 +31,22 @@ const LeaderAddForm: React.FC<LeaderAddFormProps> = ({
         remark: values.remark?.trim() || undefined,
         website: values.website?.trim() || undefined
       })
-      
+
       if (response.data.code === 0) {
         if (response.data.data && onSuccess) {
           onSuccess(response.data.data.id)
         }
-        return Promise.resolve()
       } else {
-        return Promise.reject(new Error(response.data.msg || t('leaderAdd.addFailed') || '添加 Leader 失败'))
+        // onFinish 的返回值不会被 Form 处理，失败时直接提示，避免未处理的 Promise 拒绝
+        message.error(response.data.msg || t('leaderAdd.addFailed'))
       }
     } catch (error: any) {
-      return Promise.reject(error)
+      message.error(error.response?.data?.msg || error.message || t('leaderAdd.addFailed'))
     } finally {
       setLoading(false)
     }
   }
-  
+
   return (
     <Form
       form={form}
@@ -55,62 +55,62 @@ const LeaderAddForm: React.FC<LeaderAddFormProps> = ({
       size={isMobile ? 'middle' : 'large'}
     >
       <Form.Item
-        label={t('leaderAdd.leaderAddress') || 'Leader 钱包地址'}
+        label={t('leaderAdd.leaderAddress')}
         name="leaderAddress"
         rules={[
-          { required: true, message: t('leaderAdd.leaderAddressRequired') || '请输入 Leader 钱包地址' },
+          { required: true, message: t('leaderAdd.leaderAddressRequired') },
           {
             validator: (_, value) => {
               if (!value) {
-                return Promise.reject(new Error(t('leaderAdd.leaderAddressRequired') || '请输入 Leader 钱包地址'))
+                return Promise.reject(new Error(t('leaderAdd.leaderAddressRequired')))
               }
               if (!isValidWalletAddress(value.trim())) {
-                return Promise.reject(new Error(t('leaderAdd.leaderAddressInvalid') || '钱包地址格式不正确（必须是 0x 开头的 42 位地址）'))
+                return Promise.reject(new Error(t('leaderAdd.leaderAddressInvalid')))
               }
               return Promise.resolve()
             }
           }
         ]}
-        tooltip={t('leaderAdd.leaderAddressTooltip') || '被跟单者的钱包地址，系统将监控该地址的交易并自动跟单'}
+        tooltip={t('leaderAdd.leaderAddressTooltip')}
       >
         <Input placeholder="0x..." style={{ fontFamily: 'monospace' }} />
       </Form.Item>
-      
+
       <Form.Item
-        label={t('leaderAdd.leaderName') || 'Leader 名称'}
+        label={t('leaderAdd.leaderName')}
         name="leaderName"
-        tooltip={t('leaderAdd.leaderNameTooltip') || '可选，用于标识 Leader，方便管理'}
+        tooltip={t('leaderAdd.leaderNameTooltip')}
       >
-        <Input placeholder={t('leaderAdd.leaderNamePlaceholder') || '可选，用于标识 Leader'} />
+        <Input placeholder={t('leaderAdd.leaderNamePlaceholder')} />
       </Form.Item>
-      
+
       <Form.Item
-        label={t('leaderAdd.remark') || 'Leader 备注'}
+        label={t('leaderAdd.remark')}
         name="remark"
-        tooltip={t('leaderAdd.remarkTooltip') || '可选，用于记录 Leader 的备注信息'}
+        tooltip={t('leaderAdd.remarkTooltip')}
       >
-        <Input.TextArea 
-          placeholder={t('leaderAdd.remarkPlaceholder') || '可选，用于记录 Leader 的备注信息'} 
+        <Input.TextArea
+          placeholder={t('leaderAdd.remarkPlaceholder')}
           rows={3}
           maxLength={500}
           showCount
         />
       </Form.Item>
-      
+
       <Form.Item
-        label={t('leaderAdd.website') || 'Leader 网站'}
+        label={t('leaderAdd.website')}
         name="website"
-        tooltip={t('leaderAdd.websiteTooltip') || '可选，Leader 的网站链接'}
+        tooltip={t('leaderAdd.websiteTooltip')}
         rules={[
           {
             type: 'url',
-            message: t('leaderAdd.websiteInvalid') || '请输入有效的 URL 地址'
+            message: t('leaderAdd.websiteInvalid')
           }
         ]}
       >
-        <Input placeholder={t('leaderAdd.websitePlaceholder') || '可选，例如：https://example.com'} />
+        <Input placeholder={t('leaderAdd.websitePlaceholder')} />
       </Form.Item>
-      
+
       <Form.Item>
         <Space>
           <Button
@@ -119,7 +119,7 @@ const LeaderAddForm: React.FC<LeaderAddFormProps> = ({
             loading={loading}
             size={isMobile ? 'middle' : 'large'}
           >
-            {t('leaderAdd.add') || '添加 Leader'}
+            {t('leaderAdd.add')}
           </Button>
           {showCancelButton && onCancel && (
             <Button onClick={onCancel}>

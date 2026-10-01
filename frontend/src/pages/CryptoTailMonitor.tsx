@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import {
   Card,
   Select,
@@ -38,6 +38,40 @@ const { Title, Text } = Typography
 const PERIOD_SWITCH_MODE_KEY = 'cryptoTailMonitor_periodSwitchMode'
 const SELECTED_STRATEGY_ID_KEY = 'cryptoTailMonitor_selectedStrategyId'
 
+// 手动下单价格 tick（接口暂未提供市场 tick，使用 0.01）与数量精度
+const MANUAL_ORDER_TICK = 0.01
+const MANUAL_PRICE_DECIMALS = 2
+const MANUAL_SIZE_DECIMALS = 2
+const MIN_PRICE_UNITS = 1  // 最低价格 0.01
+const MAX_PRICE_UNITS = 99  // 最高价格 0.99
+
+/** 按精度向下取整为整数单位（先修正浮点误差，如 0.57*100=56.99999） */
+const toUnitsFloor = (value: number, decimals: number): number => {
+  const scale = Math.pow(10, decimals)
+  return Math.floor(Math.round(value * scale * 1e6) / 1e6)
+}
+
+/** 由价格单位（0.01）与数量单位（0.01）计算总金额（整数运算，最多 4 位小数） */
+const calcTotalAmount = (priceUnits: number, sizeUnits: number): string =>
+  ((priceUnits * sizeUnits) / Math.pow(10, MANUAL_PRICE_DECIMALS + MANUAL_SIZE_DECIMALS)).toFixed(MANUAL_PRICE_DECIMALS + MANUAL_SIZE_DECIMALS)
+
+/** 价格按 tick 向下取整并限制在 [0.01, 0.99]；无效返回 null */
+const normalizeManualPrice = (value: number): string | null => {
+  if (!isFinite(value)) return null
+  const units = Math.min(MAX_PRICE_UNITS, toUnitsFloor(value, MANUAL_PRICE_DECIMALS))
+  if (units < MIN_PRICE_UNITS) return null
+  return (units / Math.pow(10, MANUAL_PRICE_DECIMALS)).toFixed(MANUAL_PRICE_DECIMALS)
+}
+
+/** 手动下单上下文：strategyId/周期/tokenIds/标题必须来自同一份一致的数据 */
+interface ManualOrderContext {
+  strategyId: number
+  periodStartUnix: number
+  tokenIds: string[]
+  marketTitle: string
+  accountId: number
+}
+
 /** 分时图数据点：时间戳、BTC 价格 USDC、市场 Up/Down 价格 0-1 */
 interface PriceDataPoint {
   time: number
@@ -73,6 +107,8 @@ const CryptoTailMonitor: React.FC = () => {
   const marketChartInstance = useRef<echarts.ECharts | null>(null)
   const lastPeriodStartRef = useRef<number | null>(null)
   const selectedStrategyIdRef = useRef<number | null>(null)
+  // 策略初始化请求序号：切换策略后丢弃旧策略的过期响应
+  const initRequestSeqRef = useRef(0)
   useEffect(() => {
     selectedStrategyIdRef.current = selectedStrategyId
   }, [selectedStrategyId])
@@ -106,6 +142,8 @@ const CryptoTailMonitor: React.FC = () => {
     bestBid: string
     availableBalance: string
     periodStartUnix: number | null
+    /** 打开弹窗时的下单上下文快照，提交时需与当前上下文一致 */
+    context: ManualOrderContext | null
   }>({
     visible: false,
     direction: 'UP',
@@ -114,7 +152,8 @@ const CryptoTailMonitor: React.FC = () => {
     totalAmount: '',
     bestBid: '',
     availableBalance: '',
-    periodStartUnix: null
+    periodStartUnix: null,
+    context: null
   })
   const [ordering, setOrdering] = useState(false)
 
@@ -167,36 +206,38 @@ const CryptoTailMonitor: React.FC = () => {
 
   // 初始化监控数据
   useEffect(() => {
+    // 切换策略：作废旧请求，清空旧策略的全部数据（含推送数据与周期记录），避免混用
+    const seq = ++initRequestSeqRef.current
+    const isStale = () => seq !== initRequestSeqRef.current
+    lastPeriodStartRef.current = null
+    setInitData(null)
+    setPushData(null)
+    setPriceHistory([])
+    setFirstDataTime(null)
+    setHasSwitchedPeriod(false)
+    setPendingPeriodData(null)
+    setIsViewingOldPeriod(false)
     if (!selectedStrategyId) {
-      setInitData(null)
-      setPushData(null)
-      setPriceHistory([])
-      setFirstDataTime(null)
-      setHasSwitchedPeriod(false)
-      setPendingPeriodData(null)
-      setIsViewingOldPeriod(false)
+      setInitLoading(false)
       return
     }
 
     const initMonitor = async () => {
       setInitLoading(true)
-      setPriceHistory([])
-      setFirstDataTime(null)
-      setHasSwitchedPeriod(false)
-      setPendingPeriodData(null)
-      setIsViewingOldPeriod(false)
       try {
         const res = await apiService.cryptoTailStrategy.monitorInit({ strategyId: selectedStrategyId })
-        if (res.data.code === 0 && res.data.data) {
+        if (isStale()) return
+        if (res.data.code === 0 && res.data.data && res.data.data.strategyId === selectedStrategyId) {
           setInitData(res.data.data)
         } else {
           setInitData(null)
         }
       } catch (e) {
+        if (isStale()) return
         console.error('Failed to init monitor:', e)
         setInitData(null)
       } finally {
-        setInitLoading(false)
+        if (!isStale()) setInitLoading(false)
       }
     }
     initMonitor()
@@ -234,8 +275,12 @@ const CryptoTailMonitor: React.FC = () => {
       // 新周期到来：重新拉取 init（含 tokenIds），再更新状态
       lastPeriodStartRef.current = pushPeriod
       const marketTitle = (data as { marketTitle?: string }).marketTitle
+      const requestStrategyId = data.strategyId
+      // 响应是否仍属于当前策略、当前周期（否则丢弃）
+      const isCurrentRequest = () =>
+        selectedStrategyIdRef.current === requestStrategyId && lastPeriodStartRef.current === pushPeriod
       const applyFreshInit = (fresh: CryptoTailMonitorInitResponse) => {
-        if (selectedStrategyIdRef.current !== fresh.strategyId) return
+        if (!isCurrentRequest() || fresh.strategyId !== requestStrategyId) return
         const merged: CryptoTailMonitorInitResponse = {
           ...fresh,
           periodStartUnix: pushPeriod,
@@ -247,6 +292,32 @@ const CryptoTailMonitor: React.FC = () => {
           setInitData(merged)
         }
       }
+      // 新周期 init 失败：沿用图表配置，但清空旧周期的 tokenIds，使下单上下文失效（禁止用旧 token 下单）
+      const toFailedInit = (prev: CryptoTailMonitorInitResponse): CryptoTailMonitorInitResponse => ({
+        ...prev,
+        periodStartUnix: pushPeriod,
+        marketTitle: marketTitle ?? prev.marketTitle ?? '',
+        tokenIdUp: undefined,
+        tokenIdDown: undefined
+      })
+      const applyFailedInit = () => {
+        if (!isCurrentRequest()) return
+        if (periodSwitchMode === 'manual' && lastPeriod != null) {
+          setInitData(prev => {
+            if (prev) setPendingPeriodData(p => p ? { ...p, initData: toFailedInit(prev) } : null)
+            return prev
+          })
+        } else {
+          // 同一周期且已有 init 数据（首次推送）时保持不变，否则清空 tokenIds
+          setInitData(prev => prev && prev.periodStartUnix !== pushPeriod ? toFailedInit(prev) : prev)
+        }
+      }
+      const fetchPeriodInit = () => {
+        apiService.cryptoTailStrategy.monitorInit({ strategyId: requestStrategyId, periodStartUnix: pushPeriod }).then(res => {
+          if (res.data?.code === 0 && res.data?.data) applyFreshInit(res.data.data)
+          else applyFailedInit()
+        }).catch(() => applyFailedInit())
+      }
       if (periodSwitchMode === 'manual' && lastPeriod != null) {
         setPendingPeriodData({
           periodStartUnix: pushPeriod,
@@ -255,20 +326,7 @@ const CryptoTailMonitor: React.FC = () => {
           pushData: data
         })
         setIsViewingOldPeriod(true)
-        apiService.cryptoTailStrategy.monitorInit({ strategyId: selectedStrategyId!, periodStartUnix: pushPeriod }).then(res => {
-          if (res.data?.code === 0 && res.data?.data) applyFreshInit(res.data.data)
-          else {
-            setInitData(prev => {
-              if (prev) setPendingPeriodData(p => p ? { ...p, initData: { ...prev, periodStartUnix: pushPeriod, marketTitle: marketTitle ?? prev.marketTitle ?? '' } } : null)
-              return prev ?? null
-            })
-          }
-        }).catch(() => {
-          setInitData(prev => {
-            if (prev) setPendingPeriodData(p => p ? { ...p, initData: { ...prev, periodStartUnix: pushPeriod, marketTitle: marketTitle ?? prev.marketTitle ?? '' } } : null)
-            return prev ?? null
-          })
-        })
+        fetchPeriodInit()
       } else {
         if (lastPeriod != null) setHasSwitchedPeriod(true)
         setFirstDataTime(newPoint.time)
@@ -276,12 +334,9 @@ const CryptoTailMonitor: React.FC = () => {
         setPushData(data)
         setIsViewingOldPeriod(false)
         setPendingPeriodData(null)
-        apiService.cryptoTailStrategy.monitorInit({ strategyId: selectedStrategyId!, periodStartUnix: pushPeriod }).then(res => {
-          if (res.data?.code === 0 && res.data?.data) applyFreshInit(res.data.data)
-          else setInitData(prev => prev ? { ...prev, periodStartUnix: pushPeriod, marketTitle: marketTitle ?? prev.marketTitle ?? '' } : null)
-        }).catch(() => {
-          setInitData(prev => prev ? { ...prev, periodStartUnix: pushPeriod, marketTitle: marketTitle ?? prev.marketTitle ?? '' } : null)
-        })
+        // 立即使旧周期 tokenIds 失效，等待新周期 init 返回后再恢复下单
+        setInitData(prev => prev && prev.periodStartUnix !== pushPeriod ? toFailedInit(prev) : prev)
+        fetchPeriodInit()
       }
       return
     } else {
@@ -789,10 +844,35 @@ const CryptoTailMonitor: React.FC = () => {
   const spreadBelowThreshold = currentSpread != null && currentSpread !== '' && minSpreadLineNum.length > 0 &&
     parseFloat(currentSpread) < Math.min(...minSpreadLineNum)
 
+  // 手动下单上下文：只有 init 与推送属于同一策略、同一周期，且 tokenIds 完整时才有效
+  const manualOrderContext = useMemo((): ManualOrderContext | null => {
+    if (!initData || !pushData || selectedStrategyId == null || isViewingOldPeriod) return null
+    if (initData.strategyId !== selectedStrategyId || pushData.strategyId !== selectedStrategyId) return null
+    if (initData.periodStartUnix !== pushData.periodStartUnix) return null
+    if (!initData.tokenIdUp || !initData.tokenIdDown) return null
+    return {
+      strategyId: initData.strategyId,
+      periodStartUnix: initData.periodStartUnix,
+      tokenIds: [initData.tokenIdUp, initData.tokenIdDown],
+      marketTitle: pushData.marketTitle || initData.marketTitle || '',
+      accountId: initData.accountId
+    }
+  }, [initData, pushData, selectedStrategyId, isViewingOldPeriod])
+
+  // 手动下单按钮禁用：上下文不一致 / 周期已结束 / 不在时间窗口 / 已触发 / 下单中
+  const manualOrderDisabled = !manualOrderContext || !pushData || ordering ||
+    pushData.periodEnded || pushData.remainingSeconds <= 0 || !pushData.inTimeWindow || pushData.triggered
+
+  // 两个上下文是否一致（策略、周期、tokenIds）
+  const isSameContext = (a: ManualOrderContext | null, b: ManualOrderContext | null): boolean =>
+    a != null && b != null && a.strategyId === b.strategyId && a.periodStartUnix === b.periodStartUnix &&
+    a.tokenIds.join(',') === b.tokenIds.join(',')
+
   // 手动下单：打开弹窗
   const handleOpenManualOrderModal = async (direction: 'UP' | 'DOWN') => {
-    if (!pushData) {
-      message.warning(t('cryptoTailMonitor.manualOrder.priceNotLoaded'))
+    const context = manualOrderContext
+    if (!context || !pushData) {
+      message.warning(t('cryptoTailMonitor.manualOrder.contextNotReady'))
       return
     }
     const bestBid = direction === 'UP' ? pushData.currentPriceUp : pushData.currentPriceDown
@@ -800,82 +880,82 @@ const CryptoTailMonitor: React.FC = () => {
       message.warning(t('cryptoTailMonitor.manualOrder.priceNotLoaded'))
       return
     }
-    // 计算默认价格：最优 bid × 1.1，限制在 0~0.99 之间
-    const rawPrice = parseFloat(bestBid) * 1.1
-    const defaultPrice = Math.min(0.99, Math.max(0, rawPrice))
-    
+    // 计算默认价格：最优 bid × 1.1，按 tick 向下取整，限制在 0.01~0.99 之间
+    const defaultPrice = normalizeManualPrice(Math.min(0.99, parseFloat(bestBid) * 1.1))
+    if (defaultPrice == null) {
+      message.warning(t('cryptoTailMonitor.manualOrder.priceTooLow'))
+      return
+    }
+    const priceUnits = toUnitsFloor(parseFloat(defaultPrice), MANUAL_PRICE_DECIMALS)
+
     // 获取账户余额
     let availableBalance = '0'
-    if (initData?.accountId) {
-      try {
-        const balanceRes = await apiService.accounts.balance({ accountId: initData.accountId })
-        if (balanceRes.data.code === 0 && balanceRes.data.data?.availableBalance) {
-          availableBalance = balanceRes.data.data.availableBalance
-        }
-      } catch (e) {
-        console.error('获取账户余额失败:', e)
+    try {
+      const balanceRes = await apiService.accounts.balance({ accountId: context.accountId })
+      if (balanceRes.data.code === 0 && balanceRes.data.data?.availableBalance) {
+        availableBalance = balanceRes.data.data.availableBalance
       }
+    } catch (e) {
+      console.error('获取账户余额失败:', e)
     }
-    
+
     // 使用策略配置的金额
     let defaultAmountUsdc = 10
     if (initData?.amountMode === 'FIXED' && initData?.amountValue) {
       defaultAmountUsdc = parseFloat(initData.amountValue)
     } else if (initData?.amountMode === 'RATIO' && initData?.amountValue) {
-      // RATIO 模式：按比例计算
+      // RATIO 模式：按比例计算；金额过小时不拦截，按最小数量 1 张填充，由后端按实际规则校验
       const balanceNum = parseFloat(availableBalance)
       const ratio = parseFloat(initData.amountValue || '10')
       defaultAmountUsdc = balanceNum * ratio / 100
-      // 至少保留 1 USDC
-      if (defaultAmountUsdc < 1) {
-        message.warning(t('cryptoTailMonitor.manualOrder.insufficientBalance'))
-        return
+      if (!(defaultAmountUsdc >= 1)) {
+        message.warning(t('cryptoTailMonitor.manualOrder.ratioAmountTooSmall'))
       }
     }
-    
-    // 计算默认数量（保留2位小数，用于手动下单）
-    let defaultSize = (defaultAmountUsdc / defaultPrice).toFixed(2)
-    // 确保至少 1 张
-    if (parseFloat(defaultSize) < 1) {
-      defaultSize = '1.00'
+
+    // 计算默认数量（向下取 2 位小数），至少 1 张
+    let sizeUnits = toUnitsFloor(defaultAmountUsdc / parseFloat(defaultPrice), MANUAL_SIZE_DECIMALS)
+    if (!isFinite(sizeUnits) || sizeUnits < 100) {
+      sizeUnits = 100
     }
-    
-    // 重新计算总金额（基于实际数量）
-    const defaultTotalAmount = (defaultPrice * parseFloat(defaultSize)).toFixed(2)
-    
+
     setManualOrderModal({
       visible: true,
       direction,
-      price: defaultPrice.toFixed(4),
-      size: defaultSize,
-      totalAmount: defaultTotalAmount,
+      price: defaultPrice,
+      size: (sizeUnits / 100).toFixed(MANUAL_SIZE_DECIMALS),
+      totalAmount: calcTotalAmount(priceUnits, sizeUnits),
       bestBid,
       availableBalance,
-      periodStartUnix: pushData.periodStartUnix
+      periodStartUnix: context.periodStartUnix,
+      context
     })
   }
 
   // 获取最新价
-  const handleFetchLatestPrice = async () => {
+  const handleFetchLatestPrice = () => {
     if (!pushData) {
       message.warning(t('cryptoTailMonitor.manualOrder.priceNotLoaded'))
       return
     }
-    const latestPrice = manualOrderModal.direction === 'UP' 
-      ? pushData.currentPriceUp 
+    const latestPrice = manualOrderModal.direction === 'UP'
+      ? pushData.currentPriceUp
       : pushData.currentPriceDown
     if (!latestPrice) {
       message.warning(t('cryptoTailMonitor.manualOrder.priceNotLoaded'))
       return
     }
-    const price = Math.min(0.99, parseFloat(latestPrice))
-    const size = parseFloat(manualOrderModal.size)
-    const totalAmount = (price * size).toFixed(2)
-    setManualOrderModal({ 
-      ...manualOrderModal, 
-      price: price.toFixed(4),
-      totalAmount 
-    })
+    const price = normalizeManualPrice(parseFloat(latestPrice))
+    if (price == null) {
+      message.warning(t('cryptoTailMonitor.manualOrder.priceTooLow'))
+      return
+    }
+    const sizeUnits = toUnitsFloor(parseFloat(manualOrderModal.size), MANUAL_SIZE_DECIMALS)
+    setManualOrderModal(prev => ({
+      ...prev,
+      price,
+      totalAmount: calcTotalAmount(toUnitsFloor(parseFloat(price), MANUAL_PRICE_DECIMALS), sizeUnits)
+    }))
     message.success(t('cryptoTailMonitor.manualOrder.priceUpdated'))
   }
 
@@ -888,75 +968,118 @@ const CryptoTailMonitor: React.FC = () => {
       totalAmount: '',
       bestBid: '',
       availableBalance: '',
-      periodStartUnix: null
+      periodStartUnix: null,
+      context: null
     })
   }
 
+  // 价格输入：保留用户输入，金额与提交价格均按 tick 向下取整后的价格计算；低于 0.01 禁止提交
   const handlePriceChange = (value: number | null) => {
-    if (value === null) return
-    const clamped = Math.min(0.99, Math.max(0, value))
-    const price = clamped.toFixed(4)
-    const size = parseFloat(manualOrderModal.size)
-    const totalAmount = (clamped * size).toFixed(2)
-    setManualOrderModal({ ...manualOrderModal, price, totalAmount })
+    setManualOrderModal(prev => {
+      if (value == null) return { ...prev, price: '', totalAmount: '' }
+      const priceUnits = Math.min(MAX_PRICE_UNITS, toUnitsFloor(value, MANUAL_PRICE_DECIMALS))
+      const sizeUnits = toUnitsFloor(parseFloat(prev.size), MANUAL_SIZE_DECIMALS)
+      return {
+        ...prev,
+        price: String(value),
+        totalAmount: priceUnits >= MIN_PRICE_UNITS && sizeUnits > 0 ? calcTotalAmount(priceUnits, sizeUnits) : ''
+      }
+    })
+  }
+
+  // 价格输入框失焦：把显示值对齐到 tick
+  const handlePriceBlur = () => {
+    setManualOrderModal(prev => {
+      if (!prev.price) return prev
+      const normalized = normalizeManualPrice(parseFloat(prev.price))
+      return normalized == null ? { ...prev, price: '', totalAmount: '' } : { ...prev, price: normalized }
+    })
   }
 
   const handleSizeChange = (value: number | null) => {
-    if (value === null) return
-    const size = value.toFixed(2)
-    const priceRaw = parseFloat(manualOrderModal.price)
-    const price = Math.min(0.99, Math.max(0, priceRaw))
-    const totalAmount = (price * value).toFixed(2)
-    setManualOrderModal({ ...manualOrderModal, size, totalAmount, price: price.toFixed(4) })
+    setManualOrderModal(prev => {
+      if (value == null || !(value > 0)) return { ...prev, size: '', totalAmount: '' }
+      const sizeUnits = toUnitsFloor(value, MANUAL_SIZE_DECIMALS)
+      const priceUnits = toUnitsFloor(parseFloat(prev.price), MANUAL_PRICE_DECIMALS)
+      return {
+        ...prev,
+        size: (sizeUnits / 100).toFixed(MANUAL_SIZE_DECIMALS),
+        totalAmount: priceUnits >= MIN_PRICE_UNITS ? calcTotalAmount(priceUnits, sizeUnits) : ''
+      }
+    })
   }
 
   // 计算最大数量（截位处理）
   const handleMaxSize = () => {
-    const price = parseFloat(manualOrderModal.price)
+    const priceUnits = toUnitsFloor(parseFloat(manualOrderModal.price), MANUAL_PRICE_DECIMALS)
     const balance = parseFloat(manualOrderModal.availableBalance)
-    
-    if (price <= 0 || balance <= 0) {
+
+    if (!(priceUnits >= MIN_PRICE_UNITS) || !(balance > 0)) {
       message.warning(t('cryptoTailMonitor.manualOrder.invalidPriceOrBalance'))
       return
     }
-    
-    // 最大数量 = 余额 / 价格，保留2位小数
-    let maxSize = Math.floor((balance / price) * 100) / 100
-    
+
+    // 最大数量 = 余额 / 价格，向下保留 2 位小数（整数运算：余额分 × 100 / 价格单位）
+    const balanceCents = toUnitsFloor(balance, 2)
+    const maxSizeUnits = Math.floor((balanceCents * 100) / priceUnits)
+
     // 确保至少 1 张
-    if (maxSize < 1) {
+    if (maxSizeUnits < 100) {
       message.warning(t('cryptoTailMonitor.manualOrder.insufficientBalanceForMax'))
       return
     }
-    
-    const totalAmount = (price * maxSize).toFixed(2)
-    setManualOrderModal({ 
-      ...manualOrderModal, 
-      size: maxSize.toFixed(2),
-      totalAmount 
-    })
+
+    setManualOrderModal(prev => ({
+      ...prev,
+      size: (maxSizeUnits / 100).toFixed(MANUAL_SIZE_DECIMALS),
+      totalAmount: calcTotalAmount(priceUnits, maxSizeUnits)
+    }))
     message.success(t('cryptoTailMonitor.manualOrder.maxSizeUpdated'))
   }
 
+  // 当前弹窗价格/数量是否可提交
+  const manualOrderPriceUnits = Math.min(MAX_PRICE_UNITS, toUnitsFloor(parseFloat(manualOrderModal.price), MANUAL_PRICE_DECIMALS))
+  const manualOrderSizeUnits = toUnitsFloor(parseFloat(manualOrderModal.size), MANUAL_SIZE_DECIMALS)
+  const manualOrderInputValid = manualOrderPriceUnits >= MIN_PRICE_UNITS && manualOrderPriceUnits <= MAX_PRICE_UNITS &&
+    manualOrderSizeUnits > 0
+  const manualOrderSubmitDisabled = !manualOrderInputValid || manualOrderDisabled ||
+    !isSameContext(manualOrderModal.context, manualOrderContext)
+
   const handleManualOrder = async () => {
-    if (!initData || !pushData) return
+    if (ordering) return
+    const context = manualOrderModal.context
+    // 提交前再次核对：弹窗打开时的上下文必须与当前一致
+    if (!context || !isSameContext(context, manualOrderContext)) {
+      message.warning(t('cryptoTailMonitor.manualOrder.periodChanged'))
+      handleCloseManualOrderModal()
+      return
+    }
+    if (!manualOrderInputValid) {
+      message.warning(t('cryptoTailMonitor.manualOrder.priceTooLow'))
+      return
+    }
     try {
       setOrdering(true)
-      const tokenIds: string[] = []
-      if (initData.tokenIdUp) tokenIds.push(initData.tokenIdUp)
-      if (initData.tokenIdDown) tokenIds.push(initData.tokenIdDown)
+      const price = (manualOrderPriceUnits / 100).toFixed(MANUAL_PRICE_DECIMALS)
+      const size = (manualOrderSizeUnits / 100).toFixed(MANUAL_SIZE_DECIMALS)
       const request = {
-        strategyId: initData.strategyId,
-        periodStartUnix: pushData.periodStartUnix,
+        strategyId: context.strategyId,
+        periodStartUnix: context.periodStartUnix,
         direction: manualOrderModal.direction,
-        price: Math.min(0.99, Math.max(0, parseFloat(manualOrderModal.price) || 0)).toFixed(4),
-        size: manualOrderModal.size,
-        marketTitle: pushData.marketTitle || initData.marketTitle,
-        tokenIds
+        price,
+        size,
+        marketTitle: context.marketTitle,
+        tokenIds: context.tokenIds
       }
       const res = await apiService.cryptoTailStrategy.manualOrder(request)
       if (res.data.code === 0 && res.data.data?.success) {
-        message.success(t('cryptoTailMonitor.manualOrder.success'))
+        // 以后端返回的实际签名价格/金额为准展示
+        const details = res.data.data.orderDetails
+        message.success(t('cryptoTailMonitor.manualOrder.successWithDetails', {
+          price: details?.price ?? price,
+          size: details?.size ?? size,
+          amount: details?.totalAmount ?? calcTotalAmount(manualOrderPriceUnits, manualOrderSizeUnits)
+        }))
         handleCloseManualOrderModal()
       } else {
         const reason = res.data.msg?.trim() || 'unknown'
@@ -1192,7 +1315,7 @@ const CryptoTailMonitor: React.FC = () => {
                   <Button
                     type="primary"
                     icon={<ShoppingCartOutlined />}
-                    disabled={!pushData || pushData.triggered || pushData.periodEnded}
+                    disabled={manualOrderDisabled}
                     onClick={() => handleOpenManualOrderModal('UP')}
                     loading={ordering}
                     block
@@ -1205,7 +1328,7 @@ const CryptoTailMonitor: React.FC = () => {
                   <Button
                     type="primary"
                     icon={<ShoppingCartOutlined />}
-                    disabled={!pushData || pushData.triggered || pushData.periodEnded}
+                    disabled={manualOrderDisabled}
                     onClick={() => handleOpenManualOrderModal('DOWN')}
                     loading={ordering}
                     block
@@ -1264,6 +1387,7 @@ const CryptoTailMonitor: React.FC = () => {
               type="primary"
               onClick={handleManualOrder}
               loading={ordering}
+              disabled={manualOrderSubmitDisabled}
               style={
                 manualOrderModal.direction === 'UP'
                   ? { backgroundColor: '#1890ff', borderColor: '#1890ff' }
@@ -1316,11 +1440,11 @@ const CryptoTailMonitor: React.FC = () => {
                       style={{ width: '100%' }}
                       value={manualOrderModal.price ? parseFloat(manualOrderModal.price) : undefined}
                       onChange={handlePriceChange}
+                      onBlur={handlePriceBlur}
                       min={0}
-                      max={1}
-                      step={0.0001}
-                      precision={4}
-                      placeholder="0.0000"
+                      max={0.99}
+                      step={MANUAL_ORDER_TICK}
+                      placeholder="0.00"
                     />
                     <Button onClick={handleFetchLatestPrice} icon={<SyncOutlined />}>
                       {t('cryptoTailMonitor.manualOrder.fetchLatestPrice')}
@@ -1350,7 +1474,12 @@ const CryptoTailMonitor: React.FC = () => {
                     {t('cryptoTailMonitor.manualOrder.totalAmount')}
                   </Text>
                   <Text strong style={{ fontSize: 16 }}>
-                    {manualOrderModal.totalAmount} {t('cryptoTailMonitor.manualOrder.orderUnit')}
+                    {manualOrderModal.totalAmount || '-'} {t('cryptoTailMonitor.manualOrder.orderUnit')}
+                  </Text>
+                  <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
+                    {manualOrderInputValid
+                      ? t('cryptoTailMonitor.manualOrder.actualPriceHint', { price: (manualOrderPriceUnits / 100).toFixed(MANUAL_PRICE_DECIMALS), tick: MANUAL_ORDER_TICK })
+                      : t('cryptoTailMonitor.manualOrder.priceTooLow')}
                   </Text>
                 </Col>
                 <Col span={24}>
@@ -1434,11 +1563,11 @@ const CryptoTailMonitor: React.FC = () => {
                     style={{ width: '100%', height: 36 }}
                     value={manualOrderModal.price ? parseFloat(manualOrderModal.price) : undefined}
                     onChange={handlePriceChange}
+                    onBlur={handlePriceBlur}
                     min={0}
-                    max={1}
-                    step={0.0001}
-                    precision={4}
-                    placeholder="0.0000"
+                    max={0.99}
+                    step={MANUAL_ORDER_TICK}
+                    placeholder="0.00"
                   />
                   <Button onClick={handleFetchLatestPrice} icon={<SyncOutlined />} style={{ height: 36, fontSize: 12 }}>
                     {t('cryptoTailMonitor.manualOrder.fetchLatestPrice')}
@@ -1471,7 +1600,12 @@ const CryptoTailMonitor: React.FC = () => {
                 <div>
                   <Text type="secondary" style={{ fontSize: 12 }}>{t('cryptoTailMonitor.manualOrder.totalAmount')}: </Text>
                   <Text strong style={{ fontSize: 16, marginLeft: 4 }}>
-                    {manualOrderModal.totalAmount} {t('cryptoTailMonitor.manualOrder.orderUnit')}
+                    {manualOrderModal.totalAmount || '-'} {t('cryptoTailMonitor.manualOrder.orderUnit')}
+                  </Text>
+                  <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>
+                    {manualOrderInputValid
+                      ? t('cryptoTailMonitor.manualOrder.actualPriceHint', { price: (manualOrderPriceUnits / 100).toFixed(MANUAL_PRICE_DECIMALS), tick: MANUAL_ORDER_TICK })
+                      : t('cryptoTailMonitor.manualOrder.priceTooLow')}
                   </Text>
                 </div>
                 <div>
@@ -1486,6 +1620,7 @@ const CryptoTailMonitor: React.FC = () => {
                 block
                 onClick={handleManualOrder}
                 loading={ordering}
+                disabled={manualOrderSubmitDisabled}
                 style={{
                   height: 44,
                   borderRadius: 8,
@@ -1520,7 +1655,7 @@ const CryptoTailMonitor: React.FC = () => {
             <Button
               type="primary"
               icon={<ShoppingCartOutlined />}
-              disabled={!pushData || pushData.triggered || pushData.periodEnded}
+              disabled={manualOrderDisabled}
               onClick={() => handleOpenManualOrderModal('UP')}
               loading={ordering}
               style={{ flex: 1, backgroundColor: '#1890ff', borderColor: '#1890ff', height: 44, borderRadius: '6px 0 0 6px' }}
@@ -1530,7 +1665,7 @@ const CryptoTailMonitor: React.FC = () => {
             <Button
               type="primary"
               icon={<ShoppingCartOutlined />}
-              disabled={!pushData || pushData.triggered || pushData.periodEnded}
+              disabled={manualOrderDisabled}
               onClick={() => handleOpenManualOrderModal('DOWN')}
               loading={ordering}
               style={{ flex: 1, backgroundColor: '#fa8c16', borderColor: '#fa8c16', height: 44, borderRadius: '0 6px 6px 0' }}

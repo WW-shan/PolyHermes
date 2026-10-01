@@ -58,10 +58,10 @@ const ProxySettings: React.FC = () => {
           form.resetFields()
         }
       } else {
-        message.error(response.data.msg || t('proxySettings.getFailed') || '获取代理配置失败')
+        message.error(response.data.msg || t('proxySettings.getFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('proxySettings.getFailed') || '获取代理配置失败')
+      message.error(error.message || t('proxySettings.getFailed'))
     }
   }
   
@@ -82,14 +82,14 @@ const ProxySettings: React.FC = () => {
       
       const response = await apiService.proxyConfig.saveHttp(requestData)
       if (response.data.code === 0) {
-        message.success(t('proxySettings.saveSuccess') || '保存配置成功')
+        message.success(t('proxySettings.saveSuccess'))
         setCheckResult(null)
         fetchConfig()
       } else {
-        message.error(response.data.msg || t('proxySettings.saveFailed') || '保存配置失败')
+        message.error(response.data.msg || t('proxySettings.saveFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('proxySettings.saveFailed') || '保存配置失败')
+      message.error(error.message || t('proxySettings.saveFailed'))
     } finally {
       setLoading(false)
     }
@@ -105,13 +105,13 @@ const ProxySettings: React.FC = () => {
       } else {
         setCheckResult({
           success: false,
-          message: response.data.msg || t('proxySettings.checkFailed') || '代理检查失败'
+          message: response.data.msg || t('proxySettings.checkFailed')
         })
       }
     } catch (error: any) {
       setCheckResult({
         success: false,
-        message: error.message || t('proxySettings.checkFailed') || '代理检查失败'
+        message: error.message || t('proxySettings.checkFailed')
       })
     } finally {
       setChecking(false)
@@ -121,7 +121,7 @@ const ProxySettings: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: '16px' }}>
-        <Title level={2} style={{ margin: 0 }}>{t('proxySettings.title') || '代理设置'}</Title>
+        <Title level={2} style={{ margin: 0 }}>{t('proxySettings.title')}</Title>
       </div>
       
       <Card>
@@ -132,7 +132,7 @@ const ProxySettings: React.FC = () => {
           size={isMobile ? 'middle' : 'large'}
         >
           <Form.Item
-            label={t('proxySettings.enabled') || '启用代理'}
+            label={t('proxySettings.enabled')}
             name="enabled"
             valuePropName="checked"
           >
@@ -140,45 +140,45 @@ const ProxySettings: React.FC = () => {
           </Form.Item>
           
           <Form.Item
-            label={t('proxySettings.host') || '代理主机'}
+            label={t('proxySettings.host')}
             name="host"
             rules={[
-              { required: true, message: t('proxySettings.hostRequired') || '请输入代理主机地址' },
-              { pattern: /^[\w\.-]+$/, message: t('proxySettings.hostInvalid') || '请输入有效的主机地址' }
+              { required: true, message: t('proxySettings.hostRequired') },
+              { pattern: /^[\w\.-]+$/, message: t('proxySettings.hostInvalid') }
             ]}
           >
-            <Input placeholder={t('proxySettings.hostPlaceholder') || '例如：127.0.0.1 或 proxy.example.com'} />
+            <Input placeholder={t('proxySettings.hostPlaceholder')} />
           </Form.Item>
           
           <Form.Item
-            label={t('proxySettings.port') || '代理端口'}
+            label={t('proxySettings.port')}
             name="port"
             rules={[
-              { required: true, message: t('proxySettings.portRequired') || '请输入代理端口' },
-              { type: 'number', min: 1, max: 65535, message: t('proxySettings.portInvalid') || '端口必须在 1-65535 之间' }
+              { required: true, message: t('proxySettings.portRequired') },
+              { type: 'number', min: 1, max: 65535, message: t('proxySettings.portInvalid') }
             ]}
           >
             <InputNumber
               min={1}
               max={65535}
               style={{ width: '100%' }}
-              placeholder={t('proxySettings.portPlaceholder') || '例如：8888'}
+              placeholder={t('proxySettings.portPlaceholder')}
             />
           </Form.Item>
           
           <Form.Item
-            label={t('proxySettings.username') || '代理用户名（可选）'}
+            label={t('proxySettings.username')}
             name="username"
           >
-            <Input placeholder={t('proxySettings.usernamePlaceholder') || '如果代理需要认证，请输入用户名'} />
+            <Input placeholder={t('proxySettings.usernamePlaceholder')} />
           </Form.Item>
           
           <Form.Item
-            label={t('proxySettings.password') || '代理密码（可选）'}
+            label={t('proxySettings.password')}
             name="password"
-            help={currentConfig ? (t('proxySettings.passwordHelpUpdate') || '留空则不更新密码，输入新密码则更新') : (t('proxySettings.passwordHelp') || '如果代理需要认证，请输入密码')}
+            help={currentConfig ? (t('proxySettings.passwordHelpUpdate')) : (t('proxySettings.passwordHelp'))}
           >
-            <Input.Password placeholder={currentConfig ? (t('proxySettings.passwordPlaceholderUpdate') || '留空则不更新密码') : (t('proxySettings.passwordPlaceholder') || '如果代理需要认证，请输入密码')} />
+            <Input.Password placeholder={currentConfig ? (t('proxySettings.passwordPlaceholderUpdate')) : (t('proxySettings.passwordPlaceholder'))} />
           </Form.Item>
           
           <Form.Item>
@@ -189,21 +189,21 @@ const ProxySettings: React.FC = () => {
                 icon={<SaveOutlined />}
                 loading={loading}
               >
-                {t('common.save') || '保存配置'}
+                {t('common.save')}
               </Button>
               <Button
                 icon={<CheckCircleOutlined />}
                 onClick={handleCheck}
                 loading={checking}
               >
-                {t('proxySettings.check') || '检查代理'}
+                {t('proxySettings.check')}
               </Button>
               {checkResult && (
                 <Button
                   icon={<ReloadOutlined />}
                   onClick={fetchConfig}
                 >
-                  {t('common.refresh') || '刷新配置'}
+                  {t('common.refresh')}
                 </Button>
               )}
             </Space>
@@ -213,14 +213,14 @@ const ProxySettings: React.FC = () => {
         {checkResult && (
           <Alert
             type={checkResult.success ? 'success' : 'error'}
-            message={checkResult.success ? (t('proxySettings.checkSuccess') || '代理检查成功') : (t('proxySettings.checkFailed') || '代理检查失败')}
+            message={checkResult.success ? (t('proxySettings.checkSuccess')) : (t('proxySettings.checkFailed'))}
             description={
               <div>
                 <Text>{checkResult.message}</Text>
                 {(checkResult.responseTime !== undefined || checkResult.latency !== undefined) && (
                   <div style={{ marginTop: '8px' }}>
                     <Text type="secondary">
-                      {t('proxySettings.latency') || '延迟'}: {(checkResult.latency ?? checkResult.responseTime) ?? 0}ms
+                      {t('proxySettings.latency')}: {(checkResult.latency ?? checkResult.responseTime) ?? 0}ms
                     </Text>
                   </div>
                 )}

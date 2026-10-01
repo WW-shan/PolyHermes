@@ -31,7 +31,7 @@ const CopyTradingOrdersModal: React.FC<CopyTradingOrdersModalProps> = ({
 
   return (
     <Modal
-      title={t('copyTradingOrders.title') || '订单列表'}
+      title={t('copyTradingOrders.title')}
       open={open}
       onCancel={onClose}
       footer={null}
@@ -46,17 +46,17 @@ const CopyTradingOrdersModal: React.FC<CopyTradingOrdersModalProps> = ({
         items={[
           {
             key: 'buy',
-            label: t('copyTradingOrders.buyOrders') || '买入订单',
+            label: t('copyTradingOrders.buyOrders'),
             children: <BuyOrdersTab copyTradingId={copyTradingId} active={activeTab === 'buy'} />
           },
           {
             key: 'sell',
-            label: t('copyTradingOrders.sellOrders') || '卖出订单',
+            label: t('copyTradingOrders.sellOrders'),
             children: <SellOrdersTab copyTradingId={copyTradingId} active={activeTab === 'sell'} />
           },
           {
             key: 'matched',
-            label: t('copyTradingOrders.matchedOrders') || '匹配关系',
+            label: t('copyTradingOrders.matchedOrders'),
             children: <MatchedOrdersTab copyTradingId={copyTradingId} active={activeTab === 'matched'} />
           }
         ]}

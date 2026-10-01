@@ -24,7 +24,8 @@ import type {
   NotificationTemplate,
   TemplateTypeInfo,
   TemplateVariablesResponse,
-  LeaderPoolOptimizationResponse
+  LeaderPoolOptimizationResponse,
+  LatestPriceResponse
 } from '../types'
 import { getToken, setToken, removeToken } from '../utils'
 import { wsManager } from './websocket'
@@ -103,11 +104,21 @@ apiClient.interceptors.request.use(
 )
 
 /**
+ * 认证失效错误码：认证失败（含缺少令牌/令牌版本失效）、令牌无效、令牌过期
+ * 其他 2xxx（如 2004 权限不足、2009 用户名或密码错误、2014 Builder API Key 未配置）属于业务错误，不登出
+ */
+const AUTH_INVALID_CODES = new Set([2001, 2002, 2003])
+const AUTH_ERROR_EXEMPT_PATHS = ['/auth/login', '/auth/reset-password', '/auth/verify']
+
+/**
  * 处理认证错误（自动登出）
  */
-const handleAuthError = (code: number) => {
-  // 检查是否是认证错误（2001-2999）
-  if (code >= 2001 && code < 3000) {
+const handleAuthError = (code: number, requestUrl?: string) => {
+  // 登录/重置密码接口的 2001 表示登录失败；verify 接口对非管理员也返回 2001（需要管理员权限），均不是令牌失效
+  if (requestUrl && AUTH_ERROR_EXEMPT_PATHS.some(path => requestUrl.includes(path))) {
+    return
+  }
+  if (AUTH_INVALID_CODES.has(code)) {
     // 清除 token
     removeToken()
     // 断开 WebSocket 连接
@@ -134,7 +145,7 @@ apiClient.interceptors.response.use(
     // 后端可能返回 200 状态码，但 code 是 2001（认证失败）
     const data = response.data as ApiResponse<any>
     if (data && data.code !== undefined) {
-      handleAuthError(data.code)
+      handleAuthError(data.code, response.config?.url)
     }
     
     return response
@@ -144,9 +155,9 @@ apiClient.interceptors.response.use(
       const response = error.response
       const data = response.data
       
-      // 检查是否是认证错误（2001-2999）
+      // 检查是否是认证失效错误（2001-2003）
       if (data && data.code !== undefined) {
-        handleAuthError(data.code)
+        handleAuthError(data.code, response.config?.url)
       }
       
       console.error('API 错误:', data)
@@ -225,7 +236,16 @@ export const apiService = {
      * 返回一个短期有效（30秒）的一次性票据
      */
     getWebSocketTicket: () =>
-      apiClient.post<ApiResponse<{ ticket: string }>>('/auth/ws-ticket', {})
+      apiClient.post<ApiResponse<{ ticket: string }>>('/auth/ws-ticket', {}),
+
+    /**
+     * 验证当前用户是否为管理员（默认账户）
+     * 管理员返回 200 + code 0；非管理员返回 403（不视为请求异常）
+     */
+    verifyAdmin: () =>
+      apiClient.get<ApiResponse<void>>('/auth/verify', {
+        validateStatus: (status) => status === 200 || status === 401 || status === 403
+      })
   },
   
   /**
@@ -235,7 +255,7 @@ export const apiService = {
     /**
      * 检查代理地址选项（导入前选择代理类型）
      */
-    checkProxyOptions: (data: any) =>
+    checkProxyOptions: (data: { walletAddress: string; importMethod: 'PRIVATE_KEY' | 'MNEMONIC' }) =>
       apiClient.post<ApiResponse<any>>('/accounts/check-proxy-options', data),
     
     /**
@@ -310,8 +330,8 @@ export const apiService = {
     /**
      * 赎回仓位
      */
-    redeemPositions: (data: any) =>
-      apiClient.post<ApiResponse<any>>('/accounts/positions/redeem', data),
+    redeemPositions: (data: any, timeoutMs: number = 180000) =>
+      apiClient.post<ApiResponse<any>>('/accounts/positions/redeem', data, { timeout: timeoutMs }),
 
     /**
      * 将 USDC.e wrap 为 pUSD（V2 迁移）
@@ -341,7 +361,7 @@ export const apiService = {
      * 获取最新价（从订单表获取，供前端下单时显示）
      */
     getLatestPrice: (data: { tokenId: string }) => 
-      apiClient.post<ApiResponse<any>>('/markets/latest-price', data)
+      apiClient.post<ApiResponse<LatestPriceResponse>>('/markets/latest-price', data)
   },
   
   /**

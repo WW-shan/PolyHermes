@@ -35,10 +35,10 @@ const OrderList: React.FC = () => {
           total: response.data.data?.total || 0
         }))
       } else {
-        message.error(response.data.msg || t('orderList.fetchFailed') || '获取订单列表失败')
+        message.error(response.data.msg || t('orderList.fetchFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('orderList.fetchFailed') || '获取订单列表失败')
+      message.error(error.message || t('orderList.fetchFailed'))
     } finally {
       setLoading(false)
     }
@@ -63,13 +63,13 @@ const OrderList: React.FC = () => {
   
   const columns = [
     {
-      title: t('orderList.leader') || 'Leader',
+      title: t('orderList.leader'),
       dataIndex: 'leaderName',
       key: 'leaderName',
       render: (text: string, record: CopyOrder) => text || record.leaderAddress.slice(0, 10) + '...'
     },
     {
-      title: t('orderList.market') || '市场',
+      title: t('orderList.market'),
       dataIndex: 'marketId',
       key: 'marketId',
       render: (marketId: string) => (
@@ -79,7 +79,7 @@ const OrderList: React.FC = () => {
       )
     },
     {
-      title: t('orderList.category') || '分类',
+      title: t('orderList.category'),
       dataIndex: 'category',
       key: 'category',
       render: (category: string) => (
@@ -87,7 +87,7 @@ const OrderList: React.FC = () => {
       )
     },
     {
-      title: t('orderList.side') || '方向',
+      title: t('orderList.side'),
       dataIndex: 'side',
       key: 'side',
       render: (side: string) => (
@@ -95,17 +95,17 @@ const OrderList: React.FC = () => {
       )
     },
     {
-      title: t('orderList.price') || '价格',
+      title: t('orderList.price'),
       dataIndex: 'price',
       key: 'price'
     },
     {
-      title: t('orderList.size') || '数量',
+      title: t('orderList.size'),
       dataIndex: 'size',
       key: 'size'
     },
     {
-      title: t('orderList.status') || '状态',
+      title: t('orderList.status'),
       dataIndex: 'status',
       key: 'status',
       render: (status: string) => (
@@ -113,7 +113,7 @@ const OrderList: React.FC = () => {
       )
     },
     {
-      title: t('orderList.pnl') || '盈亏',
+      title: t('orderList.pnl'),
       dataIndex: 'pnl',
       key: 'pnl',
       render: (pnl: string | undefined) => pnl ? (
@@ -123,7 +123,7 @@ const OrderList: React.FC = () => {
       ) : '-'
     },
     {
-      title: t('orderList.createdAt') || '创建时间',
+      title: t('orderList.createdAt'),
       dataIndex: 'createdAt',
       key: 'createdAt',
       render: (timestamp: number) => new Date(timestamp).toLocaleString(i18n.language || 'zh-CN')
@@ -133,7 +133,7 @@ const OrderList: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: '16px' }}>
-        <h2>{t('orderList.title') || '订单管理'}</h2>
+        <h2>{t('orderList.title')}</h2>
       </div>
       
       <Card>

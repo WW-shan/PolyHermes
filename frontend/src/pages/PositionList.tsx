@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { Card, Table, Tag, message, Space, Input, Radio, Select, Button, Row, Col, Empty, Modal, Form, Descriptions } from 'antd'
 import { SearchOutlined, AppstoreOutlined, UnorderedListOutlined, UpOutlined, DownOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -9,11 +9,46 @@ import { useMediaQuery } from 'react-responsive'
 import { useWebSocketSubscription } from '../hooks/useWebSocket'
 import { wsManager } from '../services/websocket'
 import { formatUSDC, formatNumber as formatNumberUtil } from '../utils'
+import { useTranslation } from 'react-i18next'
+import { CHAIN_TX_PROCESSING_CODE, CHAIN_TX_RESUBMIT_COOLDOWN_MS } from '../utils/chainTx'
+
+// 默认价格精度（tick），接口未提供 tick 时使用
+const DEFAULT_TICK_SIZE = '0.01'
+const SUPPORTED_TICK_SIZES = ['0.1', '0.01', '0.001', '0.0001']
+
+/** 解析后端返回的 tick；不支持的值回退到默认 tick */
+const normalizeTickSize = (raw: unknown): string => {
+  const parsed = typeof raw === 'number' || typeof raw === 'string' ? Number(raw) : NaN
+  if (!isFinite(parsed) || parsed <= 0) return DEFAULT_TICK_SIZE
+  return SUPPORTED_TICK_SIZES.find(tick => Math.abs(Number(tick) - parsed) < 1e-12) || DEFAULT_TICK_SIZE
+}
+// 市价卖出滑点（与后端 SELL_PRICE_ADJUSTMENT 一致：bestBid - 0.02）
+const MARKET_SELL_SLIPPAGE = 0.02
+// 赎回请求超时（链上交易耗时较长）
+const REDEEM_TIMEOUT_MS = 180000
+
+/** 小数位数（按 tick 字符串计算） */
+const decimalsOfTick = (tick: string): number => {
+  const idx = tick.indexOf('.')
+  return idx < 0 ? 0 : tick.length - idx - 1
+}
+
+/** 价格按 tick 向下对齐（用整数运算避免浮点误差），返回 null 表示无效 */
+const alignPriceToTick = (price: number, tick: string): number | null => {
+  const tickNum = parseFloat(tick)
+  if (!isFinite(price) || !isFinite(tickNum) || tickNum <= 0) return null
+  const decimals = decimalsOfTick(tick)
+  const scale = Math.pow(10, decimals)
+  const tickUnits = Math.round(tickNum * scale)
+  const priceUnits = Math.floor(Math.round(price * scale * 1e6) / 1e6)
+  return (Math.floor(priceUnits / tickUnits) * tickUnits) / scale
+}
 
 type PositionFilter = 'current' | 'historical'
 type ViewMode = 'card' | 'list'
 
 const PositionList: React.FC = () => {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const isMobile = useMediaQuery({ maxWidth: 768 })
   const [currentPositions, setCurrentPositions] = useState<AccountPosition[]>([])
@@ -33,6 +68,15 @@ const PositionList: React.FC = () => {
   const [sellQuantity, setSellQuantity] = useState<string>('')
   const [limitPrice, setLimitPrice] = useState<string>('')
   const [selectedPercent, setSelectedPercent] = useState<string | null>(null)  // 记录选择的百分比（字符串格式）
+  // 市价卖出参考：与后端下单同一来源的 bestBid（订单簿最高买价）
+  const [sellBestBid, setSellBestBid] = useState<string | null>(null)
+  const [sellQuoteLoading, setSellQuoteLoading] = useState(false)
+  // 价格 tick：优先使用订单簿接口返回的市场 tick，缺失时使用默认 0.01
+  const [tickSize, setTickSize] = useState(DEFAULT_TICK_SIZE)
+  // 卖出弹窗请求序号：用于丢弃过期的异步响应
+  const sellRequestSeqRef = useRef(0)
+  // 用户是否已手动修改限价（修改后不再自动回填）
+  const limitPriceTouchedRef = useRef(false)
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
   const [wsConnected, setWsConnected] = useState(false)
@@ -40,6 +84,8 @@ const PositionList: React.FC = () => {
   const [redeemableSummary, setRedeemableSummary] = useState<RedeemablePositionsSummary | null>(null)
   const [loadingRedeemableSummary, setLoadingRedeemableSummary] = useState(false)
   const [redeeming, setRedeeming] = useState(false)
+  // 赎回交易处理中或结果未知：冷却期内禁止重复提交
+  const [redeemLocked, setRedeemLocked] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
 
@@ -110,9 +156,30 @@ const PositionList: React.FC = () => {
 
   // 提交赎回
   const handleRedeemSubmit = async () => {
+    if (redeeming || redeemLocked) return
     if (!redeemableSummary || redeemableSummary.positions.length === 0) {
-      message.warning('没有可赎回的仓位')
+      message.warning(t('positionList.redeem.noPositions'))
       return
+    }
+
+    // Builder API Key 未配置：提示并跳转到系统设置页
+    const handleBuilderKeyMissing = (msg?: string) => {
+      message.error({
+        content: msg || t('positionList.redeem.builderKeyMissing'),
+        duration: 5,
+      })
+      // 延迟跳转，让用户看到错误消息
+      setTimeout(() => {
+        navigate('/system-settings')
+      }, 1500)
+    }
+
+    // 结果未知/处理中：锁定一段时间，防止重复提交
+    const lockRedeem = (content: string) => {
+      setRedeemModalVisible(false)
+      setRedeemLocked(true)
+      setTimeout(() => setRedeemLocked(false), CHAIN_TX_RESUBMIT_COOLDOWN_MS)
+      Modal.warning({ title: t('positionList.redeem.resultUnknownTitle'), content })
     }
 
     setRedeeming(true)
@@ -126,42 +193,31 @@ const PositionList: React.FC = () => {
         }))
       }
 
-      const response = await apiService.accounts.redeemPositions(request)
+      const response = await apiService.accounts.redeemPositions(request, REDEEM_TIMEOUT_MS)
       if (response.data.code === 0 && response.data.data) {
         const transactions = response.data.data.transactions || []
         const txHashes = transactions.map((tx: any) => tx.transactionHash.substring(0, 10) + '...').join(', ')
-        message.success(`赎回成功！共 ${transactions.length} 个账户，交易哈希: ${txHashes}`)
+        message.success(t('positionList.redeem.success', { count: transactions.length, txHashes }))
         setRedeemModalVisible(false)
         // 刷新可赎回统计
         await fetchRedeemableSummary()
+      } else if (response.data.code === 2014) {
+        handleBuilderKeyMissing(response.data.msg)
+      } else if (response.data.code === CHAIN_TX_PROCESSING_CODE) {
+        lockRedeem(response.data.msg || t('chainTx.processing'))
       } else {
-        // 检查是否是 Builder API Key 未配置的错误
-        if (response.data.code === 2014 || response.data.msg?.includes('Builder API Key 未配置')) {
-          message.error({
-            content: response.data.msg || 'Builder API Key 未配置',
-            duration: 5,
-          })
-          // 延迟跳转，让用户看到错误消息
-          setTimeout(() => {
-            navigate('/system-settings/builder-api-key')
-          }, 1500)
-        } else {
-          message.error(response.data.msg || '赎回失败')
-        }
+        message.error(response.data.msg || t('positionList.redeem.failed'))
       }
     } catch (error: any) {
-      // 检查是否是 Builder API Key 未配置的错误
-      if (error.response?.data?.code === 2014 || error.message?.includes('Builder API Key 未配置')) {
-        message.error({
-          content: error.response?.data?.msg || error.message || 'Builder API Key 未配置，请前往系统设置页面配置',
-          duration: 5,
-        })
-        // 延迟跳转，让用户看到错误消息
-        setTimeout(() => {
-          navigate('/system-settings/builder-api-key')
-        }, 1500)
+      if (error.response?.data?.code === 2014) {
+        handleBuilderKeyMissing(error.response?.data?.msg)
+      } else if (error.response?.data?.code === CHAIN_TX_PROCESSING_CODE) {
+        lockRedeem(error.response.data.msg || t('chainTx.processing'))
+      } else if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' || !error.response) {
+        // 超时/网络中断：后端可能仍在执行链上交易，结果未知
+        lockRedeem(t('positionList.redeem.resultUnknown'))
       } else {
-        message.error('赎回失败: ' + (error.message || '未知错误'))
+        message.error(t('positionList.redeem.failedWithReason', { reason: error.response?.data?.msg || error.message || t('positionList.unknownError') }))
       }
     } finally {
       setRedeeming(false)
@@ -266,10 +322,10 @@ const PositionList: React.FC = () => {
       if (response.data.code === 0 && response.data.data) {
         setAccounts(response.data.data.list || [])
       } else {
-        message.error(response.data.msg || '获取账户列表失败')
+        message.error(response.data.msg || t('positionList.fetchAccountsFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || '获取账户列表失败')
+      message.error(error.message || t('positionList.fetchAccountsFailed'))
     } finally {
       setAccountsLoading(false)
     }
@@ -428,32 +484,83 @@ const PositionList: React.FC = () => {
 
   // 处理卖出按钮点击
   const handleSellClick = async (position: AccountPosition) => {
+    // 新的请求序号：之前弹窗发出的请求返回后一律丢弃
+    const seq = ++sellRequestSeqRef.current
+    limitPriceTouchedRef.current = false
     setSelectedPosition(position)
     setSellModalVisible(true)
     setOrderType('LIMIT')
     setSellQuantity('')
     setLimitPrice('')
     setSelectedPercent(null)  // 重置百分比选择
+    setMarketPrice(null)
+    setSellBestBid(null)
+    setTickSize(DEFAULT_TICK_SIZE)
     form.resetFields()
 
-    // 加载市场价格
+    const isStale = () => seq !== sellRequestSeqRef.current
+
+    // 先取订单簿：bestBid 用于市价卖出，tickSize 用于限价校验和默认价对齐
+    let effectiveTick = DEFAULT_TICK_SIZE
+    if (position.tokenId) {
+      setSellQuoteLoading(true)
+      try {
+        const res = await apiService.markets.getLatestPrice({ tokenId: position.tokenId })
+        if (isStale()) return
+        if (res.data.code === 0 && res.data.data) {
+          if (res.data.data.bestBid) {
+            setSellBestBid(res.data.data.bestBid)
+          }
+          effectiveTick = normalizeTickSize(res.data.data.tickSize)
+          setTickSize(effectiveTick)
+        }
+      } catch (error) {
+        if (!isStale()) console.error('获取订单簿最高买价失败:', error)
+      } finally {
+        if (!isStale()) setSellQuoteLoading(false)
+      }
+    }
+
+    // 加载市场价格（限价默认值与参考价）
     try {
       const response = await apiService.markets.getMarketPrice({
         marketId: position.marketId,
         outcomeIndex: position.outcomeIndex  // 传递结果索引，用于确定需要查询哪个 outcome 的价格
       })
+      if (isStale()) return
       if (response.data.code === 0 && response.data.data) {
         setMarketPrice(response.data.data)
-        // 默认使用当前价格作为限价
-        if (response.data.data.currentPrice) {
-          setLimitPrice(response.data.data.currentPrice)
-          form.setFieldsValue({ limitPrice: response.data.data.currentPrice })
+        // 用户未手动修改时，才用当前价格（按市场 tick 向下对齐）回填限价
+        const current = parseFloat(response.data.data.currentPrice)
+        const aligned = alignPriceToTick(current, effectiveTick)
+        if (!limitPriceTouchedRef.current && aligned != null && aligned > 0 && aligned < 1) {
+          const priceStr = aligned.toFixed(decimalsOfTick(effectiveTick))
+          setLimitPrice(priceStr)
+          form.setFieldsValue({ limitPrice: priceStr })
         }
       }
     } catch (error: any) {
-      message.error('获取市场价格失败: ' + (error.message || '未知错误'))
+      if (isStale()) return
+      message.error(t('positionList.sell.fetchPriceFailed', { reason: error.message || t('positionList.unknownError') }))
     }
   }
+
+  // 关闭卖出弹窗（同时作废所有进行中的价格请求）
+  const closeSellModal = () => {
+    sellRequestSeqRef.current++
+    setSellModalVisible(false)
+  }
+
+  // 市价卖出最差成交价：bestBid - 滑点，限制在 [tick, 1 - tick]
+  const marketWorstPrice = useMemo((): number | null => {
+    if (!sellBestBid) return null
+    const bid = parseFloat(sellBestBid)
+    if (isNaN(bid) || bid <= 0) return null
+    const tick = parseFloat(tickSize)
+    const decimals = decimalsOfTick(tickSize)
+    const worst = Math.min(1 - tick, Math.max(tick, bid - MARKET_SELL_SLIPPAGE))
+    return parseFloat(worst.toFixed(decimals))
+  }, [sellBestBid, tickSize])
 
   // 处理数量快捷按钮
   const handleQuantityQuickSelect = (percent: number) => {
@@ -462,14 +569,10 @@ const PositionList: React.FC = () => {
     setSelectedPercent(percent.toString())
     // 计算显示用的数量（用于预览，使用显示数量即可）
     const quantity = parseFloat(selectedPosition.quantity)
-    const sellQty = (quantity * percent / 100).toFixed(4)
+    // 后端 SELL 数量按 2 位小数向下取整，前端展示必须与实际签名数量一致
+    const sellQty = (Math.floor((quantity * percent / 100) * 100) / 100).toFixed(2)
     setSellQuantity(sellQty)
     form.setFieldsValue({ quantity: sellQty })
-    // 使用当前卖出价格计算收益
-    const price = getCurrentSellPrice()
-    if (price && price !== '0') {
-      calculatePnl(sellQty, price)
-    }
   }
 
   // 计算平仓收益
@@ -496,8 +599,8 @@ const PositionList: React.FC = () => {
   // 获取当前卖出价格（市价或限价）
   const getCurrentSellPrice = (): string => {
     if (orderType === 'MARKET') {
-      // 市价订单（卖出）：使用当前价格
-      return marketPrice?.currentPrice || selectedPosition?.currentPrice || '0'
+      // 市价订单（卖出）：使用订单簿最高买价（与后端下单同一来源），无数据时不估算
+      return sellBestBid || '0'
     }
     return limitPrice || '0'
   }
@@ -509,6 +612,12 @@ const PositionList: React.FC = () => {
     try {
       await form.validateFields()
 
+      // 市价卖出必须拿到订单簿最高买价，才能向用户展示真实的成交参考
+      if (orderType === 'MARKET' && marketWorstPrice == null) {
+        message.warning(t('positionList.sell.noBestBid'))
+        return
+      }
+
       setSubmitting(true)
 
       const request: PositionSellRequest = {
@@ -517,10 +626,12 @@ const PositionList: React.FC = () => {
         side: selectedPosition.side,
         outcomeIndex: selectedPosition.outcomeIndex,  // 传递 outcomeIndex
         orderType: orderType,
-        // 如果选择了百分比，只传递百分比，不传 quantity
+        // 仓位真实的 tokenId（后端优先使用，避免 neg-risk 等市场推导错误）
+        tokenId: selectedPosition.tokenId,
+        // 如果选择了百分比，只传递百分比，不传 quantity；并带上弹窗展示的持仓数量供后端校验
         // 如果手动输入，只传递 quantity，不传 percent
         ...(selectedPercent != null
-          ? { percent: selectedPercent }
+          ? { percent: selectedPercent, expectedQuantity: selectedPosition.originalQuantity || selectedPosition.quantity }
           : { quantity: sellQuantity }
         ),
         price: orderType === 'LIMIT' ? limitPrice : undefined
@@ -529,8 +640,8 @@ const PositionList: React.FC = () => {
       const response = await apiService.accounts.sellPosition(request)
 
       if (response.data.code === 0) {
-        message.success('卖出订单创建成功')
-        setSellModalVisible(false)
+        message.success(t('positionList.sell.success'))
+        closeSellModal()
         // 重置表单
         setSellQuantity('')
         setLimitPrice('')
@@ -538,14 +649,14 @@ const PositionList: React.FC = () => {
         form.resetFields()
         // 仓位列表会通过WebSocket自动更新
       } else {
-        message.error(response.data.msg || '创建卖出订单失败')
+        message.error(response.data.msg || t('positionList.sell.failed'))
       }
     } catch (error: any) {
       if (error.errorFields) {
         // 表单验证错误
         return
       }
-      message.error('创建卖出订单失败: ' + (error.message || '未知错误'))
+      message.error(t('positionList.sell.failedWithReason', { reason: error.response?.data?.msg || error.message || t('positionList.unknownError') }))
     } finally {
       setSubmitting(false)
     }
@@ -557,14 +668,20 @@ const PositionList: React.FC = () => {
     const price = getCurrentSellPrice()
     if (!price || price === '0') return { pnl: 0, percentPnl: 0 }
     return calculatePnl(sellQuantity, price)
-  }, [selectedPosition, sellQuantity, orderType, limitPrice, marketPrice])
+  }, [selectedPosition, sellQuantity, orderType, limitPrice, sellBestBid])
+
+  // 市价卖出按最差成交价（滑点保护价）计算的收益
+  const worstCasePnl = useMemo(() => {
+    if (orderType !== 'MARKET' || !selectedPosition || !sellQuantity || marketWorstPrice == null) return null
+    return calculatePnl(sellQuantity, String(marketWorstPrice))
+  }, [selectedPosition, sellQuantity, orderType, marketWorstPrice])
 
   // 渲染卡片视图
   const renderCardView = () => {
     if (paginatedPositions.length === 0) {
       return (
         <Empty
-          description="暂无仓位数据"
+          description={t('positionList.empty')}
           style={{ padding: '60px 0' }}
         />
       )
@@ -672,7 +789,7 @@ const PositionList: React.FC = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <div style={{ fontWeight: '500', fontSize: '14px', color: '#333' }}>
-                        {position.accountName || `账户 ${position.accountId}`}
+                        {position.accountName || t('positionList.accountFallback', { id: position.accountId })}
                       </div>
                       <div style={{ fontSize: '12px', color: '#999', fontFamily: 'monospace', marginTop: '2px' }}>
                         {position.walletAddress.slice(0, 6)}...{position.walletAddress.slice(-4)}
@@ -689,7 +806,7 @@ const PositionList: React.FC = () => {
                   {/* 移动端折叠时，显示盈亏（使用简单样式） */}
                   {shouldCollapse && positionFilter === 'current' && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '13px', color: '#666' }}>盈亏</span>
+                      <span style={{ fontSize: '13px', color: '#666' }}>{t('positionList.pnl')}</span>
                       <span style={{
                         fontSize: '13px',
                         fontWeight: '500',
@@ -704,19 +821,19 @@ const PositionList: React.FC = () => {
                   {!shouldCollapse && (
                     <>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '13px', color: '#666' }}>数量</span>
+                        <span style={{ fontSize: '13px', color: '#666' }}>{t('positionList.quantity')}</span>
                         <span style={{ fontSize: '13px', fontWeight: '500' }}>
                           {formatNumber(position.quantity, 4)}
                         </span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '13px', color: '#666' }}>平均价格</span>
+                        <span style={{ fontSize: '13px', color: '#666' }}>{t('positionList.avgPrice')}</span>
                         <span style={{ fontSize: '13px', fontWeight: '500' }}>
                           {formatNumber(position.avgPrice, 4)}
                         </span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '13px', color: '#666' }}>开仓价值</span>
+                        <span style={{ fontSize: '13px', color: '#666' }}>{t('positionList.initialValue')}</span>
                         <span style={{ fontSize: '13px', fontWeight: '500' }}>
                           ${formatUSDC(position.initialValue)}
                         </span>
@@ -724,13 +841,13 @@ const PositionList: React.FC = () => {
                       {positionFilter === 'current' && position.currentPrice && (
                         <>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                            <span style={{ fontSize: '13px', color: '#666' }}>当前价格</span>
+                            <span style={{ fontSize: '13px', color: '#666' }}>{t('positionList.currentPrice')}</span>
                             <span style={{ fontSize: '13px', fontWeight: '500' }}>
                               {formatNumber(position.currentPrice, 4)}
                             </span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                            <span style={{ fontSize: '13px', color: '#666' }}>当前价值</span>
+                            <span style={{ fontSize: '13px', color: '#666' }}>{t('positionList.currentValue')}</span>
                             <span style={{ fontSize: '13px', fontWeight: '600' }}>
                               ${formatUSDC(position.currentValue)}
                             </span>
@@ -769,7 +886,7 @@ const PositionList: React.FC = () => {
                     border: `1px solid ${isProfit ? 'rgba(82, 196, 26, 0.2)' : 'rgba(245, 34, 45, 0.2)'}`
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '13px', color: '#666' }}>盈亏</span>
+                      <span style={{ fontSize: '13px', color: '#666' }}>{t('positionList.pnl')}</span>
                       <span style={{
                         fontSize: '16px',
                         fontWeight: 'bold',
@@ -796,7 +913,7 @@ const PositionList: React.FC = () => {
                         justifyContent: 'space-between',
                         alignItems: 'center'
                       }}>
-                        <span style={{ fontSize: '12px', color: '#999' }}>已实现盈亏</span>
+                        <span style={{ fontSize: '12px', color: '#999' }}>{t('positionList.realizedPnl')}</span>
                         <span style={{
                           fontSize: '13px',
                           color: parseFloat(position.realizedPnl) >= 0 ? '#52c41a' : '#f5222d',
@@ -820,7 +937,7 @@ const PositionList: React.FC = () => {
                         block={isMobile}
                         onClick={() => handleSellClick(position)}
                       >
-                        卖出
+                        {t('positionList.sellButton')}
                       </Button>
                     )}
                   </div>
@@ -861,13 +978,13 @@ const PositionList: React.FC = () => {
         fixed: isMobile ? ('left' as const) : undefined
       },
       {
-        title: '账户',
+        title: t('positionList.account'),
         dataIndex: 'accountName',
         key: 'accountName',
         render: (text: string | undefined, record: AccountPosition) => (
           <div>
             <div style={{ fontWeight: 'bold' }}>
-              {text || `账户 ${record.accountId}`}
+              {text || t('positionList.accountFallback', { id: record.accountId })}
             </div>
             <div style={{ fontSize: '12px', color: '#999', fontFamily: 'monospace' }}>
               {record.walletAddress.slice(0, 6)}...{record.walletAddress.slice(-6)}
@@ -878,7 +995,7 @@ const PositionList: React.FC = () => {
         width: isMobile ? 120 : 160
       },
       {
-        title: '市场',
+        title: t('positionList.market'),
         dataIndex: 'marketTitle',
         key: 'marketTitle',
         render: (text: string | undefined, record: AccountPosition) => {
@@ -926,7 +1043,7 @@ const PositionList: React.FC = () => {
         width: isMobile ? 180 : 220
       },
       {
-        title: '方向',
+        title: t('positionList.side'),
         dataIndex: 'side',
         key: 'side',
         render: (side: string) => (
@@ -935,7 +1052,7 @@ const PositionList: React.FC = () => {
         width: 70
       },
       {
-        title: '持仓',
+        title: t('positionList.holding'),
         key: 'position',
         render: (_: any, record: AccountPosition) => (
           <div>
@@ -947,7 +1064,7 @@ const PositionList: React.FC = () => {
         width: 100
       },
       {
-        title: '开仓价值',
+        title: t('positionList.initialValue'),
         dataIndex: 'initialValue',
         key: 'initialValue',
         render: (value: string) => (
@@ -961,7 +1078,7 @@ const PositionList: React.FC = () => {
     // 只有当前仓位才显示当前价值/盈亏合并列
     if (positionFilter === 'current') {
       baseColumns.push({
-        title: '当前价值 / 盈亏',
+        title: t('positionList.valueAndPnl'),
         key: 'valueAndPnl',
         render: (_: any, record: AccountPosition) => {
           const pnlNum = parseFloat(record.pnl || '0')
@@ -986,7 +1103,7 @@ const PositionList: React.FC = () => {
                   color: '#999',
                   marginTop: '2px'
                 }}>
-                  已实现: {realizedPnl >= 0 ? '+' : ''}{formatUSDC(record.realizedPnl)}
+                  {t('positionList.realizedShort')}: {realizedPnl >= 0 ? '+' : ''}{formatUSDC(record.realizedPnl)}
                   {percentRealizedPnl !== null && ` (${formatPercent(record.percentRealizedPnl)})`}
                 </div>
               )}
@@ -1007,7 +1124,7 @@ const PositionList: React.FC = () => {
     // 只有当前仓位才显示操作列
     if (positionFilter === 'current') {
       baseColumns.push({
-        title: '操作',
+        title: t('common.actions'),
         key: 'action',
         render: (_: any, record: AccountPosition) => (
           <Space size="small">
@@ -1018,7 +1135,7 @@ const PositionList: React.FC = () => {
                 size="small"
                 onClick={() => handleSellClick(record)}
               >
-                卖出
+                {t('positionList.sellButton')}
               </Button>
             )}
           </Space>
@@ -1029,7 +1146,7 @@ const PositionList: React.FC = () => {
     }
 
     return baseColumns
-  }, [positionFilter, isMobile])
+  }, [positionFilter, isMobile, t])
 
   // 统计当前和历史仓位数量（根据账户筛选）
   const filteredCurrentPositions = useMemo(() => {
@@ -1050,7 +1167,7 @@ const PositionList: React.FC = () => {
       <div style={{ marginBottom: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <h2 style={{ margin: 0 }}>仓位管理</h2>
+            <h2 style={{ margin: 0 }}>{t('positionList.title')}</h2>
             {/* WebSocket 连接状态指示器 */}
             <Tag
               color={wsConnected ? 'green' : 'orange'}
@@ -1065,12 +1182,12 @@ const PositionList: React.FC = () => {
                 marginRight: '6px',
                 animation: wsConnected ? 'pulse 2s infinite' : 'pulse 1s infinite'
               }}></span>
-              {wsConnected ? '实时更新' : '连接中...'}
+              {wsConnected ? t('positionList.live') : t('positionList.connecting')}
             </Tag>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: isMobile ? '1 1 100%' : '0 0 auto', flexWrap: 'wrap' }}>
             <Input
-              placeholder="搜索账户、市场、方向..."
+              placeholder={t('positionList.searchPlaceholder')}
               prefix={<SearchOutlined />}
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
@@ -1083,41 +1200,41 @@ const PositionList: React.FC = () => {
                   type={viewMode === 'list' ? 'primary' : 'default'}
                   icon={<UnorderedListOutlined />}
                   onClick={() => setViewMode('list')}
-                  title="列表视图"
+                  title={t('positionList.listView')}
                 />
                 <Button
                   type={viewMode === 'card' ? 'primary' : 'default'}
                   icon={<AppstoreOutlined />}
                   onClick={() => setViewMode('card')}
-                  title="卡片视图"
+                  title={t('positionList.cardView')}
                 />
               </Space.Compact>
             )}
             <span style={{ color: '#999', fontSize: '14px', whiteSpace: 'nowrap' }}>
               {searchKeyword || selectedAccountId !== undefined
-                ? `找到 ${filteredPositions.length} / ${basePositions.length} 个仓位`
-                : `共 ${basePositions.length} 个仓位`}
+                ? t('positionList.foundCount', { found: filteredPositions.length, total: basePositions.length })
+                : t('positionList.totalCount', { total: basePositions.length })}
             </span>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
           <Select
-            placeholder="选择账户"
+            placeholder={t('positionList.selectAccount')}
             value={selectedAccountId ?? 'ALL'}
             onChange={(value: number | 'ALL') => setSelectedAccountId(value === 'ALL' ? undefined : value)}
             style={{ width: isMobile ? '100%' : 200 }}
             loading={accountsLoading}
             options={[
-              { value: 'ALL', label: '全部账户' },
+              { value: 'ALL', label: t('positionList.allAccounts') },
               ...accounts
                 .sort((a, b) => {
-                  const nameA = (a.accountName || `账户 ${a.id}`).toLowerCase()
-                  const nameB = (b.accountName || `账户 ${b.id}`).toLowerCase()
+                  const nameA = (a.accountName || t('positionList.accountFallback', { id: a.id })).toLowerCase()
+                  const nameB = (b.accountName || t('positionList.accountFallback', { id: b.id })).toLowerCase()
                   return nameA.localeCompare(nameB, 'zh-CN')
                 })
                 .map(account => ({
                   value: account.id,
-                  label: account.accountName || `账户 ${account.id}`
+                  label: account.accountName || t('positionList.accountFallback', { id: account.id })
                 }))
             ]}
           />
@@ -1151,7 +1268,7 @@ const PositionList: React.FC = () => {
                   }}
                 >
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>当前仓位</span>
+                    <span>{t('positionList.currentPositions')}</span>
                     <Tag
                       color={positionFilter === 'current' ? 'default' : 'blue'}
                       style={{
@@ -1185,7 +1302,7 @@ const PositionList: React.FC = () => {
                   }}
                 >
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>历史仓位</span>
+                    <span>{t('positionList.historyPositions')}</span>
                     <Tag
                       color={positionFilter === 'historical' ? 'default' : 'default'}
                       style={{
@@ -1210,12 +1327,13 @@ const PositionList: React.FC = () => {
                 type="primary"
                 onClick={handleRedeemClick}
                 loading={loadingRedeemableSummary}
+                disabled={redeemLocked}
                 style={{
                   background: '#52c41a',
                   borderColor: '#52c41a'
                 }}
               >
-                赎回 ({redeemableSummary.totalCount}个, ${formatUSDC(redeemableSummary.totalValue)})
+                {t('positionList.redeemButton', { count: redeemableSummary.totalCount, value: formatUSDC(redeemableSummary.totalValue) })}
               </Button>
             )}
           </div>
@@ -1236,19 +1354,19 @@ const PositionList: React.FC = () => {
             }}
           >
             <span>
-              开仓价值合计：{' '}
+              {t('positionList.totalInitialValue')}{' '}
               <span style={{ fontWeight: 600 }}>
                 ${formatUSDC(positionTotals.totalInitialValue.toString())}
               </span>
             </span>
             <span>
-              当前价值合计：{' '}
+              {t('positionList.totalCurrentValue')}{' '}
               <span style={{ fontWeight: 600 }}>
                 ${formatUSDC(positionTotals.totalCurrentValue.toString())}
               </span>
             </span>
             <span>
-              浮动盈亏合计：{' '}
+              {t('positionList.totalUnrealizedPnl')}{' '}
               <span
                 style={{
                   fontWeight: 600,
@@ -1260,7 +1378,7 @@ const PositionList: React.FC = () => {
               </span>
             </span>
             <span>
-              已实现盈亏合计：{' '}
+              {t('positionList.totalRealizedPnl')}{' '}
               <span
                 style={{
                   fontWeight: 600,
@@ -1290,7 +1408,7 @@ const PositionList: React.FC = () => {
                 gap: '8px'
               }}>
                 <div style={{ fontSize: '14px', color: '#666' }}>
-                  共 {filteredPositions.length} 个仓位{searchKeyword ? `（已过滤）` : ''}
+                  {t('positionList.totalCount', { total: filteredPositions.length })}{searchKeyword ? t('positionList.filtered') : ''}
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <Button
@@ -1298,7 +1416,7 @@ const PositionList: React.FC = () => {
                     disabled={currentPage === 1}
                     onClick={() => setCurrentPage(currentPage - 1)}
                   >
-                    上一页
+                    {t('positionList.prevPage')}
                   </Button>
                   <span style={{ lineHeight: '32px', fontSize: '14px' }}>
                     {currentPage} / {Math.ceil(filteredPositions.length / pageSize)}
@@ -1308,7 +1426,7 @@ const PositionList: React.FC = () => {
                     disabled={currentPage >= Math.ceil(filteredPositions.length / pageSize)}
                     onClick={() => setCurrentPage(currentPage + 1)}
                   >
-                    下一页
+                    {t('positionList.nextPage')}
                   </Button>
                 </div>
               </div>
@@ -1327,9 +1445,9 @@ const PositionList: React.FC = () => {
                   size="small"
                   style={{ width: '100px' }}
                 >
-                  <Select.Option value={10}>10 条/页</Select.Option>
-                  <Select.Option value={20}>20 条/页</Select.Option>
-                  <Select.Option value={50}>50 条/页</Select.Option>
+                  <Select.Option value={10}>{t('positionList.perPage', { size: 10 })}</Select.Option>
+                  <Select.Option value={20}>{t('positionList.perPage', { size: 20 })}</Select.Option>
+                  <Select.Option value={50}>{t('positionList.perPage', { size: 50 })}</Select.Option>
                 </Select>
               </div>
             </>
@@ -1348,7 +1466,7 @@ const PositionList: React.FC = () => {
               total: filteredPositions.length,
               showSizeChanger: true,
               pageSizeOptions: ['10', '20', '50'],
-              showTotal: (total) => `共 ${total} 个仓位${searchKeyword ? `（已过滤）` : ''}`,
+              showTotal: (total) => `${t('positionList.totalCount', { total })}${searchKeyword ? t('positionList.filtered') : ''}`,
               onChange: (page, size) => {
                 setCurrentPage(page)
                 if (size !== pageSize) {
@@ -1363,16 +1481,17 @@ const PositionList: React.FC = () => {
 
       {/* 出售模态框 */}
       <Modal
-        title={`出售仓位 - ${selectedPosition?.marketTitle || selectedPosition?.marketId || ''}`}
+        title={t('positionList.sell.title', { market: selectedPosition?.marketTitle || selectedPosition?.marketId || '' })}
         open={sellModalVisible}
         onCancel={() => {
           if (!submitting) {
-            setSellModalVisible(false)
+            closeSellModal()
           }
         }}
         onOk={handleSellSubmit}
-        okText="确认卖出"
-        cancelText="取消"
+        okText={t('positionList.sell.confirm')}
+        cancelText={t('common.cancel')}
+        okButtonProps={{ disabled: orderType === 'MARKET' && marketWorstPrice == null }}
         width={isMobile ? '90%' : 600}
         destroyOnHidden
         confirmLoading={submitting}
@@ -1382,60 +1501,51 @@ const PositionList: React.FC = () => {
           <Form form={form} layout="vertical">
             <div style={{ marginBottom: '16px', padding: '12px', background: '#f5f5f5', borderRadius: '8px' }}>
               <div style={{ marginBottom: '8px' }}>
-                <span style={{ color: '#666' }}>账户: </span>
-                <span style={{ fontWeight: '500' }}>{selectedPosition.accountName || `账户 ${selectedPosition.accountId}`}</span>
+                <span style={{ color: '#666' }}>{t('positionList.account')}: </span>
+                <span style={{ fontWeight: '500' }}>{selectedPosition.accountName || t('positionList.accountFallback', { id: selectedPosition.accountId })}</span>
               </div>
               <div style={{ marginBottom: '8px' }}>
-                <span style={{ color: '#666' }}>方向: </span>
+                <span style={{ color: '#666' }}>{t('positionList.side')}: </span>
                 <Tag color={getSideColor(selectedPosition.side)}>{selectedPosition.side}</Tag>
               </div>
               <div style={{ marginBottom: '8px' }}>
-                <span style={{ color: '#666' }}>当前持仓: </span>
+                <span style={{ color: '#666' }}>{t('positionList.sell.currentHolding')}: </span>
                 <span style={{ fontWeight: '500' }}>{formatNumber(selectedPosition.quantity, 4)}</span>
               </div>
               <div style={{ marginBottom: '8px' }}>
-                <span style={{ color: '#666' }}>平均价格: </span>
+                <span style={{ color: '#666' }}>{t('positionList.avgPrice')}: </span>
                 <span style={{ fontWeight: '500' }}>{formatNumber(selectedPosition.avgPrice, 4)}</span>
               </div>
               {selectedPosition.currentPrice && (
                 <div>
-                  <span style={{ color: '#666' }}>当前价格: </span>
+                  <span style={{ color: '#666' }}>{t('positionList.currentPrice')}: </span>
                   <span style={{ fontWeight: '500' }}>{formatNumber(selectedPosition.currentPrice, 4)}</span>
                 </div>
               )}
             </div>
 
-            <Form.Item label="订单类型" required>
+            <Form.Item label={t('positionList.sell.orderType')} required>
               <Radio.Group
                 value={orderType}
-                onChange={(e) => {
-                  setOrderType(e.target.value)
-                  // 切换订单类型时重新计算收益
-                  if (sellQuantity) {
-                    const price = e.target.value === 'MARKET'
-                      ? (marketPrice?.currentPrice || selectedPosition?.currentPrice || '0')
-                      : limitPrice || '0'
-                    calculatePnl(sellQuantity, price)
-                  }
-                }}
+                onChange={(e) => setOrderType(e.target.value)}
               >
-                <Radio value="MARKET">市价出售</Radio>
-                <Radio value="LIMIT">限价出售</Radio>
+                <Radio value="MARKET">{t('positionList.sell.market')}</Radio>
+                <Radio value="LIMIT">{t('positionList.sell.limit')}</Radio>
               </Radio.Group>
             </Form.Item>
 
             <Form.Item
-              label="卖出数量"
+              label={t('positionList.sell.quantity')}
               name="quantity"
               rules={[
-                { required: true, message: '请输入卖出数量' },
+                { required: true, message: t('positionList.sell.quantityRequired') },
                 {
                   validator: (_, value) => {
-                    if (!value || parseFloat(value) <= 0) {
-                      return Promise.reject('卖出数量必须大于0')
+                    if (!value || !(parseFloat(value) > 0)) {
+                      return Promise.reject(t('positionList.sell.quantityPositive'))
                     }
                     if (parseFloat(value) > parseFloat(selectedPosition.quantity)) {
-                      return Promise.reject('卖出数量不能超过持仓数量')
+                      return Promise.reject(t('positionList.sell.quantityExceeds'))
                     }
                     return Promise.resolve()
                   }
@@ -1443,18 +1553,12 @@ const PositionList: React.FC = () => {
               ]}
             >
               <Input
-                value={sellQuantity}
                 onChange={(e) => {
-                  const newQuantity = e.target.value
-                  setSellQuantity(newQuantity)
+                  setSellQuantity(e.target.value)
                   // 用户手动输入时，清除百分比选择
                   setSelectedPercent(null)
-                  if (newQuantity) {
-                    const price = getCurrentSellPrice()
-                    calculatePnl(newQuantity, price)
-                  }
                 }}
-                placeholder="请输入卖出数量"
+                placeholder={t('positionList.sell.quantityPlaceholder')}
                 suffix={
                   <Space size="small">
                     <Button size="small" onClick={() => handleQuantityQuickSelect(20)}>20%</Button>
@@ -1467,52 +1571,67 @@ const PositionList: React.FC = () => {
             </Form.Item>
 
             {orderType === 'LIMIT' && (
-              <Form.Item
-                label="限价价格"
-                name="limitPrice"
-                rules={[
-                  { required: true, message: '请输入限价价格' },
-                  {
-                    validator: (_, value) => {
-                      if (!value || parseFloat(value) <= 0) {
-                        return Promise.reject('价格必须大于0')
+              <>
+                <Form.Item
+                  label={t('positionList.sell.limitPrice')}
+                  name="limitPrice"
+                  style={{ marginBottom: marketPrice?.currentPrice ? 4 : undefined }}
+                  extra={t('positionList.sell.tickHint', { tick: tickSize })}
+                  rules={[
+                    { required: true, message: t('positionList.sell.limitPriceRequired') },
+                    {
+                      validator: (_, value) => {
+                        if (value == null || value === '') return Promise.resolve()
+                        const p = Number(value)
+                        if (!isFinite(p) || p <= 0 || p >= 1) {
+                          return Promise.reject(t('positionList.sell.priceRange'))
+                        }
+                        const aligned = alignPriceToTick(p, tickSize)
+                        if (aligned == null || Math.abs(aligned - p) > 1e-9) {
+                          return Promise.reject(t('positionList.sell.priceTick', { tick: tickSize }))
+                        }
+                        return Promise.resolve()
                       }
-                      return Promise.resolve()
                     }
-                  }
-                ]}
-              >
-                <Input
-                  value={limitPrice}
-                  onChange={(e) => {
-                    const newPrice = e.target.value
-                    setLimitPrice(newPrice)
-                    if (sellQuantity && newPrice) {
-                      calculatePnl(sellQuantity, newPrice)
-                    }
-                  }}
-                  placeholder="请输入限价价格"
-                />
+                  ]}
+                >
+                  <Input
+                    onChange={(e) => {
+                      // 用户手动修改后，不再用异步返回的价格覆盖
+                      limitPriceTouchedRef.current = true
+                      setLimitPrice(e.target.value)
+                    }}
+                    placeholder={t('positionList.sell.limitPricePlaceholder')}
+                  />
+                </Form.Item>
                 {marketPrice?.currentPrice && (
-                  <div style={{ marginTop: '4px', fontSize: '12px', color: '#999' }}>
-                    参考价格（卖出参考）: {formatNumber(marketPrice.currentPrice, 4)}
+                  <div style={{ marginBottom: '16px', fontSize: '12px', color: '#999' }}>
+                    {t('positionList.sell.referencePrice')}: {formatNumber(marketPrice.currentPrice, 4)}
                   </div>
                 )}
-              </Form.Item>
+              </>
             )}
 
             {orderType === 'MARKET' && (
               <div style={{ marginBottom: '16px', padding: '12px', background: '#f0f7ff', borderRadius: '8px' }}>
-                <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>市价参考（卖出）</div>
-                <div style={{ fontSize: '14px' }}>
-                  {marketPrice?.currentPrice ? (
-                    <>当前价格: <span style={{ fontWeight: '500' }}>{formatNumber(marketPrice.currentPrice, 4)}</span></>
-                  ) : selectedPosition?.currentPrice ? (
-                    <>当前价格: <span style={{ fontWeight: '500' }}>{formatNumber(selectedPosition.currentPrice, 4)}</span></>
-                  ) : (
-                    <span style={{ color: '#999' }}>暂无价格数据</span>
-                  )}
-                </div>
+                <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('positionList.sell.marketReference')}</div>
+                {sellQuoteLoading ? (
+                  <div style={{ fontSize: '14px', color: '#999' }}>{t('common.loading')}</div>
+                ) : sellBestBid && marketWorstPrice != null ? (
+                  <>
+                    <div style={{ fontSize: '14px' }}>
+                      {t('positionList.sell.bestBid')}: <span style={{ fontWeight: '500' }}>{formatNumber(sellBestBid, 4)}</span>
+                    </div>
+                    <div style={{ fontSize: '14px', marginTop: '4px' }}>
+                      {t('positionList.sell.worstPrice')}: <span style={{ fontWeight: '500', color: '#fa8c16' }}>{formatNumber(String(marketWorstPrice), 4)}</span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>
+                      {t('positionList.sell.slippageHint', { slippage: MARKET_SELL_SLIPPAGE })}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: '14px', color: '#999' }}>{t('positionList.sell.noBestBid')}</div>
+                )}
               </div>
             )}
 
@@ -1525,7 +1644,9 @@ const PositionList: React.FC = () => {
                 border: `1px solid ${currentPnl.pnl >= 0 ? 'rgba(82, 196, 26, 0.2)' : 'rgba(245, 34, 45, 0.2)'}`,
                 borderRadius: '8px'
               }}>
-                <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>预计平仓收益</div>
+                <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
+                  {orderType === 'MARKET' ? t('positionList.sell.estimatedPnlAtBestBid') : t('positionList.sell.estimatedPnl')}
+                </div>
                 <div style={{
                   fontSize: '20px',
                   fontWeight: 'bold',
@@ -1541,6 +1662,12 @@ const PositionList: React.FC = () => {
                 }}>
                   {currentPnl.percentPnl >= 0 ? '+' : ''}{currentPnl.percentPnl.toFixed(2)}%
                 </div>
+                {worstCasePnl && (
+                  <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+                    {t('positionList.sell.worstCasePnl')}: {worstCasePnl.pnl >= 0 ? '+' : '-'}${formatUSDC(Math.abs(worstCasePnl.pnl))}
+                    {' '}({worstCasePnl.percentPnl >= 0 ? '+' : ''}{worstCasePnl.percentPnl.toFixed(2)}%)
+                  </div>
+                )}
               </div>
             )}
           </Form>
@@ -1549,7 +1676,7 @@ const PositionList: React.FC = () => {
 
       {/* 赎回模态框 */}
       <Modal
-        title="赎回仓位详情"
+        title={t('positionList.redeem.title')}
         open={redeemModalVisible}
         onCancel={() => {
           if (!redeeming) {
@@ -1557,8 +1684,9 @@ const PositionList: React.FC = () => {
           }
         }}
         onOk={handleRedeemSubmit}
-        okText="确认赎回"
-        cancelText="取消"
+        okButtonProps={{ disabled: redeemLocked }}
+        okText={t('positionList.redeem.confirm')}
+        cancelText={t('common.cancel')}
         width={isMobile ? '90%' : 800}
         destroyOnHidden
         confirmLoading={redeeming}
@@ -1567,23 +1695,23 @@ const PositionList: React.FC = () => {
         {redeemableSummary && redeemableSummary.positions.length > 0 ? (
           <div>
             <Descriptions bordered column={1} size="small" style={{ marginBottom: '16px' }}>
-              <Descriptions.Item label="可赎回仓位数量">
-                <Tag color="green">{redeemableSummary.totalCount} 个</Tag>
+              <Descriptions.Item label={t('positionList.redeem.count')}>
+                <Tag color="green">{redeemableSummary.totalCount}</Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="可赎回总价值">
+              <Descriptions.Item label={t('positionList.redeem.totalValue')}>
                 <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#52c41a' }}>
                   ${formatUSDC(redeemableSummary.totalValue)}
                 </span>
               </Descriptions.Item>
-              <Descriptions.Item label="涉及账户">
+              <Descriptions.Item label={t('positionList.redeem.accounts')}>
                 <Tag color="blue">
-                  {new Set(redeemableSummary.positions.map(p => p.accountId)).size} 个账户
+                  {new Set(redeemableSummary.positions.map(p => p.accountId)).size}
                 </Tag>
               </Descriptions.Item>
             </Descriptions>
 
             <div style={{ marginTop: '16px' }}>
-              <div style={{ marginBottom: '8px', fontWeight: '500' }}>赎回仓位列表：</div>
+              <div style={{ marginBottom: '8px', fontWeight: '500' }}>{t('positionList.redeem.list')}</div>
               <Table
                 dataSource={redeemableSummary.positions}
                 rowKey={(record) => `${record.accountId}-${record.marketId}-${record.outcomeIndex}`}
@@ -1592,32 +1720,32 @@ const PositionList: React.FC = () => {
                 scroll={{ y: 300 }}
                 columns={[
                   {
-                    title: '账户',
+                    title: t('positionList.account'),
                     dataIndex: 'accountName',
                     key: 'account',
                     render: (text, record) => (
                       <span>
-                        {text || `账户 ${record.accountId}`}
+                        {text || t('positionList.accountFallback', { id: record.accountId })}
                       </span>
                     ),
                     width: 150
                   },
                   {
-                    title: '市场',
+                    title: t('positionList.market'),
                     dataIndex: 'marketTitle',
                     key: 'marketTitle',
                     render: (text, record) => text || record.marketId.substring(0, 10) + '...',
                     width: 200
                   },
                   {
-                    title: '方向',
+                    title: t('positionList.side'),
                     dataIndex: 'side',
                     key: 'side',
                     render: (side) => <Tag color={getSideColor(side)}>{side}</Tag>,
                     width: 80
                   },
                   {
-                    title: '数量',
+                    title: t('positionList.quantity'),
                     dataIndex: 'quantity',
                     key: 'quantity',
                     align: 'right' as const,
@@ -1625,7 +1753,7 @@ const PositionList: React.FC = () => {
                     width: 120
                   },
                   {
-                    title: '价值 ($)',
+                    title: t('positionList.redeem.valueUsd'),
                     dataIndex: 'value',
                     key: 'value',
                     align: 'right' as const,
@@ -1648,17 +1776,17 @@ const PositionList: React.FC = () => {
               border: '1px solid #bae7ff'
             }}>
               <div style={{ color: '#666', fontSize: '12px', lineHeight: '1.8' }}>
-                <div>💡 <strong>提示：</strong></div>
-                <div>• 赎回将按 1:1 比例将获胜仓位换回 USDC</div>
-                <div>• 同一市场的多个仓位将批量赎回，节省 Gas 费用</div>
-                <div>• 赎回操作需要发送链上交易，请确保账户有足够的 POL 支付 Gas</div>
-                <div>• 赎回成功后，仓位将从当前仓位列表中移除</div>
+                <div>💡 <strong>{t('positionList.redeem.tipTitle')}</strong></div>
+                <div>• {t('positionList.redeem.tip1')}</div>
+                <div>• {t('positionList.redeem.tip2')}</div>
+                <div>• {t('positionList.redeem.tip3')}</div>
+                <div>• {t('positionList.redeem.tip4')}</div>
               </div>
             </div>
           </div>
         ) : (
           <div style={{ textAlign: 'center', padding: '40px' }}>
-            <Empty description="没有可赎回的仓位" />
+            <Empty description={t('positionList.redeem.noPositions')} />
           </div>
         )}
       </Modal>

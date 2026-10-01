@@ -39,10 +39,10 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
       if (response.data.code === 0 && response.data.data) {
         setStatistics(response.data.data)
       } else {
-        message.error(response.data.msg || t('copyTradingOrders.fetchStatisticsFailed') || '获取统计信息失败')
+        message.error(response.data.msg || t('copyTradingOrders.fetchStatisticsFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('copyTradingOrders.fetchStatisticsFailed') || '获取统计信息失败')
+      message.error(error.message || t('copyTradingOrders.fetchStatisticsFailed'))
     } finally {
       setLoading(false)
     }
@@ -63,7 +63,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
   
   return (
     <Modal
-      title={t('copyTradingOrders.statistics') || '跟单关系统计'}
+      title={t('copyTradingOrders.statistics')}
       open={open}
       onCancel={onClose}
       footer={null}
@@ -77,13 +77,13 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
         </div>
       ) : !statistics ? (
         <div style={{ textAlign: 'center', padding: '50px' }}>
-          <p>{t('copyTradingOrders.noStatistics') || '暂无统计数据'}</p>
+          <p>{t('copyTradingOrders.noStatistics')}</p>
         </div>
       ) : isMobile ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.totalBuyOrders') || '总买入订单数'}
+              {t('copyTradingOrders.totalBuyOrders')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '500', color: '#333', flex: '1', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
               <ArrowUpOutlined style={{ color: '#1890ff', fontSize: '14px' }} />
@@ -92,7 +92,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.totalSellOrders') || '总卖出订单数'}
+              {t('copyTradingOrders.totalSellOrders')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '500', color: '#333', flex: '1', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
               <ArrowDownOutlined style={{ color: '#ff4d4f', fontSize: '14px' }} />
@@ -101,7 +101,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.totalBuyAmount') || '总买入金额'}
+              {t('copyTradingOrders.totalBuyAmount')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '500', color: '#333', flex: '1', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
               <ArrowUpOutlined style={{ color: '#1890ff', fontSize: '14px' }} />
@@ -110,7 +110,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.totalSellAmount') || '总卖出金额'}
+              {t('copyTradingOrders.totalSellAmount')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '500', color: '#333', flex: '1', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
               <ArrowDownOutlined style={{ color: '#ff4d4f', fontSize: '14px' }} />
@@ -119,7 +119,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.currentPositionCost') || '当前持仓成本'}
+              {t('copyTradingOrders.currentPositionCost')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '500', color: '#333', flex: '1', textAlign: 'right' }}>
               <span style={{ fontSize: 'clamp(12px, 4vw, 16px)' }}>{formatUSDC(statistics.currentPositionCost)} USDC</span>
@@ -127,7 +127,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.currentPositionValue') || '当前持仓市值'}
+              {t('copyTradingOrders.currentPositionValue')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '500', color: '#333', flex: '1', textAlign: 'right' }}>
               <span style={{ fontSize: 'clamp(12px, 4vw, 16px)' }}>{formatUSDC(statistics.currentPositionValue)} USDC</span>
@@ -135,7 +135,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.totalPnl') || '总盈亏（含未实现）'}
+              {t('copyTradingOrders.totalPnl')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: 'bold', color: getPnlColor(statistics.totalPnl), flex: '1', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
               {getPnlIcon(statistics.totalPnl)}
@@ -144,7 +144,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.totalRealizedPnl') || '总已实现盈亏'}
+              {t('copyTradingOrders.totalRealizedPnl')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '500', color: getPnlColor(statistics.totalRealizedPnl), flex: '1', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
               {getPnlIcon(statistics.totalRealizedPnl)}
@@ -153,7 +153,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ fontSize: '14px', color: '#666', flex: '0 0 auto', marginRight: '12px' }}>
-              {t('copyTradingOrders.totalUnrealizedPnl') || '总未实现盈亏'}
+              {t('copyTradingOrders.totalUnrealizedPnl')}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '500', color: getPnlColor(statistics.totalUnrealizedPnl), flex: '1', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
               {getPnlIcon(statistics.totalUnrealizedPnl)}
@@ -167,49 +167,49 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.totalBuyOrders') || '总买入订单数'}
+                title={t('copyTradingOrders.totalBuyOrders')}
                 value={statistics.totalBuyOrders}
                 prefix={<ArrowUpOutlined style={{ color: '#1890ff' }} />}
               />
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.totalSellOrders') || '总卖出订单数'}
+                title={t('copyTradingOrders.totalSellOrders')}
                 value={statistics.totalSellOrders}
                 prefix={<ArrowDownOutlined style={{ color: '#ff4d4f' }} />}
               />
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.totalBuyAmount') || '总买入金额'}
+                title={t('copyTradingOrders.totalBuyAmount')}
                 value={formatUSDC(statistics.totalBuyAmount)}
                 prefix={<><ArrowUpOutlined style={{ color: '#1890ff' }} /> $</>}
               />
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.totalSellAmount') || '总卖出金额'}
+                title={t('copyTradingOrders.totalSellAmount')}
                 value={formatUSDC(statistics.totalSellAmount)}
                 prefix={<><ArrowDownOutlined style={{ color: '#ff4d4f' }} /> $</>}
               />
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.currentPositionCost') || '当前持仓成本'}
+                title={t('copyTradingOrders.currentPositionCost')}
                 value={formatUSDC(statistics.currentPositionCost)}
                 suffix="USDC"
               />
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.currentPositionValue') || '当前持仓市值'}
+                title={t('copyTradingOrders.currentPositionValue')}
                 value={formatUSDC(statistics.currentPositionValue)}
                 suffix="USDC"
               />
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.totalPnl') || '总盈亏（含未实现）'}
+                title={t('copyTradingOrders.totalPnl')}
                 value={formatUSDC(statistics.totalPnl)}
                 valueStyle={{ color: getPnlColor(statistics.totalPnl) }}
                 prefix={<>{getPnlIcon(statistics.totalPnl)} $</>}
@@ -217,7 +217,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.totalRealizedPnl') || '总已实现盈亏'}
+                title={t('copyTradingOrders.totalRealizedPnl')}
                 value={formatUSDC(statistics.totalRealizedPnl)}
                 valueStyle={{ color: getPnlColor(statistics.totalRealizedPnl) }}
                 prefix={<>{getPnlIcon(statistics.totalRealizedPnl)} $</>}
@@ -225,7 +225,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Statistic
-                title={t('copyTradingOrders.totalUnrealizedPnl') || '总未实现盈亏'}
+                title={t('copyTradingOrders.totalUnrealizedPnl')}
                 value={formatUSDC(statistics.totalUnrealizedPnl)}
                 valueStyle={{ color: getPnlColor(statistics.totalUnrealizedPnl) }}
                 prefix={<>{getPnlIcon(statistics.totalUnrealizedPnl)} $</>}

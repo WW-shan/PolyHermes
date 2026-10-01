@@ -817,6 +817,7 @@ export interface AccountPosition {
   marketIcon?: string  // 市场图标 URL
   side: string  // 结果名称（如 "YES", "NO", "Pakistan" 等）
   outcomeIndex?: number  // 结果索引（0, 1, 2...），用于计算 tokenId
+  tokenId?: string  // 仓位真实的 CLOB token id（来自 Data API 的 asset）
   quantity: string  // 显示用的数量（可能被截位）
   originalQuantity?: string  // 原始数量（保留完整精度，用于100%出售）
   avgPrice: string
@@ -853,6 +854,8 @@ export interface PositionSellRequest {
   quantity?: string  // 卖出数量（可选，手动输入时使用）
   percent?: string  // 卖出百分比（可选，BigDecimal字符串，支持小数，0-100之间，选择百分比按钮时使用）
   price?: string  // 限价订单必需
+  tokenId?: string  // 仓位真实的 tokenId（后端优先使用）
+  expectedQuantity?: string  // 百分比卖出时弹窗展示的持仓数量（后端用于校验实时持仓偏差）
 }
 
 /**
@@ -882,6 +885,16 @@ export interface MarketPriceRequest {
 export interface MarketPriceResponse {
   marketId: string
   currentPrice: string
+}
+
+/**
+ * 订单簿最新价响应（含市场 tick，前端下单必须使用该精度）
+ */
+export interface LatestPriceResponse {
+  tokenId: string
+  bestBid?: string
+  bestAsk?: string
+  tickSize: string
 }
 
 /**
@@ -1331,9 +1344,9 @@ export interface SystemConfig {
   builderApiKeyConfigured: boolean
   builderSecretConfigured: boolean
   builderPassphraseConfigured: boolean
-  builderApiKeyDisplay?: string  // Builder API Key 显示值（完整）
-  builderSecretDisplay?: string  // Builder Secret 显示值（完整）
-  builderPassphraseDisplay?: string  // Builder Passphrase 显示值（完整）
+  builderApiKeyDisplay?: string  // Builder API Key 显示值（掩码，如 前4位****后4位）
+  builderSecretDisplay?: string  // Builder Secret 显示值（完全掩码）
+  builderPassphraseDisplay?: string  // Builder Passphrase 显示值（完全掩码）
   autoRedeemEnabled: boolean  // 自动赎回（系统级别配置，默认开启）
 }
 

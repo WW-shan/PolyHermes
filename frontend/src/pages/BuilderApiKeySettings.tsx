@@ -56,7 +56,7 @@ const BuilderApiKeySettings: React.FC = () => {
       
       // 如果所有字段都为空，提示用户
       if (!updateData.builderApiKey && !updateData.builderSecret && !updateData.builderPassphrase) {
-        message.warning(t('builderApiKey.noChanges') || '没有需要更新的字段')
+        message.warning(t('builderApiKey.noChanges'))
         setBuilderApiKeyLoading(false)
         return
       }
@@ -159,7 +159,7 @@ const BuilderApiKeySettings: React.FC = () => {
               icon={<SaveOutlined />}
               loading={builderApiKeyLoading}
             >
-              {t('common.save') || '保存配置'}
+              {t('common.save')}
             </Button>
           </Form.Item>
         </Form>

@@ -186,10 +186,10 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
     
     setLoadingProxyOptions(true)
     try {
+      // 只发送钱包地址与导入方式，私钥/助记词不离开浏览器（地址已在本地推导）
       const response = await apiService.accounts.checkProxyOptions({
         walletAddress,
-        privateKey: privateKey || undefined,
-        mnemonic: mnemonic || undefined
+        importMethod: privateKey ? 'PRIVATE_KEY' : 'MNEMONIC'
       })
 
       if (requestId !== proxyFetchSequence.current) {
@@ -218,12 +218,12 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
           }
         } else {
           setStep('input')
-          message.warning(t('accountImport.proxyOption.error') || '未获取到代理地址选项')
+          message.warning(t('accountImport.proxyOption.error'))
         }
       } else {
         setProxyOptions([])
         setStep('input')
-        message.error(response.data.msg || '获取代理地址选项失败')
+        message.error(response.data.msg || t('accountImport.proxyOption.fetchFailed'))
       }
     } catch (error: any) {
       if (requestId !== proxyFetchSequence.current) {
@@ -231,7 +231,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
       }
       setProxyOptions([])
       setStep('input')
-      message.error(error.message || '获取代理地址选项失败')
+      message.error(error.message || t('accountImport.proxyOption.fetchFailed'))
     } finally {
       if (requestId === proxyFetchSequence.current) {
         setLoadingProxyOptions(false)

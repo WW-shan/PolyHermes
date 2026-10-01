@@ -8,11 +8,13 @@ interface BacktestChartProps {
     tradeTime: number
     balanceAfter: string
   }[]
+  /** 回测初始资金（基线）；未提供时退回第一笔交易后的余额 */
+  initialBalance?: string | number
 }
 
 // Bug #39 Note: This chart currently displays cash balance (balanceAfter), not total equity.
 // A true equity curve (cash + position value) would require an equityAfter field in the trade records.
-const BacktestChart: React.FC<BacktestChartProps> = ({ trades }) => {
+const BacktestChart: React.FC<BacktestChartProps> = ({ trades, initialBalance: initialBalanceProp }) => {
   const { t } = useTranslation()
   const chartRef = useRef<HTMLDivElement>(null)
   const chartInstance = useRef<echarts.ECharts | null>(null)
@@ -44,8 +46,9 @@ const BacktestChart: React.FC<BacktestChartProps> = ({ trades }) => {
       value: parseFloat(trade.balanceAfter)
     }))
 
-    // 初始余额（第一笔交易前的余额）
-    const initialBalance = data[0]?.value || 0
+    // 初始余额：优先使用回测任务的初始资金（第一笔交易后的余额并非初始资金）
+    const propBalance = initialBalanceProp != null ? parseFloat(String(initialBalanceProp)) : NaN
+    const initialBalance = !isNaN(propBalance) && propBalance > 0 ? propBalance : (data[0]?.value || 0)
 
     // 数据压缩：如果数据点太多，进行采样
     const maxPoints = 500 // 最多显示500个点
@@ -70,7 +73,8 @@ const BacktestChart: React.FC<BacktestChartProps> = ({ trades }) => {
           const value = parseFloat(param.value).toFixed(2)
           const diffValue = param.value - initialBalance
           const diff = diffValue.toFixed(2)
-          const diffPercent = (diffValue / initialBalance * 100).toFixed(2)
+          // 基线为 0 时不计算百分比，避免显示 Infinity%
+          const diffPercent = initialBalance > 0 ? (diffValue / initialBalance * 100).toFixed(2) : '-'
           const color = diffValue >= 0 ? '#52c41a' : '#ff4d4f'
           return `
             <div>
@@ -201,7 +205,7 @@ const BacktestChart: React.FC<BacktestChartProps> = ({ trades }) => {
     }
 
     chartInstance.current.setOption(option)
-  }, [trades, t])
+  }, [trades, initialBalanceProp, t])
 
   return (
     <div

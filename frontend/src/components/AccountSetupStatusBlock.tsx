@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Steps, Button, Space, Tag, Spin, Typography, message } from 'antd'
+import { Card, Steps, Button, Space, Tag, Spin, Typography, message, Modal } from 'antd'
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
+import { CHAIN_TX_PROCESSING_CODE, CHAIN_TX_RESUBMIT_COOLDOWN_MS } from '../utils/chainTx'
 
 const { Paragraph, Text } = Typography
 
@@ -45,11 +46,23 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
   showApprovalDetails = true,
   embedded = false
 }) => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  // 链上交易仍在处理中（错误码 4040）或结果未知的步骤：冷却期内禁止重复提交
+  const [processingSteps, setProcessingSteps] = useState<Set<string>>(new Set())
+  const markStepProcessing = (key: string) => {
+    setProcessingSteps(prev => new Set(prev).add(key))
+    setTimeout(() => {
+      setProcessingSteps(prev => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }, CHAIN_TX_RESUBMIT_COOLDOWN_MS)
+  }
 
   const fetchStatus = async () => {
     if (accountId <= 0) return
@@ -111,6 +124,12 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
     try {
       const response = await apiService.accounts.executeSetupStep(accountId, stepNum)
       const res = response.data
+      if (res.code === CHAIN_TX_PROCESSING_CODE) {
+        // 链上交易仍在处理中：提示稍后刷新，禁止立即重复提交
+        markStepProcessing(key)
+        Modal.warning({ title: t('chainTx.processingTitle'), content: res.msg || t('chainTx.processing') })
+        return
+      }
       if (res.code !== 0) {
         message.error(res.msg || t('accountSetup.actionFailed'))
         return
@@ -126,8 +145,14 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
           message.success(t('accountSetup.actionSuccess'))
         }
       }
-    } catch (err) {
-      message.error(t('accountSetup.actionFailed'))
+    } catch (err: any) {
+      if (err?.response?.data?.code === CHAIN_TX_PROCESSING_CODE || !err?.response) {
+        // 处理中或超时/网络中断（结果未知）：不允许立即重复提交
+        markStepProcessing(key)
+        Modal.warning({ title: t('chainTx.processingTitle'), content: err?.response?.data?.msg || t('chainTx.processing') })
+      } else {
+        message.error(err?.response?.data?.msg || t('accountSetup.actionFailed'))
+      }
     } finally {
       setActionLoading(null)
     }
@@ -224,6 +249,7 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
                     icon={<LinkOutlined />}
                     onClick={() => handleStepAction(step.key)}
                     loading={actionLoading === step.key}
+                    disabled={processingSteps.has(step.key) || (actionLoading != null && actionLoading !== step.key)}
                     style={{ marginTop: 4 }}
                   >
                     {step.actionLabel}
@@ -242,13 +268,23 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
           <Text strong style={{ display: 'block', marginBottom: 8 }}>{t('accountSetup.approvalDetails.title')}</Text>
           <Space direction="vertical" style={{ width: '100%' }} size="small">
             {Object.entries(setupStatus.approvalDetails).map(([contract, allowance]) => {
+              // 值：ERC20 为 "unlimited" 或额度；ERC1155 为 "approved" / "0"；查询失败为 "queryFailed"（不等于未授权）
+              const isQueryFailed = allowance === 'queryFailed'
               const isUnlimited = allowance === 'unlimited'
-              const isApproved = isUnlimited || parseFloat(allowance) > 0
-              const displayText = isUnlimited
-                ? t('accountSetup.approvalDetails.unlimited')
-                : isApproved
-                  ? `$${parseFloat(allowance).toFixed(2)}`
-                  : t('accountSetup.approvalDetails.notApproved')
+              const isErc1155Approved = allowance === 'approved'
+              const amount = parseFloat(allowance)
+              const displayText = isQueryFailed
+                ? <Text type="warning">{t('accountSetup.approvalDetails.queryFailed')}</Text>
+                : isUnlimited
+                  ? t('accountSetup.approvalDetails.unlimited')
+                  : isErc1155Approved
+                    ? t('accountSetup.approvalDetails.approved')
+                    : amount > 0
+                      ? `$${amount.toFixed(2)}`
+                      : t('accountSetup.approvalDetails.notApproved')
+              // 没有翻译的 key 显示原始 key
+              const labelKey = `accountSetup.approvalDetails.labels.${contract}`
+              const label = i18n.exists(labelKey) ? t(labelKey) : contract
               return (
                 <div
                   key={contract}
@@ -260,7 +296,7 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
                     minHeight: 24
                   }}
                 >
-                  <span>{t(`accountSetup.approvalDetails.${contract}`) || contract}</span>
+                  <span>{label}</span>
                   <span style={{ minWidth: 100, textAlign: 'right' }}>{displayText}</span>
                 </div>
               )

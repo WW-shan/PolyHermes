@@ -13,7 +13,7 @@ const LeaderAdd: React.FC = () => {
   const [form] = Form.useForm()
   
   const handleSuccess = async () => {
-    message.success(t('leaderAdd.addSuccess') || '添加 Leader 成功')
+    message.success(t('leaderAdd.addSuccess'))
     navigate('/leaders')
   }
   
@@ -25,9 +25,9 @@ const LeaderAdd: React.FC = () => {
           onClick={() => navigate('/leaders')}
           style={{ marginBottom: '16px' }}
         >
-          {t('leaderAdd.back') || '返回'}
+          {t('leaderAdd.back')}
         </Button>
-        <Title level={2} style={{ margin: 0 }}>{t('leaderAdd.title') || '添加 Leader'}</Title>
+        <Title level={2} style={{ margin: 0 }}>{t('leaderAdd.title')}</Title>
       </div>
       
       <Card>

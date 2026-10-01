@@ -18,7 +18,7 @@ const AccountDetail: React.FC = () => {
   const [searchParams] = useSearchParams()
   const isMobile = useMediaQuery({ maxWidth: 768 })
   const accountId = searchParams.get('id')
-  
+
   const { fetchAccountDetail, fetchAccountBalance, updateAccount } = useAccountStore()
   const [account, setAccount] = useState<Account | null>(null)
   const [balance, setBalance] = useState<string | null>(null)
@@ -27,7 +27,7 @@ const AccountDetail: React.FC = () => {
   const [editModalVisible, setEditModalVisible] = useState(false)
   const [editForm] = Form.useForm()
   const [editLoading, setEditLoading] = useState(false)
-  
+
   useEffect(() => {
     if (accountId) {
       loadAccountDetail()
@@ -37,10 +37,10 @@ const AccountDetail: React.FC = () => {
       navigate('/accounts')
     }
   }, [accountId])
-  
+
   const loadAccountDetail = async () => {
     if (!accountId) return
-    
+
     setLoading(true)
     try {
       const accountData = await fetchAccountDetail(Number(accountId))
@@ -52,10 +52,10 @@ const AccountDetail: React.FC = () => {
       setLoading(false)
     }
   }
-  
+
   const loadBalance = async () => {
     if (!accountId) return
-    
+
     setBalanceLoading(true)
     try {
       const balanceData = await fetchAccountBalance(Number(accountId))
@@ -68,10 +68,10 @@ const AccountDetail: React.FC = () => {
       setBalanceLoading(false)
     }
   }
-  
+
   const handleEditSubmit = async (values: any) => {
     if (!account) return
-    
+
     setEditLoading(true)
     try {
       // 构建更新请求，只支持编辑账户名称
@@ -79,13 +79,13 @@ const AccountDetail: React.FC = () => {
         accountId: account.id,
         accountName: values.accountName || undefined,
       }
-      
+
       await updateAccount(updateData)
-      
+
       message.success(t('account.updateSuccess'))
       setEditModalVisible(false)
       editForm.resetFields()
-      
+
       // 刷新账户详情
       if (accountId) {
         await loadAccountDetail()
@@ -96,7 +96,7 @@ const AccountDetail: React.FC = () => {
       setEditLoading(false)
     }
   }
-  
+
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: '50px' }}>
@@ -104,19 +104,19 @@ const AccountDetail: React.FC = () => {
       </div>
     )
   }
-  
+
   if (!account) {
     return null
   }
-  
+
   return (
-    <div style={{ 
+    <div style={{
       padding: isMobile ? '0' : undefined,
       margin: isMobile ? '0 -8px' : undefined
     }}>
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: isMobile ? '12px' : '16px',
         flexWrap: 'wrap',
@@ -163,8 +163,8 @@ const AccountDetail: React.FC = () => {
           </Button>
         </Space>
       </div>
-      
-      <Card style={{ 
+
+      <Card style={{
         margin: isMobile ? '0 -8px' : '0',
         borderRadius: isMobile ? '0' : undefined
       }}>
@@ -188,8 +188,8 @@ const AccountDetail: React.FC = () => {
             </Descriptions.Item>
           )}
           <Descriptions.Item label={t('account.walletAddress')} span={isMobile ? 1 : 2}>
-            <span style={{ 
-              fontFamily: 'monospace', 
+            <span style={{
+              fontFamily: 'monospace',
               fontSize: isMobile ? '11px' : '14px',
               wordBreak: 'break-all',
               lineHeight: '1.4',
@@ -211,7 +211,7 @@ const AccountDetail: React.FC = () => {
           </Descriptions.Item>
         </Descriptions>
       </Card>
-      
+
       <Divider />
 
       {accountId && (
@@ -230,14 +230,14 @@ const AccountDetail: React.FC = () => {
 
       <Divider style={{ margin: isMobile ? '12px 0' : '16px 0' }} />
 
-      {(account.totalOrders !== undefined || account.totalPnl !== undefined || 
-        account.activeOrders !== undefined || 
-        account.completedOrders !== undefined || account.positionCount !== undefined) ? (
+      {(account.totalOrders != null || account.totalPnl != null ||
+        account.activeOrders != null ||
+        account.completedOrders != null || account.positionCount != null) ? (
         <>
           <Divider style={{ margin: isMobile ? '12px 0' : '16px 0' }} />
-          <Card 
-            title={t('account.statistics')} 
-            style={{ 
+          <Card
+            title={t('account.statistics')}
+            style={{
               marginTop: isMobile ? '12px' : '16px',
               margin: isMobile ? '0 -8px' : '0',
               borderRadius: isMobile ? '0' : undefined
@@ -249,29 +249,29 @@ const AccountDetail: React.FC = () => {
               size={isMobile ? 'small' : 'middle'}
               style={{ fontSize: isMobile ? '14px' : undefined }}
             >
-              {account.totalOrders !== undefined && (
+              {account.totalOrders != null && (
                 <Descriptions.Item label={t('account.totalOrders')}>
                   {account.totalOrders}
                 </Descriptions.Item>
               )}
-              {account.activeOrders !== undefined && (
+              {account.activeOrders != null && (
                 <Descriptions.Item label={t('account.activeOrders')}>
                   <Tag color={account.activeOrders > 0 ? 'orange' : 'default'}>{account.activeOrders}</Tag>
                 </Descriptions.Item>
               )}
-              {account.completedOrders !== undefined && (
+              {account.completedOrders != null && (
                 <Descriptions.Item label={t('account.completedOrders')}>
                   <Tag color="success">{account.completedOrders}</Tag>
                 </Descriptions.Item>
               )}
-              {account.positionCount !== undefined && (
+              {account.positionCount != null && (
                 <Descriptions.Item label={t('account.positionCount')}>
                   <Tag color={account.positionCount > 0 ? 'blue' : 'default'}>{account.positionCount}</Tag>
                 </Descriptions.Item>
               )}
-              {account.totalPnl !== undefined && (
+              {account.totalPnl != null && (
                 <Descriptions.Item label={t('account.totalPnl')}>
-                  <span style={{ 
+                  <span style={{
                     fontWeight: 'bold',
                     color: account.totalPnl.startsWith('-') ? '#ff4d4f' : '#52c41a'
                   }}>
@@ -283,7 +283,7 @@ const AccountDetail: React.FC = () => {
           </Card>
         </>
       ) : null}
-      
+
       {/* 编辑账户 Modal */}
       <Modal
         title={account ? `${t('common.edit')} ${t('account.title')} - ${account.accountName || `${t('account.title')} ${account.id}`}` : t('common.edit') + ' ' + t('account.title')}
@@ -307,23 +307,23 @@ const AccountDetail: React.FC = () => {
             size={isMobile ? 'middle' : 'large'}
           >
             <Alert
-              message={t('account.editTip') || '编辑账户'}
-              description={t('account.editTipDesc') || '只能编辑账户名称，API 凭证需要通过导入账户功能更新。'}
+              message={t('account.editTip')}
+              description={t('account.editTipDesc')}
               type="info"
               showIcon
               style={{ marginBottom: '24px' }}
             />
-            
+
             <Form.Item
-              label={t('account.accountName') || '账户名称'}
+              label={t('account.accountName')}
               name="accountName"
             >
-              <Input placeholder={t('account.accountNamePlaceholder') || '请输入账户名称（可选）'} />
+              <Input placeholder={t('account.accountNamePlaceholder')} />
             </Form.Item>
-            
+
             <Form.Item>
               <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-                <Button 
+                <Button
                   onClick={() => {
                     setEditModalVisible(false)
                     editForm.resetFields()

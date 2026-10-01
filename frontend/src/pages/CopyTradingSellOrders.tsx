@@ -50,10 +50,10 @@ const CopyTradingSellOrdersPage: React.FC = () => {
         setOrders((data.list || []) as SellOrderInfo[])
         setTotal(data.total || 0)
       } else {
-        message.error(response.data.msg || '获取卖出订单列表失败')
+        message.error(response.data.msg || t('ordersPage.fetchSellFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || '获取卖出订单列表失败')
+      message.error(error.message || t('ordersPage.fetchSellFailed'))
     } finally {
       setLoading(false)
     }
@@ -67,7 +67,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
   
   const columns = [
     {
-      title: '订单ID',
+      title: t('ordersPage.orderId'),
       dataIndex: 'orderId',
       key: 'orderId',
       width: isMobile ? 100 : 150,
@@ -81,7 +81,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
       )
     },
     {
-      title: 'Leader 交易ID',
+      title: t('ordersPage.leaderTradeId'),
       dataIndex: 'leaderTradeId',
       key: 'leaderTradeId',
       width: isMobile ? 100 : 150,
@@ -95,7 +95,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '市场',
+      title: t('ordersPage.market'),
       dataIndex: 'marketId',
       key: 'marketId',
       width: isMobile ? 100 : 150,
@@ -109,7 +109,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '方向',
+      title: t('ordersPage.side'),
       dataIndex: 'side',
       key: 'side',
       width: isMobile ? 60 : 80,
@@ -120,7 +120,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
       }
     },
     {
-      title: '卖出数量',
+      title: t('ordersPage.sellQuantity'),
       dataIndex: 'quantity',
       key: 'quantity',
       width: isMobile ? 80 : 100,
@@ -129,7 +129,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '卖出价格',
+      title: t('ordersPage.sellPrice'),
       dataIndex: 'price',
       key: 'price',
       width: isMobile ? 80 : 100,
@@ -138,7 +138,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '卖出金额',
+      title: t('ordersPage.sellAmount'),
       key: 'amount',
       width: isMobile ? 100 : 120,
       render: (_: any, record: SellOrderInfo) => {
@@ -151,7 +151,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
       }
     },
     {
-      title: '已实现盈亏',
+      title: t('ordersPage.realizedPnl'),
       dataIndex: 'realizedPnl',
       key: 'realizedPnl',
       width: isMobile ? 100 : 120,
@@ -166,7 +166,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
       )
     },
     {
-      title: '创建时间',
+      title: t('ordersPage.createdAt'),
       dataIndex: 'createdAt',
       key: 'createdAt',
       width: isMobile ? 120 : 160,
@@ -187,15 +187,15 @@ const CopyTradingSellOrdersPage: React.FC = () => {
         <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Button icon={<LeftOutlined />} onClick={() => navigate(-1)}>
-              {t('common.back') || '返回'}
+              {t('common.back')}
             </Button>
-            <h2 style={{ margin: 0 }}>卖出订单列表</h2>
+            <h2 style={{ margin: 0 }}>{t('ordersPage.sellOrdersTitle')}</h2>
           </div>
         </div>
         
         <div style={{ marginBottom: 16, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
           <Input
-            placeholder="筛选市场ID"
+            placeholder={t('ordersPage.filterMarketId')}
             allowClear
             style={{ width: isMobile ? '100%' : 200 }}
             value={filters.marketId}
@@ -203,7 +203,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
           />
           
           <Select
-            placeholder="筛选方向"
+            placeholder={t('ordersPage.filterSide')}
             allowClear
             style={{ width: isMobile ? '100%' : 150 }}
             value={filters.side}
@@ -215,7 +215,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
             <Option value="NO">NO</Option>
           </Select>
           
-          <Button onClick={fetchOrders}>查询</Button>
+          <Button onClick={fetchOrders}>{t('ordersPage.search')}</Button>
         </div>
         
         {isMobile ? (
@@ -227,7 +227,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
               </div>
             ) : orders.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-                暂无卖出订单
+                {t('ordersPage.noSellOrders')}
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -272,18 +272,18 @@ const CopyTradingSellOrdersPage: React.FC = () => {
                       
                       {/* 卖出信息 */}
                       <div style={{ marginBottom: '12px' }}>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>卖出信息</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.sellInfo')}</div>
                         <div style={{ fontSize: '14px', fontWeight: '500' }}>
-                          数量: {formatUSDC(order.quantity)} | 价格: {formatUSDC(order.price)}
+                          {t('ordersPage.quantity')}: {formatUSDC(order.quantity)} | {t('ordersPage.price')}: {formatUSDC(order.price)}
                         </div>
                         <div style={{ fontSize: '14px', fontWeight: '500', marginTop: '4px' }}>
-                          金额: ${formatUSDC(amount)}
+                          {t('ordersPage.amount')}: ${formatUSDC(amount)}
                         </div>
                       </div>
                       
                       {/* 已实现盈亏 */}
                       <div style={{ marginBottom: '12px' }}>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>已实现盈亏</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.realizedPnl')}</div>
                         <div style={{ 
                           fontSize: '16px', 
                           fontWeight: 'bold',
@@ -295,7 +295,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
                       
                       {/* Leader 交易ID */}
                       <div style={{ marginBottom: '12px' }}>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Leader 交易ID</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.leaderTradeId')}</div>
                         <div style={{ fontSize: '12px', color: '#999', fontFamily: 'monospace' }}>
                           {order.leaderTradeId.slice(0, 8)}...{order.leaderTradeId.slice(-6)}
                         </div>
@@ -303,7 +303,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
                       
                       {/* 市场ID */}
                       <div style={{ marginBottom: '16px' }}>
-                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>市场ID</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('ordersPage.marketId')}</div>
                         <div style={{ fontSize: '12px', color: '#999', fontFamily: 'monospace' }}>
                           {order.marketId.slice(0, 8)}...{order.marketId.slice(-6)}
                         </div>
@@ -312,7 +312,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
                       {/* 创建时间 */}
                       <div style={{ marginBottom: '16px' }}>
                         <div style={{ fontSize: '12px', color: '#999' }}>
-                          创建时间: {formattedDate}
+                          {t('ordersPage.createdAt')}: {formattedDate}
                         </div>
                       </div>
                     </Card>
@@ -333,7 +333,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
               pageSize: limit,
               total,
               showSizeChanger: true,
-              showTotal: (total) => `共 ${total} 条`,
+              showTotal: (total) => t('templateList.totalCount', { total }),
               onChange: (newPage, newLimit) => {
                 setPage(newPage)
                 setLimit(newLimit)

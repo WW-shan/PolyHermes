@@ -18,16 +18,16 @@ const LeaderEdit: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(true)
   const leaderId = searchParams.get('id')
-  
+
   useEffect(() => {
     if (leaderId) {
       fetchLeaderDetail(parseInt(leaderId))
     } else {
-      message.error(t('leaderEdit.invalidId') || 'Leader ID 无效')
+      message.error(t('leaderEdit.invalidId'))
       navigate('/leaders')
     }
   }, [leaderId, navigate])
-  
+
   const fetchLeaderDetail = async (id: number) => {
     setFetching(true)
     try {
@@ -40,23 +40,23 @@ const LeaderEdit: React.FC = () => {
           website: leader.website || ''
         })
       } else {
-        message.error(response.data.msg || t('leaderEdit.fetchFailed') || '获取 Leader 详情失败')
+        message.error(response.data.msg || t('leaderEdit.fetchFailed'))
         navigate('/leaders')
       }
     } catch (error: any) {
-      message.error(error.message || t('leaderEdit.fetchFailed') || '获取 Leader 详情失败')
+      message.error(error.message || t('leaderEdit.fetchFailed'))
       navigate('/leaders')
     } finally {
       setFetching(false)
     }
   }
-  
+
   const handleSubmit = async (values: any) => {
     if (!leaderId) {
-      message.error(t('leaderEdit.invalidId') || 'Leader ID 无效')
+      message.error(t('leaderEdit.invalidId'))
       return
     }
-    
+
     setLoading(true)
     try {
       const response = await apiService.leaders.update({
@@ -65,20 +65,20 @@ const LeaderEdit: React.FC = () => {
         remark: values.remark?.trim() || undefined,
         website: values.website?.trim() || undefined
       })
-      
+
       if (response.data.code === 0) {
-        message.success(t('leaderEdit.saveSuccess') || '更新 Leader 成功')
+        message.success(t('leaderEdit.saveSuccess'))
         navigate('/leaders')
       } else {
-        message.error(response.data.msg || t('leaderEdit.saveFailed') || '更新 Leader 失败')
+        message.error(response.data.msg || t('leaderEdit.saveFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('leaderEdit.saveFailed') || '更新 Leader 失败')
+      message.error(error.message || t('leaderEdit.saveFailed'))
     } finally {
       setLoading(false)
     }
   }
-  
+
   if (fetching) {
     return (
       <div style={{ textAlign: 'center', padding: '40px' }}>
@@ -86,7 +86,7 @@ const LeaderEdit: React.FC = () => {
       </div>
     )
   }
-  
+
   return (
     <div>
       <div style={{ marginBottom: '16px' }}>
@@ -97,9 +97,9 @@ const LeaderEdit: React.FC = () => {
         >
           返回
         </Button>
-        <Title level={2} style={{ margin: 0 }}>{t('leaderEdit.title') || '编辑 Leader'}</Title>
+        <Title level={2} style={{ margin: 0 }}>{t('leaderEdit.title')}</Title>
       </div>
-      
+
       <Card>
         <Form
           form={form}
@@ -108,40 +108,40 @@ const LeaderEdit: React.FC = () => {
           size={isMobile ? 'middle' : 'large'}
         >
           <Form.Item
-            label={t('leaderEdit.leaderName') || 'Leader 名称'}
+            label={t('leaderEdit.leaderName')}
             name="leaderName"
-            tooltip={t('leaderEdit.leaderNameTooltip') || '可选，用于标识 Leader，方便管理'}
+            tooltip={t('leaderEdit.leaderNameTooltip')}
           >
-            <Input placeholder={t('leaderEdit.leaderNamePlaceholder') || '可选，用于标识 Leader'} />
+            <Input placeholder={t('leaderEdit.leaderNamePlaceholder')} />
           </Form.Item>
-          
+
           <Form.Item
-            label={t('leaderEdit.remark') || 'Leader 备注'}
+            label={t('leaderEdit.remark')}
             name="remark"
-            tooltip={t('leaderEdit.remarkTooltip') || '可选，用于记录 Leader 的备注信息'}
+            tooltip={t('leaderEdit.remarkTooltip')}
           >
-            <Input.TextArea 
-              placeholder={t('leaderEdit.remarkPlaceholder') || '可选，用于记录 Leader 的备注信息'} 
+            <Input.TextArea
+              placeholder={t('leaderEdit.remarkPlaceholder')}
               rows={3}
               maxLength={500}
               showCount
             />
           </Form.Item>
-          
+
           <Form.Item
-            label={t('leaderEdit.website') || 'Leader 网站'}
+            label={t('leaderEdit.website')}
             name="website"
-            tooltip={t('leaderEdit.websiteTooltip') || '可选，Leader 的网站链接'}
+            tooltip={t('leaderEdit.websiteTooltip')}
             rules={[
               {
                 type: 'url',
-                message: t('leaderEdit.websiteInvalid') || '请输入有效的 URL 地址'
+                message: t('leaderEdit.websiteInvalid')
               }
             ]}
           >
-            <Input placeholder={t('leaderEdit.websitePlaceholder') || '可选，例如：https://example.com'} />
+            <Input placeholder={t('leaderEdit.websitePlaceholder')} />
           </Form.Item>
-          
+
           <Form.Item>
             <Space>
               <Button
@@ -150,10 +150,10 @@ const LeaderEdit: React.FC = () => {
                 loading={loading}
                 size={isMobile ? 'middle' : 'large'}
               >
-                {t('leaderEdit.save') || '保存'}
+                {t('leaderEdit.save')}
               </Button>
               <Button onClick={() => navigate('/leaders')}>
-                {t('leaderEdit.cancel') || '取消'}
+                {t('leaderEdit.cancel')}
               </Button>
             </Space>
           </Form.Item>

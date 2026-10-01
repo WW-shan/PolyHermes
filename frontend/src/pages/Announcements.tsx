@@ -43,12 +43,12 @@ const Announcements: React.FC = () => {
   const [isExpanded, setIsExpanded] = useState(false)
   const [drawerVisible, setDrawerVisible] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
-  
+
   useEffect(() => {
     fetchAnnouncements()
     fetchLatestDetail()
   }, [])
-  
+
   const fetchAnnouncements = async (forceRefresh: boolean = false) => {
     setLoading(true)
     try {
@@ -65,7 +65,7 @@ const Announcements: React.FC = () => {
       setLoading(false)
     }
   }
-  
+
   const fetchLatestDetail = async (forceRefresh: boolean = false) => {
     setLoadingDetail(true)
     try {
@@ -81,7 +81,7 @@ const Announcements: React.FC = () => {
       setLoadingDetail(false)
     }
   }
-  
+
   const handleSelectAnnouncement = async (id: number, forceRefresh: boolean = false) => {
     setLoadingDetail(true)
     try {
@@ -101,14 +101,14 @@ const Announcements: React.FC = () => {
       setLoadingDetail(false)
     }
   }
-  
+
   const handleRefresh = async () => {
     await Promise.all([
       fetchAnnouncements(true),
       fetchLatestDetail(true)
     ])
   }
-  
+
   const formatDate = (timestamp: number): string => {
     const date = new Date(timestamp)
     return date.toLocaleString('zh-CN', {
@@ -119,18 +119,18 @@ const Announcements: React.FC = () => {
       minute: '2-digit'
     })
   }
-  
+
   // 计算内容行数（通过换行符计算）
   const getLineCount = (text: string): number => {
     if (!text) return 0
     return text.split('\n').length
   }
-  
+
   // 检查是否需要折叠（超过30行）
   const shouldCollapse = (body: string): boolean => {
     return getLineCount(body) > 30
   }
-  
+
   // 当选中公告改变时，重置展开状态
   useEffect(() => {
     if (selectedAnnouncement) {
@@ -138,13 +138,12 @@ const Announcements: React.FC = () => {
       setIsExpanded(!shouldCollapseContent) // 如果超过30行，默认折叠（isExpanded = false）
     }
   }, [selectedAnnouncement])
-  
+
   // 渲染公告详情内容（带折叠功能）
   const renderAnnouncementContent = (announcement: Announcement, isMobileView: boolean) => {
-    const lineCount = getLineCount(announcement.body)
     const needsCollapse = shouldCollapse(announcement.body)
     const showCollapseButton = needsCollapse
-    
+
     return (
       <div>
         <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -206,24 +205,24 @@ const Announcements: React.FC = () => {
               icon={isExpanded ? <UpOutlined /> : <DownOutlined />}
               onClick={() => setIsExpanded(!isExpanded)}
             >
-              {isExpanded 
-                ? (t('announcements.collapse') || '收起') 
-                : (t('announcements.expand') || `展开全部 (共 ${lineCount} 行)`)}
+              {isExpanded
+                ? (t('announcements.collapse'))
+                : (t('announcements.expand'))}
             </Button>
           </div>
         )}
       </div>
     )
   }
-  
+
   // 渲染 reactions（使用 emoji）
   const renderReactions = (reactions?: Reactions) => {
     if (!reactions || reactions.total === 0) {
       return null
     }
-    
+
     const reactionItems: Array<{ emoji: string; count: number; key: string }> = []
-    
+
     if (reactions.plusOne && reactions.plusOne > 0) {
       reactionItems.push({ emoji: '👍', count: reactions.plusOne, key: 'plusOne' })
     }
@@ -248,15 +247,15 @@ const Announcements: React.FC = () => {
     if (reactions.rocket && reactions.rocket > 0) {
       reactionItems.push({ emoji: '🚀', count: reactions.rocket, key: 'rocket' })
     }
-    
+
     if (reactionItems.length === 0) {
       return null
     }
-    
+
     return (
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
         gap: '12px',
         flexWrap: 'wrap',
         marginTop: '8px',
@@ -285,7 +284,7 @@ const Announcements: React.FC = () => {
       </div>
     )
   }
-  
+
   // 渲染公告列表（用于抽屉）
   const renderAnnouncementList = () => {
     return (
@@ -295,12 +294,12 @@ const Announcements: React.FC = () => {
             <Spin size="large" />
           </div>
         ) : announcements.length === 0 ? (
-          <Empty description={t('announcements.noAnnouncements') || '暂无公告'} />
+          <Empty description={t('announcements.noAnnouncements')} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {announcements.map((item) => {
               const isSelected = selectedAnnouncement?.id === item.id
-              
+
               return (
                 <Card
                   key={item.id}
@@ -308,11 +307,11 @@ const Announcements: React.FC = () => {
                   style={{
                     cursor: 'pointer',
                     borderRadius: '12px',
-                    boxShadow: isSelected 
-                      ? '0 4px 12px rgba(24, 144, 255, 0.2)' 
+                    boxShadow: isSelected
+                      ? '0 4px 12px rgba(24, 144, 255, 0.2)'
                       : '0 2px 8px rgba(0,0,0,0.08)',
-                    border: isSelected 
-                      ? '2px solid #1890ff' 
+                    border: isSelected
+                      ? '2px solid #1890ff'
                       : '1px solid #e8e8e8',
                     backgroundColor: isSelected ? '#f0f8ff' : '#ffffff',
                     transition: 'all 0.3s ease',
@@ -323,9 +322,9 @@ const Announcements: React.FC = () => {
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {/* 标题 */}
-                    <div style={{ 
-                      fontSize: '16px', 
-                      fontWeight: '600', 
+                    <div style={{
+                      fontSize: '16px',
+                      fontWeight: '600',
                       color: '#262626',
                       lineHeight: '1.5',
                       display: '-webkit-box',
@@ -334,13 +333,13 @@ const Announcements: React.FC = () => {
                       overflow: 'hidden',
                       textOverflow: 'ellipsis'
                     }}>
-                      {item.title || t('announcements.noTitle') || '无标题'}
+                      {item.title || t('announcements.noTitle')}
                     </div>
-                    
+
                     {/* 时间和作者 */}
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
                       gap: '8px',
                       fontSize: '12px',
                       color: '#8c8c8c'
@@ -355,7 +354,7 @@ const Announcements: React.FC = () => {
                       <span>•</span>
                       <span>{formatDate(item.createdAt)}</span>
                     </div>
-                    
+
                     {/* Reactions */}
                     {renderReactions(item.reactions)}
                   </div>
@@ -364,7 +363,7 @@ const Announcements: React.FC = () => {
             })}
           </div>
         )}
-        
+
         {hasMore && (
           <div style={{ textAlign: 'center', marginTop: 16 }}>
             <Button
@@ -374,14 +373,14 @@ const Announcements: React.FC = () => {
               target="_blank"
               rel="noopener noreferrer"
             >
-              {t('announcements.viewMore') || '查看更多公告'}
+              {t('announcements.viewMore')}
             </Button>
           </div>
         )}
       </div>
     )
   }
-  
+
   if (isMobile) {
     // 移动端布局：详情在主要内容区，列表在侧边抽屉
     return (
@@ -395,10 +394,10 @@ const Announcements: React.FC = () => {
                 onClick={() => setDrawerVisible(true)}
                 style={{ flexShrink: 0 }}
               >
-                {t('announcements.list') || '列表'}
+                {t('announcements.list')}
               </Button>
               <Title level={4} style={{ margin: 0 }}>
-                {t('announcements.title') || '公告'}
+                {t('announcements.title')}
               </Title>
             </div>
             <Button
@@ -408,10 +407,10 @@ const Announcements: React.FC = () => {
               loading={loading || loadingDetail}
               size="small"
             >
-              {t('announcements.refresh') || '刷新'}
+              {t('announcements.refresh')}
             </Button>
           </div>
-          
+
           {/* 公告详情 */}
           <div>
             {loadingDetail ? (
@@ -421,14 +420,14 @@ const Announcements: React.FC = () => {
             ) : selectedAnnouncement ? (
               renderAnnouncementContent(selectedAnnouncement, true)
             ) : (
-              <Empty description={t('announcements.noDetail') || '请选择一条公告查看详情'} />
+              <Empty description={t('announcements.noDetail')} />
             )}
           </div>
         </Card>
-        
+
         {/* 侧边抽屉：公告列表 */}
         <Drawer
-          title={t('announcements.list') || '公告列表'}
+          title={t('announcements.list')}
           placement="right"
           onClose={() => setDrawerVisible(false)}
           open={drawerVisible}
@@ -440,14 +439,14 @@ const Announcements: React.FC = () => {
       </div>
     )
   }
-  
+
   // 桌面端布局：左右结构
   return (
     <div>
       <Card>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <Title level={2} style={{ margin: 0 }}>
-            {t('announcements.title') || '公告'}
+            {t('announcements.title')}
           </Title>
           <Button
             type="primary"
@@ -455,17 +454,17 @@ const Announcements: React.FC = () => {
             onClick={handleRefresh}
             loading={loading || loadingDetail}
           >
-            {t('announcements.refresh') || '刷新'}
+            {t('announcements.refresh')}
           </Button>
         </div>
-        
+
         <div style={{ display: 'flex', gap: 24, minHeight: '600px' }}>
           {/* 左侧：公告列表 */}
           <div style={{ width: '300px', flexShrink: 0 }}>
             <List
               loading={loading}
               dataSource={announcements}
-              locale={{ emptyText: <Empty description={t('announcements.noAnnouncements') || '暂无公告'} /> }}
+              locale={{ emptyText: <Empty description={t('announcements.noAnnouncements')} /> }}
               renderItem={(item) => (
                 <List.Item
                   style={{
@@ -481,7 +480,7 @@ const Announcements: React.FC = () => {
                   <List.Item.Meta
                     title={
                       <Text strong style={{ fontSize: 14 }}>
-                        {item.title || t('announcements.noTitle') || '无标题'}
+                        {item.title || t('announcements.noTitle')}
                       </Text>
                     }
                     description={
@@ -496,7 +495,7 @@ const Announcements: React.FC = () => {
                 </List.Item>
               )}
             />
-            
+
             {hasMore && (
               <div style={{ marginTop: 16, textAlign: 'center' }}>
                 <Button
@@ -506,12 +505,12 @@ const Announcements: React.FC = () => {
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  {t('announcements.viewMore') || '查看更多公告'}
+                  {t('announcements.viewMore')}
                 </Button>
               </div>
             )}
           </div>
-          
+
           {/* 右侧：公告详情 */}
           <div style={{ flex: 1, borderLeft: '1px solid #e8e8e8', paddingLeft: 24 }}>
             {loadingDetail ? (
@@ -521,7 +520,7 @@ const Announcements: React.FC = () => {
             ) : selectedAnnouncement ? (
               renderAnnouncementContent(selectedAnnouncement, false)
             ) : (
-              <Empty description={t('announcements.noDetail') || '请选择一条公告查看详情'} />
+              <Empty description={t('announcements.noDetail')} />
             )}
           </div>
         </div>
