@@ -30,23 +30,31 @@ class RpcNodeServiceFailoverTest {
 
         val result = service.getAvailableNode(setOf("https://rpc.example.test/"))
 
-        assertEquals("https://polygon.publicnode.com", result.getOrThrow().httpUrl)
+        assertEquals("https://polygon-bor-rpc.publicnode.com", result.getOrThrow().httpUrl)
+        assertEquals("wss://polygon-bor-rpc.publicnode.com", result.getOrThrow().wsUrl)
     }
 
     @Test
-    fun `default node is not returned again after it has already failed`() {
+    fun `public RPC fallback rotates to dRPC after PublicNode fails`() {
         Mockito.`when`(repository.findAllByEnabledTrueOrderByPriorityAsc()).thenReturn(emptyList())
 
-        val result = service.getAvailableNode(setOf("https://polygon.publicnode.com/"))
+        val result = service.getAvailableNode(setOf("https://polygon-bor-rpc.publicnode.com/"))
 
-        assertTrue(result.isFailure)
+        assertEquals("https://polygon.drpc.org", result.getOrThrow().httpUrl)
+        assertEquals("wss://polygon.drpc.org", result.getOrThrow().wsUrl)
     }
 
     @Test
-    fun `exhausted configured nodes and default produce no candidate`() {
+    fun `exhausted configured nodes and public fallbacks produce no candidate`() {
         Mockito.`when`(repository.findAllByEnabledTrueOrderByPriorityAsc()).thenReturn(listOf(customNode()))
 
-        val result = service.getAvailableNode(setOf("https://rpc.example.test", "https://polygon.publicnode.com"))
+        val result = service.getAvailableNode(
+            setOf(
+                "https://rpc.example.test",
+                "https://polygon-bor-rpc.publicnode.com",
+                "https://polygon.drpc.org"
+            )
+        )
 
         assertTrue(result.isFailure)
     }

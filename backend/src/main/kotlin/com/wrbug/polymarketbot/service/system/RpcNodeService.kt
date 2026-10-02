@@ -32,9 +32,23 @@ class RpcNodeService(
     private val logger = LoggerFactory.getLogger(RpcNodeService::class.java)
     
     companion object {
-        // 默认公共节点
-        private const val DEFAULT_RPC_URL = "https://polygon.publicnode.com"
-        private const val DEFAULT_WS_URL = "wss://polygon.publicnode.com"
+        private data class DefaultRpcEndpoint(val name: String, val httpUrl: String, val wsUrl: String)
+
+        // PublicNode's documented Polygon Bor endpoint is primary; dRPC is the public fallback.
+        private val DEFAULT_RPC_ENDPOINTS = listOf(
+            DefaultRpcEndpoint(
+                name = "PublicNode (Default)",
+                httpUrl = "https://polygon-bor-rpc.publicnode.com",
+                wsUrl = "wss://polygon-bor-rpc.publicnode.com"
+            ),
+            DefaultRpcEndpoint(
+                name = "dRPC (Public Fallback)",
+                httpUrl = "https://polygon.drpc.org",
+                wsUrl = "wss://polygon.drpc.org"
+            )
+        )
+        private val DEFAULT_RPC_URL = DEFAULT_RPC_ENDPOINTS.first().httpUrl
+        private val DEFAULT_WS_URL = DEFAULT_RPC_ENDPOINTS.first().wsUrl
         
         // 主流服务商 URL 模板
         private val PROVIDER_HTTP_TEMPLATES = mapOf(
@@ -105,11 +119,8 @@ class RpcNodeService(
                 .filterNot { isDefaultNode(it) || normalizeRpcUrl(it.httpUrl) in excluded }
             
             if (nodes.isEmpty()) {
-                if (normalizeRpcUrl(DEFAULT_RPC_URL) in excluded) {
-                    return Result.failure(IllegalStateException("没有其他可用的 RPC 节点"))
-                }
                 logger.warn("没有其他启用的 RPC 节点，将使用默认节点")
-                return Result.success(createDefaultNodeConfig())
+                return defaultFallbackNode(excluded)
             }
             
             // 优先使用最近检查状态为 HEALTHY 的节点
@@ -147,19 +158,13 @@ class RpcNodeService(
             }
             
             // 所有节点都不可用，返回默认节点
-            if (normalizeRpcUrl(DEFAULT_RPC_URL) in excluded) {
-                return Result.failure(IllegalStateException("没有其他可用的 RPC 节点"))
-            }
-            logger.warn("所有启用的 RPC 节点都不可用，将使用默认节点: $DEFAULT_RPC_URL")
-            Result.success(createDefaultNodeConfig())
+            logger.warn("所有启用的 RPC 节点都不可用，将使用公共 RPC 兜底节点")
+            defaultFallbackNode(excluded)
         } catch (e: Exception) {
             logger.error("获取可用节点失败: ${e.message}", e)
             // 即使失败也返回默认节点，确保系统可用
-            if (normalizeRpcUrl(DEFAULT_RPC_URL) in excludedHttpUrls.map(::normalizeRpcUrl)) {
-                return Result.failure(e)
-            }
             logger.warn("获取可用节点出现异常，使用默认节点作为兜底")
-            Result.success(createDefaultNodeConfig())
+            defaultFallbackNode(excludedHttpUrls.map(::normalizeRpcUrl).toSet())
         }
     }
 
@@ -189,25 +194,27 @@ class RpcNodeService(
     }
     
     /**
-     * 创建默认节点配置
-     * 用于兜底，确保系统始终有可用的 RPC 节点
+     * Select an untried public endpoint so RPC failover can move past a failed default.
      */
-    private fun createDefaultNodeConfig(): RpcNodeConfig {
-        return RpcNodeConfig(
+    private fun defaultFallbackNode(excluded: Set<String>): Result<RpcNodeConfig> {
+        val candidate = DEFAULT_RPC_ENDPOINTS.firstOrNull { normalizeRpcUrl(it.httpUrl) !in excluded }
+            ?: return Result.failure(IllegalStateException("没有其他可用的 RPC 节点"))
+
+        return Result.success(RpcNodeConfig(
             id = 0L,
             providerType = RpcProviderType.PUBLIC.name,
-            name = "默认节点",
-            httpUrl = DEFAULT_RPC_URL,
-            wsUrl = DEFAULT_WS_URL,
+            name = candidate.name,
+            httpUrl = candidate.httpUrl,
+            wsUrl = candidate.wsUrl,
             apiKey = null,
             enabled = true,
             priority = 9999,
-            lastCheckTime = System.currentTimeMillis(),
-            lastCheckStatus = NodeHealthStatus.HEALTHY.name,
+            lastCheckTime = null,
+            lastCheckStatus = NodeHealthStatus.UNKNOWN.name,
             responseTimeMs = null,
             createdAt = System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis()
-        )
+        ))
     }
     
     /**
