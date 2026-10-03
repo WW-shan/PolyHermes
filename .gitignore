@@ -97,6 +97,10 @@ test-results/
 *.test.log
 .playwright-cli/
 
+# Local agent worktrees and browser automation artifacts
+/.claude/worktrees/
+/.playwright-mcp/
+
 # Python
 __pycache__/
 *.py[cod]
