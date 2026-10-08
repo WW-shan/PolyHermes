@@ -185,14 +185,18 @@ class OrderSigningService {
 
         if (isBuy) {
             // BUY: makerAmount = price * size (USDC), takerAmount = size (shares)
-            // 参考官方 SDK ROUNDING_CONFIG：makerAmount(USDC) 最多 size 位（2 位），takerAmount(shares) 最多 amount 位
-            val rawTakerAmt = roundDown(sizeDecimal, roundConfig.amount)
+            // 严格对齐官方 SDK getOrderRawAmounts：
+            //   rawTakerAmt = roundDown(size, roundConfig.size)      —— shares 最多 size 位（2 位）
+            //   rawMakerAmt 允许 roundConfig.amount 位小数（0.01 tick 为 4 位，0.001 为 5 位）
+            // 这样 makerAmount / takerAmount 恰好等于 tick 对齐后的价格；
+            // 若把两者弄反（shares 用 amount、USDC 用 size），实际价格会偏离 tick 上界，交易所会以价格不在 tick 上拒单。
+            val rawTakerAmt = roundDown(sizeDecimal, roundConfig.size)
 
             var rawMakerAmt = rawTakerAmt.multiply(rawPrice)
-            if (decimalPlaces(rawMakerAmt) > roundConfig.size) {
-                rawMakerAmt = roundUp(rawMakerAmt, roundConfig.size + 4)
-                if (decimalPlaces(rawMakerAmt) > roundConfig.size) {
-                    rawMakerAmt = roundDown(rawMakerAmt, roundConfig.size)
+            if (decimalPlaces(rawMakerAmt) > roundConfig.amount) {
+                rawMakerAmt = roundUp(rawMakerAmt, roundConfig.amount + 4)
+                if (decimalPlaces(rawMakerAmt) > roundConfig.amount) {
+                    rawMakerAmt = roundDown(rawMakerAmt, roundConfig.amount)
                 }
             }
 

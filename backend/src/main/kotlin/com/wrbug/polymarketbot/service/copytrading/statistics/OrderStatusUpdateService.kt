@@ -86,6 +86,8 @@ class OrderStatusUpdateService(
         private const val PRICE_QUERY_BACKOFF_MAX_MS = 10 * 60_000L
         /** 孤儿记录清理间隔 */
         private const val CLEANUP_INTERVAL_MS = 10 * 60_000L
+        /** UNCONFIRMED 卖出记录复核间隔（毫秒） */
+        private const val UNCONFIRMED_SELL_RECHECK_INTERVAL_MS = 10 * 60_000L
 
         /** 第 attempts 次失败后需要等待的退避时间（指数退避，封顶） */
         internal fun priceQueryBackoffMs(attempts: Int): Long {
@@ -126,6 +128,9 @@ class OrderStatusUpdateService(
 
                 // 3. 核对待确认的卖出订单（按 size_matched 核销，未成交部分退回）
                 reconcilePendingSellOrders()
+
+                // 3.5 复核 UNCONFIRMED 卖出记录（长间隔重试，避免一次接口抖动导致预占永久无法核销）
+                recheckUnconfirmedSellOrders()
 
                 // 4. 更新卖出订单的实际成交价并发送通知（priceUpdated 共用字段）
                 updatePendingSellOrderPrices()
@@ -304,6 +309,64 @@ class OrderStatusUpdateService(
                 logger.info("待确认卖出已核销: orderId=${record.sellOrderId}, status=${detail.status}, sizeMatched=$filled")
             } catch (e: Exception) {
                 logger.warn("核对待确认卖出失败: orderId=${record.sellOrderId}, error=${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 复核 UNCONFIRMED 卖出记录：
+     * 订单长时间查询不到时会标记 UNCONFIRMED 并停止常规轮询，但此时 tracking 的卖出预占仍然生效。
+     * 如果只是接口抖动（例如 404 由索引延迟引起），真实成交就永远不会被记账，持仓也无法再卖出。
+     * 这里按较长间隔重查：查到终态则正常核销，查到未终结则回到 PENDING 交回常规轮询。
+     */
+    suspend fun recheckUnconfirmedSellOrders() {
+        val now = System.currentTimeMillis()
+        val records = sellMatchRecordRepository.findTop200ByFillStatusAndCreatedAtBeforeOrderByIdAsc(
+            SellMatchRecord.FILL_STATUS_UNCONFIRMED, now - UNCONFIRMED_SELL_RECHECK_INTERVAL_MS
+        )
+        if (records.isEmpty()) return
+        val clients = mutableMapOf<Long, AccountClient?>()
+        for (record in records) {
+            try {
+                val lastCheck = record.lastPriceQueryAt ?: record.createdAt
+                if (now - lastCheck < UNCONFIRMED_SELL_RECHECK_INTERVAL_MS) continue
+                val copyTrading = copyTradingRepository.findById(record.copyTradingId).orElse(null) ?: continue
+                val client = accountClient(copyTrading.accountId, clients) ?: continue
+                val response = client.clobApi.getOrder(record.sellOrderId)
+                val detail = if (response.isSuccessful) response.body() else null
+                if (detail == null) {
+                    if (response.code() in 500..599) continue
+                    val updated = ledger.updateSellRecordState(record.id!!, incrementPriceQueryAttempts = true)
+                    logger.error(
+                        "UNCONFIRMED 卖出复核仍未查询到订单，保留预占等待人工核对: orderId=${record.sellOrderId}, " +
+                            "recordId=${record.id}, attempts=${updated?.priceQueryAttempts ?: (record.priceQueryAttempts + 1)}, code=${response.code()}"
+                    )
+                    continue
+                }
+                if (!CopyOrderPlacementExecutor.isTerminal(detail)) {
+                    logger.warn(
+                        "UNCONFIRMED 卖出复核发现订单仍未终结，回到待确认: orderId=${record.sellOrderId}, " +
+                            "recordId=${record.id}, status=${detail.status}"
+                    )
+                    ledger.updateSellRecordState(
+                        record.id!!,
+                        fillStatus = SellMatchRecord.FILL_STATUS_PENDING,
+                        incrementPriceQueryAttempts = true
+                    )
+                    continue
+                }
+                val filled = detail.sizeMatched.toBigDecimalOrNull()
+                if (filled == null || filled.signum() < 0) {
+                    logger.error("UNCONFIRMED 卖出的 size_matched 无效，保持预占等待人工核对: orderId=${record.sellOrderId}, sizeMatched=${detail.sizeMatched}")
+                    ledger.updateSellRecordState(record.id!!, incrementPriceQueryAttempts = true)
+                    continue
+                }
+                ledger.settleSell(record.id!!, filled, null, marketService.getTakerFeeRate(record.marketId))
+                logger.info(
+                    "UNCONFIRMED 卖出复核后完成核销: orderId=${record.sellOrderId}, status=${detail.status}, sizeMatched=$filled"
+                )
+            } catch (e: Exception) {
+                logger.warn("复核 UNCONFIRMED 卖出失败: orderId=${record.sellOrderId}, error=${e.message}", e)
             }
         }
     }

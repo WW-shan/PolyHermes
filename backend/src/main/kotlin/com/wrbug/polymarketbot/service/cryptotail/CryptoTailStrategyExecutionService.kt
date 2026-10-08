@@ -873,7 +873,7 @@ class CryptoTailStrategyExecutionService(
                         direction = direction,
                         price = priceStr,
                         size = signedShares.stripTrailingZeros().toPlainString(),
-                        totalAmount = signedAmount.setScale(CryptoTailManualOrderPricing.AMOUNT_SCALE).toPlainString()
+                        totalAmount = signedAmount.stripTrailingZeros().toPlainString()
                     )
                 )
             }

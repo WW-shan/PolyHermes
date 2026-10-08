@@ -18,6 +18,7 @@ import com.wrbug.polymarketbot.util.RetrofitFactory
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import okhttp3.ResponseBody.Companion.toResponseBody
 import retrofit2.Response
 import java.math.BigDecimal
 import java.util.Optional
@@ -302,6 +303,86 @@ class OrderStatusUpdateServiceTest {
         Mockito.verify(ledger, Mockito.never()).updateBuyPrice(order.id!!, BigDecimal("0.47"), null)
         Unit
     }
+
+    @Test
+    fun `unconfirmed sell recheck settles when order becomes visible again`() = runBlocking {
+        val account = account()
+        val clobApi = Mockito.mock(PolymarketClobApi::class.java)
+        val record = unconfirmedSell()
+        val detail = OpenOrder(
+            id = record.sellOrderId,
+            status = "MATCHED",
+            owner = "owner",
+            makerAddress = account.proxyAddress,
+            market = record.marketId,
+            assetId = "123",
+            side = "SELL",
+            originalSize = "10",
+            sizeMatched = "10",
+            price = "0.50",
+            outcome = "Yes",
+            expiration = "0",
+            orderType = "FAK",
+            createdAt = 1L
+        )
+
+        Mockito.`when`(
+            sellMatchRecordRepository.findTop200ByFillStatusAndCreatedAtBeforeOrderByIdAsc(
+                Mockito.anyString(), Mockito.anyLong()
+            )
+        ).thenReturn(listOf(record))
+        Mockito.`when`(copyTradingRepository.findById(1L)).thenReturn(Optional.of(CopyTrading(id = 1L, accountId = 1L, leaderId = 1L)))
+        Mockito.`when`(accountRepository.findById(1L)).thenReturn(Optional.of(account))
+        Mockito.`when`(cryptoUtils.decrypt("enc-secret")).thenReturn("secret")
+        Mockito.`when`(cryptoUtils.decrypt("enc-passphrase")).thenReturn("passphrase")
+        Mockito.`when`(retrofitFactory.createClobApi("key", "secret", "passphrase", account.walletAddress)).thenReturn(clobApi)
+        Mockito.`when`(clobApi.getOrder(record.sellOrderId)).thenReturn(Response.success(detail))
+        Mockito.`when`(marketService.getTakerFeeRate(record.marketId)).thenReturn(BigDecimal.ZERO)
+
+        service.recheckUnconfirmedSellOrders()
+
+        Mockito.verify(ledger).settleSell(record.id!!, BigDecimal("10"), null, BigDecimal.ZERO)
+        Unit
+    }
+
+    @Test
+    fun `unconfirmed sell recheck keeps reservation and backs off when still not found`() = runBlocking {
+        val account = account()
+        val clobApi = Mockito.mock(PolymarketClobApi::class.java)
+        val record = unconfirmedSell()
+
+        Mockito.`when`(
+            sellMatchRecordRepository.findTop200ByFillStatusAndCreatedAtBeforeOrderByIdAsc(
+                Mockito.anyString(), Mockito.anyLong()
+            )
+        ).thenReturn(listOf(record))
+        Mockito.`when`(copyTradingRepository.findById(1L)).thenReturn(Optional.of(CopyTrading(id = 1L, accountId = 1L, leaderId = 1L)))
+        Mockito.`when`(accountRepository.findById(1L)).thenReturn(Optional.of(account))
+        Mockito.`when`(cryptoUtils.decrypt("enc-secret")).thenReturn("secret")
+        Mockito.`when`(cryptoUtils.decrypt("enc-passphrase")).thenReturn("passphrase")
+        Mockito.`when`(retrofitFactory.createClobApi("key", "secret", "passphrase", account.walletAddress)).thenReturn(clobApi)
+        Mockito.`when`(clobApi.getOrder(record.sellOrderId)).thenReturn(Response.error(404, "".toResponseBody()))
+
+        service.recheckUnconfirmedSellOrders()
+
+        Mockito.verify(ledger).updateSellRecordState(record.id!!, incrementPriceQueryAttempts = true)
+        Mockito.verify(ledger, Mockito.never()).settleSell(record.id!!, BigDecimal("10"), null, BigDecimal.ZERO)
+        Unit
+    }
+
+    private fun unconfirmedSell() = com.wrbug.polymarketbot.entity.SellMatchRecord(
+        id = 2L,
+        copyTradingId = 1L,
+        sellOrderId = "0xsell",
+        leaderSellTradeId = "leader-sell",
+        marketId = "0xmarket",
+        side = "0",
+        totalMatchedQuantity = BigDecimal("10"),
+        sellPrice = BigDecimal("0.50"),
+        totalRealizedPnl = BigDecimal.ZERO,
+        fillStatus = com.wrbug.polymarketbot.entity.SellMatchRecord.FILL_STATUS_UNCONFIRMED,
+        createdAt = 1L
+    )
 
     private fun pendingBuy() = CopyOrderTracking(
         id = 1L,

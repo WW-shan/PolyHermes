@@ -109,6 +109,7 @@ class PolymarketActivityWsService(
     private var addressMatchMessages = 0L
     private var jsonParseMessages = 0L
     private var duplicateTxHashMessages = 0L
+    private var missingTxHashMessages = 0L
     private var researchCaptureWindowMinute = 0L
     private var researchCaptureWritesThisMinute = 0L
     private var researchCaptureLastHealthStatus: LeaderResearchSourceStatus? = null
@@ -349,6 +350,9 @@ class PolymarketActivityWsService(
      * 检查消息是否包含监听的 Leader 地址
      * 快速过滤，避免不必要的 JSON 解析
      * 只需要检查 "proxyWallet":"0x..." 或 "trader":{"address":"0x..."} 格式
+     *
+     * 服务端 JSON 可能带空格（"proxyWallet": "0x..."），因此先去掉空白再匹配，
+     * 否则会把真实成交误判为无关消息而漏单（这里只是预过滤，宽松一些没有副作用）。
      */
     private fun containsMonitoredAddress(message: String): Boolean {
         // 快速检查：如果消息很短，不可能包含地址
@@ -356,17 +360,19 @@ class PolymarketActivityWsService(
             return false
         }
 
+        val compact = if (message.any { it.isWhitespace() }) message.filterNot { it.isWhitespace() } else message
+
         // 遍历所有监听的地址
-        for ((address, leaderId) in monitoredAddresses) {
+        for (address in monitoredAddresses.keys) {
             // 检查 proxyWallet：格式为 "proxyWallet":"0x..."
-            if (message.contains("\"proxyWallet\":\"$address\"", ignoreCase = true)) {
+            if (compact.contains("\"proxyWallet\":\"$address\"", ignoreCase = true)) {
                 addressMatchMessages++
                 return true
             }
 
             // 检查 trader.address：格式为 "trader":{"address":"0x..."}
-            if (message.contains("\"trader\"", ignoreCase = true) &&
-                message.contains("\"address\":\"$address\"", ignoreCase = true)
+            if (compact.contains("\"trader\"", ignoreCase = true) &&
+                compact.contains("\"address\":\"$address\"", ignoreCase = true)
             ) {
                 addressMatchMessages++
                 return true
@@ -422,6 +428,20 @@ class PolymarketActivityWsService(
             }
             val leaderId = monitoredAddresses[traderAddress.lowercase()] ?: return
 
+            // 没有 txHash 时既无法与链上兜底路径（onchain-ws）按 tradeId 去重，也无法在
+            // trades / orders_matched 两类消息之间聚合，直接交付会导致同一笔成交重复下单。
+            // 因此这里丢弃，交由链上路径兜底（高可靠，延迟约 2-3 秒）。
+            val txHash = payload.transactionHash
+            if (txHash.isNullOrBlank()) {
+                missingTxHashMessages++
+                logger.warn(
+                    "Activity 成交缺少 transactionHash，跳过以避免重复下单（等待链上路径兜底）: " +
+                        "leaderId=$leaderId, address=$traderAddress, asset=${payload.asset}, side=${payload.side}, " +
+                        "size=${payload.size}, price=${payload.price}"
+                )
+                return
+            }
+
             val trade = parseActivityTrade(payload, leaderId)
             if (trade == null) {
                 logger.warn("解析交易数据失败: leaderId=$leaderId, address=$traderAddress, asset=${payload.asset}, side=${payload.side}")
@@ -429,16 +449,6 @@ class PolymarketActivityWsService(
             }
             logger.info("检测到 Leader 成交: leaderId=$leaderId, address=$traderAddress, type=${tradeMessage.type}, side=${trade.side}, market=${trade.market}, size=${trade.size}, price=${trade.price}")
 
-            val txHash = payload.transactionHash
-            if (txHash.isNullOrBlank()) {
-                // 没有 txHash 无法聚合/去重，直接按 Leader 串行交付
-                scope.launch {
-                    if (!deliverTradeWithRetry(leaderId, trade, "activity-ws")) {
-                        logger.error("Activity 成交多次交付失败: leaderId=$leaderId, tradeId=${trade.id}")
-                    }
-                }
-                return
-            }
             addToAggregate(leaderId, txHash, trade, isOrdersMatched = tradeMessage.type == "orders_matched")
         } catch (e: Exception) {
             logger.error("处理 Activity WebSocket 消息失败: ${e.message}", e)
@@ -679,8 +689,10 @@ class PolymarketActivityWsService(
             val outcomeIndex = payload.outcomeIndex
                 ?: parseOutcomeIndex(outcome)
 
-            // 使用 transactionHash 作为 trade ID，如果没有则生成 fallback ID
-            val tradeId = payload.transactionHash ?: "${leaderId}_${System.currentTimeMillis()}_${asset.take(10)}"
+            // 调用方已确保 transactionHash 非空：tradeId 必须与链上路径一致才能跨来源去重
+            val txHash = payload.transactionHash?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("Activity 成交缺少 transactionHash，无法构造可去重的 tradeId")
+            val tradeId = OnChainWsUtils.buildTradeId(txHash, asset, side)
 
             // asset 即 CLOB 的 tokenId，必须写入 TradeResponse，跟单下单时用此 tokenId 请求订单簿/下单，否则会用 conditionId+outcomeIndex 链上重算，可能得到与 CLOB 不一致的 tokenId
             TradeResponse(
@@ -785,6 +797,7 @@ class PolymarketActivityWsService(
             "addressMatches" to addressMatchMessages,
             "jsonParses" to jsonParseMessages,
             "duplicateTxHashes" to duplicateTxHashMessages,
+            "missingTxHashes" to missingTxHashMessages,
             "jsonParseRate" to "$jsonParseRate%",
             "filteringEfficiency" to if (totalMessagesProcessed > 0) {
                 ((1.0 - jsonParseMessages.toDouble() / totalMessagesProcessed) * 100).toInt()

@@ -15,21 +15,32 @@ class OrderSigningServiceTickSizeTest {
     private val service = OrderSigningService()
 
     @Test
-    fun `tick 0_01 buy amounts keep existing 2 and 4 decimal rule`() {
+    fun `tick 0_01 buy amounts match official sdk rounding`() {
+        // 官方 @polymarket/clob-client-v2 getOrderRawAmounts("BUY","10.123456","0.57",tick 0.01)
+        // => rawTakerAmt=10.12（shares 2 位），rawMakerAmt=5.7684（USDC 4 位）
         val cfg = service.roundConfigForTickSize(BigDecimal("0.01"))
         val amounts = service.calculateOrderAmounts("BUY", "10.123456", "0.57", cfg)
-        // takerAmount(shares) 4 位：10.1234；makerAmount(USDC) = 10.1234*0.57=5.770338 → 2 位向下 5.77
-        assertEquals("10123400", amounts.takerAmount)
-        assertEquals("5770000", amounts.makerAmount)
+        assertEquals("10120000", amounts.takerAmount)
+        assertEquals("5768400", amounts.makerAmount)
+        assertOnTickAmounts(amounts, BigDecimal("0.57"))
     }
 
     @Test
-    fun `tick 0_001 buy uses 3 decimal price and 5 decimal shares`() {
+    fun `tick 0_001 buy amounts match official sdk rounding`() {
+        // 官方 getOrderRawAmounts("BUY","10.1234567","0.957",tick 0.001)
+        // => rawTakerAmt=10.12，rawMakerAmt=9.68484（USDC 5 位）
         val cfg = service.roundConfigForTickSize(BigDecimal("0.001"))
         val amounts = service.calculateOrderAmounts("BUY", "10.1234567", "0.957", cfg)
-        assertEquals("10123450", amounts.takerAmount)
-        // 10.12345*0.957=9.68814165 → 2 位 9.68
-        assertEquals("9680000", amounts.makerAmount)
+        assertEquals("10120000", amounts.takerAmount)
+        assertEquals("9684840", amounts.makerAmount)
+        assertOnTickAmounts(amounts, BigDecimal("0.957"))
+    }
+
+    /** makerAmount / takerAmount 的隐含价格必须正好等于下单价格（否则交易所会按不在 tick 上拒单） */
+    private fun assertOnTickAmounts(amounts: OrderSigningService.OrderAmounts, expectedPrice: BigDecimal) {
+        val implied = BigDecimal(amounts.makerAmount)
+            .divide(BigDecimal(amounts.takerAmount), 8, java.math.RoundingMode.HALF_UP)
+        assertEquals(0, expectedPrice.compareTo(implied), "隐含价格 $implied 与下单价格 $expectedPrice 不一致")
     }
 
     @Test

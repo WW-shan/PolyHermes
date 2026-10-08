@@ -29,8 +29,8 @@ class CryptoTailManualOrderPricingTest {
         val quote = CryptoTailManualOrderPricing.quote(BigDecimal("0.950"), BigDecimal("10.555"), BigDecimal("0.01"))!!
         assertEquals(0, BigDecimal("0.95").compareTo(quote.price))
         assertEquals(0, BigDecimal("10.55").compareTo(quote.size))
-        // 10.55 * 0.95 = 10.0225 -> 10.02
-        assertEquals(0, BigDecimal("10.02").compareTo(quote.amountUsdc))
+        // 10.55 * 0.95 = 10.0225，tick 0.01 的金额精度为 4 位，因此保持 10.0225（隐含价格正好 0.95）
+        assertEquals(0, BigDecimal("10.0225").compareTo(quote.amountUsdc))
     }
 
     @Test
