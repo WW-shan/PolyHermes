@@ -316,10 +316,10 @@ class PolymarketClobService(
     
 
     /**
-     * 创建签名的订单
-     * 注意：此方法需要完整的订单签名逻辑，当前为占位实现
-     * TODO: 实现完整的订单签名逻辑（EIP-712 签名、金额计算等）
-     * 参考: clob-client/src/order-builder/helpers.ts
+     * 提交已签名的订单到 CLOB。
+     * EIP-712 签名与金额/tick 精度计算由
+     * com.wrbug.polymarketbot.service.copytrading.orders.OrderSigningService 完成，
+     * 本方法只负责把包含签名订单的 NewOrderRequest 提交给 CLOB 并解析结果。
      */
     suspend fun createSignedOrder(request: NewOrderRequest): Result<NewOrderResponse> {
         return try {

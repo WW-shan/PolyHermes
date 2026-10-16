@@ -1584,14 +1584,11 @@ class RelayClientService(
     suspend fun executeBatch(
         privateKey: String,
         proxyAddress: String,
-        safeTxs: List<SafeTransaction>
+        safeTxs: List<SafeTransaction>,
+        walletType: WalletType = WalletType.SAFE,
+        metadata: String? = null
     ): Result<String> {
-        // 批量执行：将多个交易合并为一个 execTransaction 调用
-        // 当前实现：委托给 com.wrbug.polymarketbot.service.common.BlockchainService
-        return Result.failure(
-            UnsupportedOperationException(
-                "批量 Gasless 执行暂未实现。请使用 com.wrbug.polymarketbot.service.common.BlockchainService.redeemPositions() 方法。"
-            )
-        )
+        // 委托给统一的批量执行实现：DEPOSIT 走 WALLET 批量提交，SAFE 用 MultiSend，MAGIC 用 proxy(calls[])
+        return executeCalls(privateKey, proxyAddress, safeTxs, walletType, metadata)
     }
 }
