@@ -66,13 +66,19 @@ POLYHERMES_LIVE_TEST=1 POLYHERMES_PROXY_HOST=127.0.0.1 POLYHERMES_PROXY_PORT=108
 
 修完 #1 后，从识别到下单的每一环都有真实数据背书：识别（真实 WS）、市场上下文（真实 book/tick/negRisk）、签名（与官方 SDK 向量一致、隐含价正好在 tick 上）、下单重试与幂等（同一 hash 不重复成交）、成交回填与卖出核销。**修复前 BUY 单大概率被拒，链路不能真正完成；现在可以。**
 
-## 五、还需要做的事（TODO，未改代码）
+## 五、遗留事项跟进状态（2026-10-16 更新）
 
-1. **轮询兜底未实现（重要）**：`pollIntervalSeconds` / `useWebSocket` / `copy.trading.polling.*` 目前是**死配置**，没有轮询兜底实现。两条 WS（activity + on-chain）同时不可用时，跟单会**静默停止**且不告警。建议实现 Data API 轮询兜底，或在后端加健康告警、前端隐藏无效配置项。
-2. **真实小额账户端到端实盘验证**：本次只做到「签名 + 市场上下文」级别的真实数据验证，**未真实提交订单**。上线前需用 proxy 已授权 exchange 且有余额的账户跑一笔真实小额端到端下单，确认成交与回填。
-3. **成交价回退可优化**：`queryExecutionPrice` 失败时仍回退到订单限价（已有 WARN 日志），PnL 可能偏差。可考虑失败时不发通知 / 持续重试直至拿到真实均价。
-4. **多实例部署注意**：`tradeLocks` / `configLocks` / `processedTxHashes` 等为进程内状态，跨实例去重依赖 DB 唯一键；迁移/扩容时需确认唯一键覆盖到位。
-5. **旧文档口径不一致（可选）**：`docs/zh/copy-trading-monitor-strategy.md` 等旧文档仍写 `leaderTradeId = transactionHash`，与新 `buildTradeId` 格式（`normalizedTxHash:B|S:tokenId后16位`）不一致，可一并更新。
+1. **轮询兜底 —— 已实现**：新增 `CopyTradingPollingFallbackService`，通过 Data API `/activity` 提供第三条识别来源。
+   - 启用条件：Activity WS 与 OnChain WS 同时不可用（兜底接管），或配置显式 `useWebSocket=false`；两者皆不满足时不产生额外 Data API 调用。
+   - `pollIntervalSeconds` 决定拉取节奏，`copy.trading.polling.*` 提供开关、沉降延迟、回溯窗口、重叠窗口、批量上限与告警节流。
+   - tradeId 复用 `OnChainWsUtils.buildTradeId`，同一 `(txHash, asset, side)` 的多笔成交按与 Activity WS 一致的语义聚合，跨来源去重天然成立。
+   - 交付失败时保留窗口起点作为重试下限，避免失败成交滑出查询窗口被永久丢弃。
+   - 两条 WS 均不可用时输出节流告警，`getPollingStats()` 暴露 `fallbackActive` 与交付/失败计数。
+   - 覆盖测试：`CopyTradingPollingFallbackServiceTest`（12 个用例）。
+2. **真实小额账户端到端实盘验证 —— 仍需人工执行**：需要有余额且已授权 exchange 的真实账户提交真实订单，属于资金操作，无法由自动化流程替代。上线前必须人工完成。
+3. **成交价回退 —— 已核实并加固**：`reconcilePendingBuyOrders` 在 `queryExecutionPrice` 失败时先按下单价入账，但 `updatePendingBuyOrders` 会持续重查真实均价并修正；卖单走指数退避重试（上限 `MAX_PRICE_QUERY_ATTEMPTS`），未取到真实均价前不发送通知。
+4. **多实例去重 —— 已补齐 DB 唯一键**：`processed_trade` 的 `uk_leader_trade` 只保证“同一笔 Leader 成交最多被标记一次”，而标记发生在下单之后，拦不住并发重复下单。`copy_order_tracking` 的 PENDING 记录在下单之前写入，已新增迁移 `V51` 为其补 `(copy_trading_id, leader_buy_trade_id)` 唯一键；检测到历史重复数据时自动跳过加键（不删除任何记录），由应用层检查兜底。
+5. **旧文档口径 —— 已修正**：`docs/zh/copy-trading-monitor-strategy.md` 已更新为 `tradeId = normalizedTxHash:B|S:tokenId后16位`，并补充轮询兜底与分片锁的说明。
 
 ## 六、迁移注意事项
 
