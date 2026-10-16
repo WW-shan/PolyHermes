@@ -92,7 +92,8 @@ class CopyTradingMonitorService(
     private fun buildMonitoringPlan(): MonitoringPlan {
         val allAccounts = accountRepository.findAll()
         val systemAddresses = systemAddressesOf(allAccounts)
-        val leaderIds = copyTradingRepository.findByEnabledTrue().map { it.leaderId }.distinct()
+        // useWebSocket=false 的配置由 CopyTradingPollingFallbackService 轮询负责，不再订阅 WS
+        val leaderIds = copyTradingRepository.findByEnabledTrue().filter { it.useWebSocket }.map { it.leaderId }.distinct()
         val leaders = leaderIds.mapNotNull { leaderRepository.findById(it).orElse(null) }
             .filter { !isSystemAddress(it, systemAddresses) }
         // 禁用配置仍可能持有仓位，账户卖出需要继续记账，因此账户监听覆盖所有配置
@@ -156,7 +157,7 @@ class CopyTradingMonitorService(
             ?: return
         
         val copyTradings = copyTradingRepository.findByLeaderIdAndEnabledTrue(leaderId)
-        if (copyTradings.isEmpty() || isSystemAddress(leader)) {
+        if (copyTradings.none { it.useWebSocket } || isSystemAddress(leader)) {
             return
         }
         
@@ -195,7 +196,7 @@ class CopyTradingMonitorService(
             return
         }
         
-        if (copyTradings.isNotEmpty() && !isSystemAddress(leader)) {
+        if (copyTradings.any { it.useWebSocket } && !isSystemAddress(leader)) {
             // 有启用的跟单配置，确保在监听列表中
             activityWsService.addLeader(leader)
             onChainWsService.addLeader(leader)

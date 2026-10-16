@@ -237,6 +237,18 @@ class OnChainWsService(
     fun getMonitoredLeaderIds(): Set<Long> = monitoredLeaders.keys.toSet()
 
     /**
+     * 链上监听是否至少有一个活动连接。
+     * 没有监听目标时视为不健康，交由轮询兜底接管；有监听目标时任一连接在线即视为健康。
+     */
+    fun isConnected(): Boolean {
+        if (monitoredLeaders.isEmpty()) return false
+        val statuses = unifiedOnChainWsService.getConnectionStatuses()
+        return monitoredLeaders.values.any { leader ->
+            statuses[leader.leaderAddress.lowercase()] == true
+        }
+    }
+
+    /**
      * 停止监听
      */
     fun stop() {

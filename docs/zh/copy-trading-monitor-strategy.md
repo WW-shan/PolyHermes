@@ -2,16 +2,17 @@
 
 ## 一、方案概述
 
-系统**同时运行**两种监听方式，并行处理，哪个数据先返回就用哪个：
+系统以两条 WebSocket 作为实时识别来源，另有一条 Data API 轮询作为兜底：
 
-1. **链上 WebSocket 监听**：通过 Polygon RPC 的 `eth_subscribe` 实时监听链上交易
-2. **轮询监听**：通过 Polymarket Data API 定期轮询交易记录
+1. **Activity WebSocket**（`PolymarketActivityWsService`）：订阅全局 activity 交易流，客户端按 Leader 地址过滤，延迟 < 100ms，优先使用
+2. **链上 WebSocket**（`OnChainWsService` + `UnifiedOnChainWsService`）：通过 Polygon RPC 的 `eth_subscribe` 监听 Leader 地址的链上成交，延迟约 2-3s，作为高可靠兜底
+3. **Data API 轮询兜底**（`CopyTradingPollingFallbackService`）：两条 WS 都不可用、或配置显式设置 `useWebSocket=false` 时，按 `pollIntervalSeconds` 拉取 `/activity`，保证不静默停止
 
 **核心特点**：
-- 两种方式**并行运行**，不互相排斥
-- WS 断开时**不断重试连接**，不停止轮询
-- 哪个数据先返回就用哪个，确保最快响应
-- 通过去重机制确保同一笔交易只处理一次
+- 前两条 WS **并行运行**，都交给 `CopyOrderTrackingService.processTrade()` 统一去重
+- 轮询只在必要时介入：WS 健康且配置使用 WS 时不拉取，避免无谓重复
+- 三条来源使用**同一个 tradeId**（`OnChainWsUtils.buildTradeId`），跨来源去重天然成立
+- 两条 WS 均不可用时输出告警，并由轮询接管
 
 ## 二、关键流程图
 
@@ -150,14 +151,15 @@ WS 连接断开
             ↓
         保存到 processed_trade 表
             ├─→ leaderId
-            ├─→ leaderTradeId (transactionHash)
+            ├─→ leaderTradeId (txHash:B|S:tokenId后16位，见 OnChainWsUtils.buildTradeId)
             ├─→ tradeType (BUY/SELL)
-            ├─→ source (onchain-ws / polling)
+            ├─→ source (activity-ws / onchain-ws / data-api-poll)
             └─→ status (SUCCESS/FAILED)
 ```
 
 **并发安全**：
-- 使用数据库唯一约束（`leaderId + leaderTradeId`）
+- 使用数据库唯一约束（`leaderId + leaderTradeId`）；`copy_order_tracking` 另有
+  `(copy_trading_id, leader_buy_trade_id)` 唯一键，把多实例并发重复下单挡在下单前的 PENDING 写入阶段
 - 处理唯一约束冲突（并发情况下可能多个请求同时处理同一笔交易）
 - 如果冲突，再次查询确认状态
 
@@ -204,18 +206,30 @@ while (isActive) {
 }
 ```
 
-### 3.5 轮询监听实现要点
+### 3.5 轮询兜底实现要点（CopyTradingPollingFallbackService）
+
+**启用条件**（满足其一即轮询该 Leader）：
+1. Activity WS 与 OnChain WS **同时不可用**（兜底接管）
+2. 该 Leader 的启用配置中存在 `useWebSocket=false`（用户主动选择轮询）
 
 **轮询流程**：
-1. 定期查询 `/activity` 接口（每 2 秒）
-2. 通过 diff 检测新增交易
-3. 转换为 `TradeResponse`
-4. 调用 `processTrade(leaderId, trade, "polling")` 处理交易（去重由内部处理）
+1. `@Scheduled` 按 `copy.trading.polling.tick-ms` 唤醒，按 Leader 分组启用配置
+2. 拉取节奏取该 Leader 所有启用配置中最小的 `pollIntervalSeconds`，未配置时用 `copy.trading.polling.interval`
+3. 查询窗口 = `[游标 - overlap, now - settleDelay]`，首次用 `lookbackSeconds` 回溯；
+   沉降延迟让 WebSocket 先交付，避免与 WS 抢单
+4. 按 `OnChainWsUtils.buildTradeId` 分组，把同一 `(txHash, asset, side)` 的多笔成交
+   聚合为一笔（数量求和、价格按数量加权平均、时间取最早），与 Activity WS 的聚合语义一致
+5. 调用 `processTrade(leaderId, trade, "data-api-poll")`，失败时由 `processed_trade` 去重
+
+**游标推进**：
+- 只有整个窗口**全部交付成功**才推进游标
+- 存在失败交付时把窗口起点保留为重试下限（用回溯窗口限制增长），
+  否则窗口随时间前移，失败的成交会滑出查询范围被永久丢弃
 
 **关键点**：
-- 轮询服务**独立运行**，不受 WS 状态影响
-- 即使 WS 正常工作，轮询也继续运行（作为备份）
-- 去重机制确保不会重复处理同一笔交易
+- 轮询服务只在必要时运行，WS 健康时不产生额外 Data API 调用
+- 只查询 `now - settleDelay` 之前的成交，给 WS 留出优先交付窗口
+- 自带 `getPollingStats()`，暴露 `fallbackActive`、交付/失败/接口失败计数
 
 ## 四、配置参数
 
@@ -441,9 +455,10 @@ open class CopyOrderTrackingService(
     /**
      * 获取或创建 Mutex（按交易ID）
      */
+    // 实际实现使用固定分片锁数组，避免按交易无限创建 Mutex 导致内存泄漏
     private fun getMutex(leaderId: Long, tradeId: String): Mutex {
         val key = "${leaderId}_${tradeId}"
-        return tradeMutexMap.getOrPut(key) { Mutex() }
+        return tradeLocks[Math.floorMod(key.hashCode(), TRADE_LOCK_STRIPES)]
     }
     
     /**
