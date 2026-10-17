@@ -87,3 +87,28 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
+/**
+ * Research-only maker backtest. It does not start Spring, touch the database, or place orders.
+ *
+ * Example:
+ *   ./gradlew eventMakerBacktest -PresearchProxy=http://127.0.0.1:10808 \
+ *       -PresearchMaxMarkets=300 -PresearchMinVolume=250000
+ */
+tasks.register<JavaExec>("eventMakerBacktest") {
+    group = "research"
+    description = "Replay public Polymarket trades through the event-maker research engine"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.wrbug.polymarketbot.research.eventmaker.EventMakerBacktestCliKt")
+
+    val argsList = mutableListOf<String>()
+    providers.gradleProperty("researchProxy").orNull?.let {
+        argsList += listOf("--proxy", it)
+    }
+    argsList += listOf("--max-markets", providers.gradleProperty("researchMaxMarkets").orNull ?: "300")
+    argsList += listOf("--min-volume", providers.gradleProperty("researchMinVolume").orNull ?: "250000")
+    argsList += listOf("--from", providers.gradleProperty("researchFrom").orNull ?: "2024-01-01")
+    argsList += listOf("--to", providers.gradleProperty("researchTo").orNull ?: "2026-10-01")
+    argsList += listOf("--concurrency", providers.gradleProperty("researchConcurrency").orNull ?: "6")
+    argsList += listOf("--output", providers.gradleProperty("researchOutput").orNull ?: "build/research/event-maker-backtest")
+    args(argsList)
+}
