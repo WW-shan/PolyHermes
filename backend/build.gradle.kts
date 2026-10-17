@@ -112,3 +112,27 @@ tasks.register<JavaExec>("eventMakerBacktest") {
     argsList += listOf("--output", providers.gradleProperty("researchOutput").orNull ?: "build/research/event-maker-backtest")
     args(argsList)
 }
+/**
+ * Real-time paper market-making test using live Polymarket books and public trades.
+ * It never creates or signs an order.
+ */
+tasks.register<JavaExec>("livePaperMaker") {
+    group = "research"
+    description = "Run a real-time maker-only paper test against live Polymarket data"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.wrbug.polymarketbot.research.livepaper.LivePaperCliKt")
+
+    val argsList = mutableListOf<String>()
+    providers.gradleProperty("liveProxy").orNull?.let { argsList += listOf("--proxy", it) }
+    argsList += listOf("--max-markets", providers.gradleProperty("liveMaxMarkets").orNull ?: "8")
+    argsList += listOf("--min-volume", providers.gradleProperty("liveMinVolume").orNull ?: "25000")
+    argsList += listOf("--min-minutes", providers.gradleProperty("liveMinMinutes").orNull ?: "120")
+    argsList += listOf("--min-remaining-minutes", providers.gradleProperty("liveMinRemainingMinutes").orNull ?: "120")
+    argsList += listOf("--minutes", providers.gradleProperty("liveMinutes").orNull ?: "720")
+    argsList += listOf("--target-cycles", providers.gradleProperty("liveTargetCycles").orNull ?: "12")
+    if (providers.gradleProperty("liveAllowNegRisk").orNull == "true") argsList += "--allow-neg-risk"
+    argsList += listOf("--poll-seconds", providers.gradleProperty("livePollSeconds").orNull ?: "3")
+    argsList += listOf("--snapshot-seconds", providers.gradleProperty("liveSnapshotSeconds").orNull ?: "10")
+    argsList += listOf("--output", providers.gradleProperty("liveOutput").orNull ?: "build/research/live-paper")
+    args(argsList)
+}

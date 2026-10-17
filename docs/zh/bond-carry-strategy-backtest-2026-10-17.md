@@ -4,6 +4,7 @@
 > 研究对象：`0x0260366a9add43c25d4f4d35d2210526c6750d88`（adonpoli / Noted-Shop）  
 > 数据源：Polymarket Data API、Gamma API、Polygon RPC  
 > 说明：本文仅基于公开成交与结算数据，不构成投资建议。
+> 后续真实盘口纸交易：[event-maker-live-paper-2026-10-17.md](event-maker-live-paper-2026-10-17.md)
 >
 > 续篇：maker 策略的 1,000 市场 / 162 配置全量回测见 [event-maker-backtest-2026-10-17.md](event-maker-backtest-2026-10-17.md)。
 

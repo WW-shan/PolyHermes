@@ -4,6 +4,7 @@
 > 研究对象：`0x0260366a9add43c25d4f4d35d2210526c6750d88`（adonpoli / Noted-Shop）
 > 数据源：Polymarket Gamma API、Data API
 > 结论性质：研究回测，不构成投资建议，也不代表可以实盘上线。
+> 后续真实盘口纸交易：[event-maker-live-paper-2026-10-17.md](event-maker-live-paper-2026-10-17.md)
 
 ## 一句话结论
 
