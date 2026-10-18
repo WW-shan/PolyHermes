@@ -162,3 +162,13 @@ cd D:\Project\PolyHermes\backend
 - 新启动 2h/12h 被动入场 Shadow，使用 1 美分 dip、2 美分退出目标；截至 05:22 选中市场启动后没有新公共成交，两组均为 0 fill。
 - 新代码默认 `shadowFillVolumeFactor=1`，并输出 60/300/1800 秒 markout、盘口年龄和 `execution-diagnostics.json`。
 - 这些运行尚未完成，不能把 0 fill 解释为策略有效，也不能据此实盘。
+
+
+## 附录：2026-10-19 07:26 keyset 候选发现复核
+
+- 运行目录：`backend/build/research/event-maker-shadow-keyset-v3-20261019/`。
+- Politics 与 Geopolitics 各扫描 1 页 100 条；两标签均在 `volume24hr < 100,000` 处停止，`stoppedReason=volume_floor_reached`。
+- 价格预筛候选 6 个，活动过滤通过 1 个。
+- 唯一通过者：`Israel x Iran ceasefire continues through October 21?`；30m 6 笔/1009.10 USDC，2h 21 笔/15381.04 USDC；best bid 0.975、best ask 0.976，价差 1 tick。
+- `marketSelection selected=0 reasons={spread_below_min=1}`，所以本次未进入 Shadow 报价阶段，也没有 fill、cycle、markout 或 PnL。
+- 结论：当前是策略条件匹配空窗，不是市场发现故障；不放宽门槛制造成交。

@@ -150,7 +150,7 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     val activeOrderStaleBookSeconds = option("active-order-stale-seconds")?.toLongOrNull() ?: 600L
     val orderNotional = option("order-notional")?.toDoubleOrNull() ?: 25.0
     val fillVolumeFactor = option("fill-volume-factor")?.toDoubleOrNull() ?: 1.0
-    val discoveryPages = option("discovery-pages")?.toIntOrNull() ?: 20
+    val discoveryPages = option("discovery-pages")?.toIntOrNull() ?: 50
     val minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90
     val maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99
     require(minutes > 0)
@@ -162,7 +162,7 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     require(activeOrderStaleBookSeconds >= staleBookSeconds)
     require(orderNotional > 0.0)
     require(fillVolumeFactor >= 0.0)
-    require(discoveryPages in 1..20)
+    require(discoveryPages in 1..100)
     require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
     return ShadowOptions(
         proxyUrl = option("proxy"),
@@ -277,7 +277,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         )
         Files.writeString(
             options.outputDir.resolve("market-discovery.json"),
-            prettyGson.toJson(discovery.stats),
+            prettyGson.toJson(discovery),
             StandardCharsets.UTF_8,
             StandardOpenOption.CREATE,
             StandardOpenOption.TRUNCATE_EXISTING,

@@ -20,7 +20,7 @@ class LivePaperDataClientDiscoveryTest {
     private lateinit var server: HttpServer
     private lateinit var executor: java.util.concurrent.ExecutorService
     private lateinit var baseUrl: String
-    private lateinit var marketsResponder: (String?, Int, Int) -> List<Map<String, Any>>
+    private lateinit var marketsResponder: (String?, String?, Int) -> FixturePage
 
     @BeforeEach
     fun setUp() {
@@ -35,7 +35,7 @@ class LivePaperDataClientDiscoveryTest {
         }
         server.start()
         baseUrl = "http://127.0.0.1:${server.address.port}"
-        marketsResponder = { tag, offset, limit -> defaultPoliticsRows(tag, offset, limit) }
+        marketsResponder = { tag, cursor, limit -> defaultPoliticsRows(tag, cursor, limit) }
     }
 
     @AfterEach
@@ -61,7 +61,7 @@ class LivePaperDataClientDiscoveryTest {
             assertEquals(1, result.stats.uniqueMarkets)
             assertEquals("candidate_target_reached", result.stats.stoppedReason)
             assertEquals(2, result.stats.tags.first { it.tag == "Politics" }.pagesFetched)
-            assertTrue(requests.any { it.contains("/markets") && it.contains("tag_id=2") && it.contains("offset=50") })
+            assertTrue(requests.any { it.contains("/markets/keyset") && it.contains("tag_id=2") && it.contains("after_cursor=page-2") })
         } finally {
             client.close()
         }
@@ -72,7 +72,7 @@ class LivePaperDataClientDiscoveryTest {
         val client = client()
         try {
             marketsResponder = { tag, _, _ ->
-                if (tag == "2") listOf(market("active-candidate", 0.98, 0.985, 250_000.0)) else emptyList()
+                if (tag == "2") FixturePage(listOf(market("active-candidate", 0.98, 0.985, 250_000.0)), null) else FixturePage(emptyList(), null)
             }
             val result = client.discoverMarketsDetailed(
                 maxMarkets = 1,
@@ -86,6 +86,7 @@ class LivePaperDataClientDiscoveryTest {
             assertEquals(1, result.markets.size)
             assertEquals(false, result.stats.activityFilterApplied)
             assertEquals(0, result.stats.activityChecked)
+            assertTrue(result.activityDiagnostics.isEmpty())
             assertTrue(requests.none { it.contains("/trades") })
         } finally {
             client.close()
@@ -97,7 +98,7 @@ class LivePaperDataClientDiscoveryTest {
         val client = client()
         try {
             marketsResponder = { tag, _, _ ->
-                if (tag == "2") listOf(market("inactive-candidate", 0.98, 0.985, 250_000.0)) else emptyList()
+                if (tag == "2") FixturePage(listOf(market("inactive-candidate", 0.98, 0.985, 250_000.0)), null) else FixturePage(emptyList(), null)
             }
             val result = client.discoverMarketsDetailed(
                 maxMarkets = 1,
@@ -114,6 +115,7 @@ class LivePaperDataClientDiscoveryTest {
             assertTrue(result.stats.activityFilterApplied)
             assertEquals(1, result.stats.activityChecked)
             assertEquals(0, result.stats.activityPassed)
+            assertEquals("recent_trades_30m_below_min", result.activityDiagnostics.single().rejectionReason)
             assertTrue(requests.any { it.contains("/trades") })
         } finally {
             client.close()
@@ -124,8 +126,12 @@ class LivePaperDataClientDiscoveryTest {
     fun `page cap is reported instead of silently claiming exhaustion`() = runBlocking {
         val client = client()
         try {
-            marketsResponder = { tag, offset, _ ->
-                if (tag == "2") listOf(market("out-of-band-$offset", 0.50, 0.51, 9_000_000.0)) else emptyList()
+            marketsResponder = { tag, cursor, _ ->
+                if (tag == "2") {
+                    FixturePage(listOf(market("out-of-band-$cursor", 0.50, 0.51, 9_000_000.0)), cursor ?: "cap-2")
+                } else {
+                    FixturePage(emptyList(), null)
+                }
             }
             val result = client.discoverMarketsDetailed(
                 maxMarkets = 2,
@@ -145,6 +151,34 @@ class LivePaperDataClientDiscoveryTest {
         }
     }
 
+    @Test
+    fun `volume floor stops pagination before lower volume pages`() = runBlocking {
+        val client = client()
+        try {
+            marketsResponder = { tag, _, _ ->
+                if (tag == "2") {
+                    FixturePage(listOf(market("below-volume", 0.98, 0.985, 500.0)), "more-pages")
+                } else {
+                    FixturePage(emptyList(), null)
+                }
+            }
+            val result = client.discoverMarketsDetailed(
+                maxMarkets = 10,
+                minVolume24hr = 1_000.0,
+                minPrice = 0.97,
+                maxPrice = 0.99,
+                maxPagesPerTag = 50,
+                pageLimit = 100
+            )
+
+            assertEquals("volume_floor_reached", result.stats.stoppedReason)
+            assertTrue(result.stats.tags.first { it.tag == "Politics" }.volumeFloorReached)
+            assertEquals(1, result.stats.tags.first { it.tag == "Politics" }.pagesFetched)
+            assertEquals(1, requests.count { it.contains("/markets/keyset") && it.contains("tag_id=2") })
+        } finally {
+            client.close()
+        }
+    }
     private fun client(): LivePaperDataClient = LivePaperDataClient(
         gammaBaseUrl = baseUrl,
         dataBaseUrl = baseUrl,
@@ -153,7 +187,7 @@ class LivePaperDataClientDiscoveryTest {
 
     private fun handle(exchange: HttpExchange) {
         when (exchange.requestURI.path) {
-            "/markets" -> handleMarkets(exchange)
+            "/markets", "/markets/keyset" -> handleMarkets(exchange)
             "/trades" -> respond(exchange, 200, emptyList<Any>())
             else -> respond(exchange, 404, mapOf("error" to "not found"))
         }
@@ -162,26 +196,47 @@ class LivePaperDataClientDiscoveryTest {
     private fun handleMarkets(exchange: HttpExchange) {
         val query = queryParams(exchange)
         val tag = query["tag_id"]
-        val offset = query["offset"]?.toIntOrNull() ?: 0
+        val cursor = query["after_cursor"]
         val limit = query["limit"]?.toIntOrNull() ?: 100
-        val rows = marketsResponder(tag, offset, limit)
-        respond(exchange, 200, rows)
+        val page = marketsResponder(tag, cursor, limit)
+        respond(
+            exchange,
+            200,
+            mapOf(
+                "markets" to page.markets,
+                "next_cursor" to page.nextCursor
+            )
+        )
     }
 
-    private fun defaultPoliticsRows(tag: String?, offset: Int, limit: Int): List<Map<String, Any>> = when {
-        tag != "2" -> emptyList()
-        offset == 0 && limit >= 50 -> (1..50).map { index ->
-            market(
-                id = "high-volume-outside-band-$index",
-                bid = 0.50,
-                ask = 0.51,
-                volume = 10_000_000.0 - index
-            )
-        }
-        offset == 0 -> listOf(market("high-volume-outside-band-1", 0.50, 0.51, 10_000_000.0))
-        offset == limit -> listOf(market("band-after-forty", 0.98, 0.985, 250_000.0))
-        else -> emptyList()
+    private fun defaultPoliticsRows(tag: String?, cursor: String?, limit: Int): FixturePage = when {
+        tag != "2" -> FixturePage(emptyList(), null)
+        cursor == null && limit >= 50 -> FixturePage(
+            (1..50).map { index ->
+                market(
+                    id = "high-volume-outside-band-$index",
+                    bid = 0.50,
+                    ask = 0.51,
+                    volume = 10_000_000.0 - index
+                )
+            },
+            "page-2"
+        )
+        cursor == null -> FixturePage(
+            listOf(market("high-volume-outside-band-1", 0.50, 0.51, 10_000_000.0)),
+            null
+        )
+        cursor == "page-2" -> FixturePage(
+            listOf(market("band-after-forty", 0.98, 0.985, 250_000.0)),
+            null
+        )
+        else -> FixturePage(emptyList(), null)
     }
+
+    private data class FixturePage(
+        val markets: List<Map<String, Any>>,
+        val nextCursor: String?
+    )
 
     private fun market(id: String, bid: Double, ask: Double, volume: Double): Map<String, Any> = mapOf(
         "conditionId" to id,

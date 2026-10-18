@@ -1,6 +1,6 @@
 # Event Maker 执行台账（2026-10-19）
 
-> 最后更新：2026-10-19 06:57 +08:00
+> 最后更新：2026-10-19 07:26 +08:00
 > 目的：把目标、计划、实际动作、命令、结果、证据和恢复步骤持续写入仓库，避免依赖聊天记忆。
 > 当前状态：**进行中，不得标记完成**
 > 权威计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
@@ -27,7 +27,7 @@
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
 | OBS-1 | 干净长测真实盘口 Shadow | 等待候选发现修复 | 先排除 Gamma 分页/候选截断导致的假空窗 |
-| DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 进行中 | 分页抓取、价格带提前过滤、阶段计数和回归测试 |
+| DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 已完成 | keyset 分页、价格带预筛、候选诊断、5 个测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
 | BT-3 | 扩大到完整候选池，验证零结算亏损是否偶然 | 已完成 | 4,187 市场、864 配置、full/full-v2 CSV |
@@ -190,3 +190,12 @@ cd D:\Project\PolyHermes\backend
 - 命令：`.\gradlew.bat test --console=plain`。
 - 结果：96 suites / 449 tests / 0 failures / 0 errors / 2 skipped。
 - 证据：`backend/build/test-results/test/`。
+### 07:26 keyset 分页与真实候选结果
+
+- 官方 OpenAPI 确认 `/markets/keyset` + `after_cursor`；传统 `/markets` 的 offset 在约 2,000 条后失败，已切换为 keyset。
+- 发现输出：`backend/build/research/event-maker-shadow-keyset-v3-20261019/market-discovery.json`。
+- 真实结果：Politics 1 页/100 条、Geopolitics 1 页/100 条；两标签均到达 `volume_floor_reached`，在 100,000 USDC 24h 成交额门槛以上已完整扫描。
+- 候选：价格预筛 6 个，活动过滤检查 6 个，通过 1 个；唯一通过者价差 1 tick，被 `spread_below_min` 拒绝。
+- 结论：当前严格条件下没有可报价市场；不是发现截断。禁止降低价格带、活动门槛或 `minSpreadTicks` 来制造 fill。
+- 测试：5/5 发现测试通过；全量 96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 当前没有运行中的 Shadow 或 Backtest 进程。

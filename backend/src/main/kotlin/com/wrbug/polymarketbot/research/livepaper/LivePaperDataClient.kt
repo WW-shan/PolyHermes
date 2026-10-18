@@ -16,8 +16,8 @@ import java.net.URI
 import java.time.OffsetDateTime
 import java.util.concurrent.TimeUnit
 
-private const val MAX_GAMMA_DISCOVERY_PAGES = 20
-private const val DEFAULT_GAMMA_DISCOVERY_PAGES = 20
+private const val MAX_GAMMA_DISCOVERY_PAGES = 100
+private const val DEFAULT_GAMMA_DISCOVERY_PAGES = 50
 private const val MAX_GAMMA_PAGE_LIMIT = 100
 private const val DEFAULT_GAMMA_PAGE_LIMIT = 100
 private const val PRICE_PREFILTER_TOLERANCE = 0.01
@@ -29,9 +29,26 @@ data class MarketDiscoveryTagStats(
     val rowsScanned: Int,
     val qualifiedMarkets: Int,
     val exhausted: Boolean,
+    val volumeFloorReached: Boolean,
     val failure: String?
 )
 
+data class MarketActivityDiagnostic(
+    val conditionId: String,
+    val question: String,
+    val tag: String,
+    val volume24hr: Double,
+    val recentTrades30m: Int,
+    val recentNotional30m: Double,
+    val buyTrades30m: Int,
+    val sellTrades30m: Int,
+    val recentTrades2h: Int,
+    val recentNotional2h: Double,
+    val buyTrades2h: Int,
+    val sellTrades2h: Int,
+    val passed: Boolean,
+    val rejectionReason: String?
+)
 data class MarketDiscoveryStats(
     val startedAt: Long,
     val finishedAt: Long,
@@ -39,6 +56,9 @@ data class MarketDiscoveryStats(
     val pageLimit: Int,
     val maxMarketsRequested: Int,
     val candidateTarget: Int,
+    val minVolume24hr: Double,
+    val minRemainingMinutes: Int,
+    val allowNegRisk: Boolean,
     val minFavoriteBidPrefilter: Double?,
     val maxFavoriteBidPrefilterExclusive: Double?,
     val uniqueMarkets: Int,
@@ -52,6 +72,9 @@ data class MarketDiscoveryStats(
 
 data class MarketDiscoveryResult(
     val markets: List<LivePaperMarket>,
+    val qualifiedMarkets: List<LivePaperMarket>,
+    val activityPassedMarkets: List<LivePaperMarket>,
+    val activityDiagnostics: List<MarketActivityDiagnostic>,
     val stats: MarketDiscoveryStats
 )
 
@@ -146,17 +169,19 @@ class LivePaperDataClient(
             var fetchedAny = false
             for (cursor in cursors) {
                 if (cursor.exhausted || cursor.failure != null || cursor.pages >= effectiveMaxPages) continue
-                val rows = runCatching {
-                    val url = gammaPageUrl(cursor.tag, cursor.offset, effectivePageLimit)
-                    gson.fromJson(executeGet(url), Array<GammaMarketJson>::class.java)?.toList() ?: emptyList()
+                val page = runCatching {
+                    val url = gammaPageUrl(cursor.tag, cursor.nextCursor, effectivePageLimit)
+                    gson.fromJson(executeGet(url), GammaMarketPageJson::class.java)
+                        ?: GammaMarketPageJson(emptyList(), null)
                 }.getOrElse {
                     cursor.failure = it.message ?: it.javaClass.simpleName
-                    println("Gamma discovery failed tag=${cursor.tag.label} offset=${cursor.offset}: ${cursor.failure}")
-                    emptyList()
+                    println("Gamma keyset discovery failed tag=${cursor.tag.label}: ${cursor.failure}")
+                    null
                 }
-                if (cursor.failure != null) continue
+                if (page == null || cursor.failure != null) continue
                 fetchedAny = true
                 cursor.pages++
+                val rows = page.markets.orEmpty()
                 cursor.rowsScanned += rows.size
                 if (rows.isEmpty()) {
                     cursor.exhausted = true
@@ -176,10 +201,11 @@ class LivePaperDataClient(
                         cursor.qualifiedMarkets++
                     }
                 }
-                if (rows.size < effectivePageLimit) {
+                cursor.nextCursor = page.nextCursor?.takeIf { it.isNotBlank() }
+                val reachedVolumeFloor = rows.lastOrNull()?.volume24hr?.let { it < minVolume24hr } == true
+                if (cursor.nextCursor == null || reachedVolumeFloor) {
                     cursor.exhausted = true
-                } else {
-                    cursor.offset += rows.size
+                    cursor.volumeFloorReached = reachedVolumeFloor
                 }
                 delay(GAMMA_DISCOVERY_PAGE_DELAY_MS)
             }
@@ -190,6 +216,7 @@ class LivePaperDataClient(
             }
             if (!fetchedAny) {
                 stoppedReason = when {
+                    cursors.all { it.exhausted } && cursors.any { it.volumeFloorReached } -> "volume_floor_reached"
                     cursors.all { it.exhausted } -> "all_tags_exhausted"
                     cursors.any { it.failure != null } -> "tag_error"
                     cursors.all { it.exhausted || it.pages >= effectiveMaxPages } -> "page_cap_reached"
@@ -206,9 +233,14 @@ class LivePaperDataClient(
             minRecentNotional2h > 0.0 ||
             minRecentTradesPerSide2h > 0
         val now = System.currentTimeMillis()
+        val minTrades30m = minRecentTrades30m.coerceAtLeast(0)
+        val minNotional30m = minRecentNotional30m.coerceAtLeast(0.0)
         val minPerSide30m = minRecentTradesPerSide30m.coerceAtLeast(0)
+        val minTrades2h = minRecentTrades2h.coerceAtLeast(0)
+        val minNotional2h = minRecentNotional2h.coerceAtLeast(0.0)
         val minPerSide2h = minRecentTradesPerSide2h.coerceAtLeast(0)
         val candidates = found.values.sortedByDescending { it.volume24hr }
+        val activityDiagnostics = mutableListOf<MarketActivityDiagnostic>()
         val activityPassed = if (activityFilterApplied) {
             candidates.mapNotNull { market ->
                 val allRecent = runCatching { getRecentTrades(market) }.getOrDefault(emptyList())
@@ -220,16 +252,37 @@ class LivePaperDataClient(
                 val sell30m = recent30m.count { it.side.equals("SELL", true) }
                 val buy2h = recent2h.count { it.side.equals("BUY", true) }
                 val sell2h = recent2h.count { it.side.equals("SELL", true) }
-                if (recent30m.size < minRecentTrades30m.coerceAtLeast(0) ||
-                    recentNotional30m < minRecentNotional30m.coerceAtLeast(0.0) ||
-                    buy30m < minPerSide30m || sell30m < minPerSide30m ||
-                    recent2h.size < minRecentTrades2h.coerceAtLeast(0) ||
-                    recentNotional2h < minRecentNotional2h.coerceAtLeast(0.0) ||
-                    buy2h < minPerSide2h || sell2h < minPerSide2h
-                ) {
-                    null
-                } else {
+                val rejectionReason = when {
+                    recent30m.size < minTrades30m -> "recent_trades_30m_below_min"
+                    recentNotional30m < minNotional30m -> "recent_notional_30m_below_min"
+                    buy30m < minPerSide30m -> "buy_trades_30m_below_min"
+                    sell30m < minPerSide30m -> "sell_trades_30m_below_min"
+                    recent2h.size < minTrades2h -> "recent_trades_2h_below_min"
+                    recentNotional2h < minNotional2h -> "recent_notional_2h_below_min"
+                    buy2h < minPerSide2h -> "buy_trades_2h_below_min"
+                    sell2h < minPerSide2h -> "sell_trades_2h_below_min"
+                    else -> null
+                }
+                activityDiagnostics += MarketActivityDiagnostic(
+                    conditionId = market.conditionId,
+                    question = market.question,
+                    tag = market.tag,
+                    volume24hr = market.volume24hr,
+                    recentTrades30m = recent30m.size,
+                    recentNotional30m = recentNotional30m,
+                    buyTrades30m = buy30m,
+                    sellTrades30m = sell30m,
+                    recentTrades2h = recent2h.size,
+                    recentNotional2h = recentNotional2h,
+                    buyTrades2h = buy2h,
+                    sellTrades2h = sell2h,
+                    passed = rejectionReason == null,
+                    rejectionReason = rejectionReason
+                )
+                if (rejectionReason == null) {
                     Triple(market, recentNotional30m, recent30m.size)
+                } else {
+                    null
                 }
             }.sortedWith(
                 compareByDescending<Triple<LivePaperMarket, Double, Int>> { it.second }
@@ -248,6 +301,9 @@ class LivePaperDataClient(
             pageLimit = effectivePageLimit,
             maxMarketsRequested = maxMarkets,
             candidateTarget = candidateTarget,
+            minVolume24hr = minVolume24hr,
+            minRemainingMinutes = minRemainingMinutes,
+            allowNegRisk = allowNegRisk,
             minFavoriteBidPrefilter = minFavoriteBidPrefilter,
             maxFavoriteBidPrefilterExclusive = maxFavoriteBidPrefilterExclusive,
             uniqueMarkets = found.size,
@@ -263,6 +319,7 @@ class LivePaperDataClient(
                     rowsScanned = cursor.rowsScanned,
                     qualifiedMarkets = cursor.qualifiedMarkets,
                     exhausted = cursor.exhausted,
+                    volumeFloorReached = cursor.volumeFloorReached,
                     failure = cursor.failure
                 )
             }
@@ -273,7 +330,13 @@ class LivePaperDataClient(
                 "activityPassed=${stats.activityPassed} returned=${stats.returnedMarkets} " +
                 "stopped=${stats.stoppedReason}"
         )
-        MarketDiscoveryResult(returned, stats)
+        MarketDiscoveryResult(
+            markets = returned,
+            qualifiedMarkets = candidates,
+            activityPassedMarkets = activityPassed,
+            activityDiagnostics = activityDiagnostics,
+            stats = stats
+        )
     }
     suspend fun getBook(tokenId: String): MarketBook? = withContext(Dispatchers.IO) {
         val url = clobBaseUrl.toHttpUrl().newBuilder()
@@ -326,17 +389,19 @@ class LivePaperDataClient(
             emptyList()
         }
     }
-    private fun gammaPageUrl(tag: Tag, offset: Int, pageLimit: Int): HttpUrl =
-        gammaBaseUrl.toHttpUrl().newBuilder()
+    private fun gammaPageUrl(tag: Tag, afterCursor: String?, pageLimit: Int): HttpUrl {
+        val builder = gammaBaseUrl.toHttpUrl().newBuilder()
             .addPathSegment("markets")
+            .addPathSegment("keyset")
             .addQueryParameter("active", "true")
             .addQueryParameter("closed", "false")
             .addQueryParameter("tag_id", tag.id)
             .addQueryParameter("limit", pageLimit.toString())
-            .addQueryParameter("offset", offset.toString())
             .addQueryParameter("order", "volume24hr")
             .addQueryParameter("ascending", "false")
-            .build()
+        if (!afterCursor.isNullOrBlank()) builder.addQueryParameter("after_cursor", afterCursor)
+        return builder.build()
+    }
 
     private fun parseMarket(
         raw: GammaMarketJson,
@@ -421,12 +486,18 @@ class LivePaperDataClient(
 
     private data class TagCursor(
         val tag: Tag,
-        var offset: Int = 0,
+        var nextCursor: String? = null,
         var pages: Int = 0,
         var rowsScanned: Int = 0,
         var qualifiedMarkets: Int = 0,
         var exhausted: Boolean = false,
+        var volumeFloorReached: Boolean = false,
         var failure: String? = null
+    )
+
+    private data class GammaMarketPageJson(
+        val markets: List<GammaMarketJson>?,
+        @SerializedName("next_cursor") val nextCursor: String?
     )
 
     private enum class Tag(val id: String, val label: String) {

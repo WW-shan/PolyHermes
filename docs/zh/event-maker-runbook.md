@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-19）：完整池回测最强训练期候选 ROI 约 +0.81%，q50 和 50bps 费用下转负。新版 10min/1min Shadow 冒烟通过，但旧长测因运行中重编译导致类版本冲突而无效；当前 0.97～0.99 无合格活跃市场，尚未启动干净长测。当前不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-19 07:26）：完整池回测最强训练期候选 ROI 约 +0.81%，q50 和 50bps 费用下转负。keyset 候选发现已修复并完成真实扫描；6 个价格预筛候选中仅 1 个通过活动过滤，但其价差为 1 tick，不满足 2 tick 门槛，因此当前无合格市场、尚未启动干净长测。当前不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
@@ -45,6 +45,7 @@ cd D:\Project\PolyHermes\backend
   "-PshadowProxy=http://127.0.0.1:10808" `
   "-PshadowMinutes=120" `
   "-PshadowMaxMarkets=6" `
+  "-PshadowDiscoveryPages=50" `
   "-PshadowMinVolume=100000" `
   "-PshadowMinPrice=0.97" `
   "-PshadowMaxPrice=0.99" `
@@ -80,7 +81,8 @@ cd D:\Project\PolyHermes\backend
 | `shadowProxy` | Java 访问 Polymarket 的 HTTP 代理；直连可用时省略 |
 | `shadowMinutes` | 运行分钟数 |
 | `shadowMaxMarkets` | 最多市场数 |
-| `shadowMinVolume` | 24 小时最低成交额 |
+| `shadowDiscoveryPages` | Gamma keyset 每标签最多扫描页数（1～100，默认 50；每页 100） |
+| `shadowMinVolume` | 24 小时最低成交额；因 keyset 按 volume24hr 降序，低于该值的后续页面自动停止 |
 | `shadowMinRecentTrades` | 近 30 分钟最少成交笔数 |
 | `shadowMinRecentNotional` | 近 30 分钟最少成交额 |
 | `shadowMinRecentTradesPerSide` | 近 30 分钟买卖两侧各自最少成交笔数 |
@@ -107,7 +109,8 @@ cd D:\Project\PolyHermes\backend
 
 输出文件：
 
-- `markets.json`：本次发现的市场。
+- `markets.json`：本次最终用于 Shadow 的市场。
+- `market-discovery.json`：完整发现结果，包括预筛候选、活动过滤逐候选诊断、30m/2h 成交统计、拒绝原因和分页计数。
 - `market-selection.json`：每个候选的价差、买一/卖一队列、入场/退出队列及拒绝原因。
 - `events.jsonl`：报价、撤单、有效成交对账和 WS 状态。
 - `trades.csv`：去重后的公共成交。
@@ -119,6 +122,7 @@ cd D:\Project\PolyHermes\backend
 
 长测后必须检查：
 
+0. `market-discovery.json` 的 `stoppedReason` 不能是无解释的 `page_cap_reached`；若为 `volume_floor_reached`，确认扫描已覆盖最低成交额门槛以上市场；
 1. `summary.json` 中 `haltedReason` 为空；
 2. `lastErrors` 不包含未知订单状态；
 3. `events.jsonl` 中同一订单没有重复成交事件；

@@ -474,3 +474,19 @@
 - 结果：`BUILD SUCCESSFUL`；96 个测试套件、449 个测试、0 failures、0 errors、2 skipped。
 - 新增测试：`LivePaperDataClientDiscoveryTest` 4/4 通过。
 - 结论：候选发现分页和诊断代码通过全量回归，可提交后用真实 API 做短 Shadow 发现验证。
+### 07:26 Gamma keyset 切换与真实候选审计
+
+- 根因确认：传统 `GET /markets` 响应头明确提示 `use /markets/keyset`；offset 分页在约 2,000 条后返回 422，不能作为完整扫描依据。
+- 动作：候选发现切换到官方 `GET /markets/keyset`，使用 `next_cursor`/`after_cursor` 键集分页，移除 offset 上限依赖；默认最多 50 页、每页 100，最大允许 100 页。
+- 动作：由于请求按 `volume24hr` 降序，某页最后一条低于 `minVolume24hr` 时停止后续低成交额页面，并记录 `volumeFloorReached=true`；停止原因改为 `volume_floor_reached`，避免误报 `all_tags_exhausted`。
+- 动作：`market-discovery.json` 改为保存完整发现结果，包括 `qualifiedMarkets`、`activityPassedMarkets`、逐候选 `activityDiagnostics`（30m/2h 笔数、成交额、买卖两侧笔数和拒绝原因）及阶段统计。
+- 测试：新增 volume-floor 停止测试，扩展活动诊断断言；`LivePaperDataClientDiscoveryTest` 5/5 通过。
+- 全量：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 真实 Shadow 发现运行：`backend/build/research/event-maker-shadow-keyset-v3-20261019/`。
+  - Politics 1 页/100 条，Geopolitics 1 页/100 条；两标签均因最后一条低于 100,000 的 24h 成交额而停止，超出该门槛的候选已全部覆盖。
+  - 价格预筛后 6 个候选；严格活动过滤检查 6 个，1 个通过。
+  - 唯一通过者为 `Israel x Iran ceasefire continues through October 21?`：30m 6 笔/1009.10 USDC、买卖各 3 笔；2h 21 笔/15381.04 USDC。
+  - 其盘口为 best bid 0.975、best ask 0.976，价差 1 tick，未满足 `minSpreadTicks=2`，因此 `marketSelection selected=0 reasons={spread_below_min=1}`。
+  - 其余 5 个候选主要因 30 分钟成交笔数低于 3 被过滤，不能通过放宽活动门槛伪造活跃度。
+- 结论：这不是“发现逻辑空窗”，而是当前严格条件（0.97～0.99、成交额 >=100k、活动门槛、价差 >=2 tick）下确实没有可报价市场。不得降低价差或活动门槛来制造成交。
+- 当前无 Shadow/Backtest 进程；等待满足全部条件的真实市场后再启动干净 2h/12h Shadow。

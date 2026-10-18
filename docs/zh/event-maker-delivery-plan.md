@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**实现、完整池回测和 Live mock 已完成；正在修复 Gamma 市场分页/候选截断并恢复干净 Shadow 验证**<br>
-> 最后更新：2026-10-19 07:17 +08:00<br>
+> 当前状态：**keyset 发现和候选审计已完成；当前严格条件下无 2-tick 可报价市场，等待合格市场恢复干净 Shadow**<br>
+> 最后更新：2026-10-19 07:26 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -277,13 +277,20 @@ cd D:\Project\PolyHermes\backend
 
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
-| DISC-1 | Gamma 市场发现分页与资格过滤前移 | 已完成 | 代码、4 个发现测试、`market-discovery.json` 统计 |
-| DISC-2 | 用真实 API 检查 0.97～0.99 候选覆盖 | 待执行 | 日志/`market-selection.json`、候选计数 |
+| DISC-1 | Gamma 市场发现分页与资格过滤前移 | 已完成 | 代码、5 个发现测试、`market-discovery.json` 统计 |
+| DISC-2 | 用真实 API 检查 0.97～0.99 候选覆盖 | 已完成 | keyset 扫描、6 个预筛候选、`market-discovery.json` |
 | TEST-2 | 定向和全量回归测试 | 已完成 | 96 suites / 449 tests / 0 failures / 2 skipped |
 | GIT-2 | 提交并推送修复 | 待执行 | commit hash、`main -> main` |
-| OBS-3 | 修复后干净 Shadow 长测 | 等待合格候选 | `summary.json`、`markouts.csv`、`execution-diagnostics.json` |
+| OBS-3 | 修复后干净 Shadow 长测 | 等待合格候选 | 当前唯一活动候选价差 1 tick，不满足 2 tick |
 | CLEAN-1 | 清理一次性构建/研究产物 | 待执行 | 删除清单和保留清单 |
 
 执行顺序：DISC-1 → 测试 → 真实候选检查 → 提交 → OBS-3 → 结果分析 → CLEAN-1。若真实候选仍为空，记录为真实市场空窗，不降低价格带。
 
 动作记录要求：每完成一项，在本节和 `event-maker-work-log.md` 同时写入实际命令、结果、证据、失败与修复；执行台账保留恢复入口。
+
+### 10.5 2026-10-19 07:26 发现阶段验收结果
+
+- `/markets/keyset` 已替代 offset 分页；超出 100,000 USDC 24h 成交额门槛的市场已覆盖。
+- 6 个价格预筛候选，6 个活动过滤检查，1 个通过；唯一通过者价差 1 tick，被 `minSpreadTicks=2` 拒绝。
+- 当前不是市场发现故障，而是严格策略条件没有可报价市场。
+- 下一步不是放宽条件，而是等待满足价格带、成交额、活动度和价差要求的市场；出现后再启动干净 2h/12h Shadow。
