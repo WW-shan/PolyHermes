@@ -156,6 +156,25 @@ cd D:\Project\PolyHermes
 - `state=timeout`：等待超时，显示尝试次数和最后拒绝原因。
 
 禁止在等待或 Shadow 运行期间执行编译或测试；需要改代码时先停止 PID，并记录停止原因。
+### 4.2 Shadow 结束后审计
+
+```powershell
+cd D:\Project\PolyHermes
+.\scripts\audit-event-maker-shadow.ps1 `
+  -OutputDir "D:\Project\PolyHermes\backend\build\research\event-maker-shadow-watch-20261019"
+```
+
+审计会检查：
+
+- `summary.fills` 与 `state.json` 的逐市场 fills 总数一致；
+- `summary.completedCycles` 与 state cycles 总数一致；
+- `execution-diagnostics.json` 的 `activeOrders=0`；
+- `haltedReason` 为空且 `lastErrors` 为空；
+- `trades.csv` 中同一 transaction hash/token/side/size 没有重复行；
+- 有 fill 时 markout 是否写出；
+- 未平库存作为 warning 报告。
+
+结果写入同目录 `shadow-audit.json`；`failures` 非空时脚本非零退出。
 ## 5. Spring REST 控制
 
 启动 Shadow：

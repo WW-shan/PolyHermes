@@ -550,3 +550,10 @@
 - 启动参数：最多等待 180 分钟、每 60 秒重新发现、选出市场后 Shadow 运行 120 分钟；严格价格带、活动度和 2-tick 价差条件不变。
 - 首次状态：`qualified=6 activityPassed=0 selected=0 stopped=volume_floor_reached`，正在等待第 2 次发现。
 - 运行期间禁令：不执行 `compileKotlin`、`test` 或其他会改写 classpath 的任务；只允许读取日志、写入文档和提交文档。
+### 07:55 后台状态检查与 Shadow 审计脚本
+
+- 新增 `scripts/check-event-maker-watch.ps1`：检查包装进程、JavaExec、attempt 数、最近一次发现结果，以及 waiting/summary/timeout 状态。
+- 检查脚本已实际运行，当前输出：PID 3764/24888 存活，`state=waiting`，已完成 9 轮发现，最新一轮仍为 qualified=6、activityPassed=0、selected=0。
+- 新增 `scripts/audit-event-maker-shadow.ps1`：校验 summary、execution diagnostics、state、trades 和 markouts 的一致性，并写出 `shadow-audit.json`。
+- 审计脚本在 `event-maker-shadow-v2-smoke2-20261019` 上运行通过：fills/stateFills 均为 0、cycles/stateCycles 均为 0、activeOrders=0、重复成交行=0、failures=[]、passed=true。
+- 该审计只能验证内部一致性，不能替代真实 fill/PnL 证据，也不能把 mock/Shadow 结果冒充实盘。
