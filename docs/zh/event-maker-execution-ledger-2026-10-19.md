@@ -1,6 +1,6 @@
 # Event Maker 执行台账（2026-10-19）
 
-> 最后更新：2026-10-19 06:52 +08:00
+> 最后更新：2026-10-19 06:57 +08:00
 > 目的：把目标、计划、实际动作、命令、结果、证据和恢复步骤持续写入仓库，避免依赖聊天记忆。
 > 当前状态：**进行中，不得标记完成**
 > 权威计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
@@ -26,7 +26,8 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 干净长测真实盘口 Shadow | 等待合格市场 | 需要 0.97～0.99 活跃市场；当前为空窗 |
+| OBS-1 | 干净长测真实盘口 Shadow | 等待候选发现修复 | 先排除 Gamma 分页/候选截断导致的假空窗 |
+| DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 进行中 | 分页抓取、价格带提前过滤、阶段计数和回归测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
 | BT-3 | 扩大到完整候选池，验证零结算亏损是否偶然 | 已完成 | 4,187 市场、864 配置、full/full-v2 CSV |
@@ -166,3 +167,13 @@ cd D:\Project\PolyHermes\backend
 - 当前 0.97～0.99 无可交易候选，唯一活跃 candidate 为 0.95；未降低价格带。
 - 当前没有运行中的 Shadow。
 - 后续干净长测启动后禁止重编译/跑测试。
+
+### 06:57 建立本轮可恢复计划与动作记录
+
+- 用户要求：先把计划、行为动作、命令、结果和证据写入仓库文档，不能依赖聊天记忆。
+- 恢复核对：读取目标，目标仍为 active；执行 `git status --short`、`git diff --check`、`git log -5 --oneline`；工作区干净，`git diff --check` 无输出，最新提交 `5994b4c docs: record shadow validation limits`。
+- 进程核对：执行 `Get-CimInstance Win32_Process -Filter "Name='java.exe'"`；PID 18348 为 Kotlin compile daemon、PID 21120 为 Gradle daemon；没有 eventMakerShadow/eventMakerBacktest 进程。
+- 文档核对：已读执行台账、交付计划、运行手册和工作日志尾部；确认当前正式证据、旧长测失效原因、Shadow 冒烟结果和 Live smoke 授权边界。
+- 根因假设：`LivePaperDataClient.discoverMarkets()` 每个 tag 只抓一页 100 条，按 24h volume 取前 40 个后才做活跃度和价格带筛选；可能把真正符合 0.97～0.99 的活跃市场截掉。
+- 本轮计划：1) 先记录计划和动作；2) 为 Gamma 发现增加分页和阶段诊断；3) 将价格带/资格过滤前移，避免先截断 40 个；4) 增加可注入数据源测试；5) 定向与全量测试；6) 检查真实候选；7) 仅在合格市场出现时启动干净 Shadow；8) 分析 fill/cycle/markout/PnL；9) 整理证据、文档、清理临时产物并提交；10) 未经账户、资金上限和明确授权不执行真实下单。
+- 安全边界：不降低价格带、不放宽 post-only、不改变风控来制造 fill；长 Shadow 启动后禁止重编译或跑测试。

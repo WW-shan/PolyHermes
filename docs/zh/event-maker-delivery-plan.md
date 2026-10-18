@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**实现、完整池回测和 Live mock 已完成；边缘很薄，旧长测因工具链错误无效，当前等待合格市场重启干净 Shadow**<br>
-> 最后更新：2026-10-19 06:52 +08:00<br>
+> 当前状态：**实现、完整池回测和 Live mock 已完成；正在修复 Gamma 市场分页/候选截断并恢复干净 Shadow 验证**<br>
+> 最后更新：2026-10-19 06:57 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -40,7 +40,7 @@
 | 2 小时 Shadow 长测 | 旧基线稳定性通过；策略 0 fill | `event-maker-shadow-2026-10-19.md` |
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
-| 新干净长测 | 当前 0.97～0.99 无可交易市场，尚未启动 | 无候选；不强改价格带 |
+| 新干净长测 | 候选发现存在分页/前 40 截断疑点，修复后再启动 | `DISC-1`；不强改价格带 |
 | 全量测试 | 95 suites / 445 tests / 0 failures / 2 skipped | `backend/build/test-results/test/` |
 | Live 端到端测试 | 引擎级 mock 已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
 
@@ -267,6 +267,23 @@ cd D:\Project\PolyHermes\backend
 4. 费用压力已完成：训练期选参配置在 25bps 双边费用下总 ROI +0.31%、测试 +0.06%；50bps 下转负。
 5. Shadow 修复已完成：`shadowFillVolumeFactor`、60/300/1800 秒 markout、盘口年龄和订单队列诊断。
 6. 当前没有运行中的 Shadow；0.97～0.99 价格带暂无合格活跃市场，不能通过降低价格带制造 fill。
-7. 下一步：等待合格的 0.97～0.99 活跃市场出现，再用最终代码启动干净的 2h/12h Shadow；启动后禁止重新编译或跑测试。
+7. 下一步：先修复 Gamma 市场分页和候选截断，确认 0.97～0.99 候选扫描完整，再用最终代码启动干净的 2h/12h Shadow；启动后禁止重新编译或跑测试。
 8. 只有在保守成交因子下出现足够 fill、markout 可解释、尾部亏损可控且费用后仍为正，才讨论小资金 Live smoke。
 9. 真实 Live smoke 仍需要账户、资金上限、明确授权、时间窗口和市场范围。
+
+### 10.4 2026-10-19 06:57 新轮次可恢复检查点
+
+当前轮次先处理市场发现问题，避免把发现逻辑假空窗误判为市场真空窗。
+
+| ID | 任务 | 状态 | 验收证据 |
+|---|---|---|---|
+| DISC-1 | Gamma 市场发现分页与资格过滤前移 | 进行中 | 代码、单元测试、阶段计数 |
+| DISC-2 | 用真实 API 检查 0.97～0.99 候选覆盖 | 待执行 | 日志/`market-selection.json`、候选计数 |
+| TEST-2 | 定向和全量回归测试 | 待执行 | Gradle 测试输出 |
+| GIT-2 | 提交并推送修复 | 待执行 | commit hash、`main -> main` |
+| OBS-3 | 修复后干净 Shadow 长测 | 等待合格候选 | `summary.json`、`markouts.csv`、`execution-diagnostics.json` |
+| CLEAN-1 | 清理一次性构建/研究产物 | 待执行 | 删除清单和保留清单 |
+
+执行顺序：DISC-1 → 测试 → 真实候选检查 → 提交 → OBS-3 → 结果分析 → CLEAN-1。若真实候选仍为空，记录为真实市场空窗，不降低价格带。
+
+动作记录要求：每完成一项，在本节和 `event-maker-work-log.md` 同时写入实际命令、结果、证据、失败与修复；执行台账保留恢复入口。

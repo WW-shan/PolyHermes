@@ -445,3 +445,13 @@
 - 决定：不降低价格带、不伪造成交；等待出现 0.97～0.99 活跃市场后再启动干净长测。
 - 操作规则：Shadow 长进程启动后，不再执行 `compileKotlin`/`test`，避免同 classpath 类版本冲突。
 - 当前无 Shadow 进程在运行。
+
+### 06:57 新轮次计划与动作基线
+
+- 目标：继续完成事件做市策略验证，优先修复 0.97～0.99 当前无市场的候选发现问题，再恢复干净 Shadow 长测。
+- 恢复命令：`git status --short`（无输出）、`git diff --check`（无输出）、`git log -5 --oneline`；最新提交 `5994b4c`，主分支 `main`。
+- 进程命令：`Get-Process java` 与 `Get-CimInstance Win32_Process -Filter "Name='java.exe'"`；仅有 Kotlin/Gradle daemon，无 Shadow/Backtest。
+- 已读证据：执行台账、交付计划、运行手册和工作日志尾部；保留完整池回测、Shadow v2 冒烟和旧长测失效记录。
+- 代码审查：`LivePaperDataClient.discoverMarkets()` 当前每个 tag 只请求一页 100 条，随后 `sortedByDescending(volume24hr).take(40)`，再进行最近成交过滤；存在高成交额截断偏差。
+- 下一步：先补文档检查点；再实现分页、资格过滤前移和阶段计数；补测试；运行定向/全量测试；提交后检查真实候选并启动干净 Shadow。
+- 约束：Shadow 长进程启动后禁止 `compileKotlin`/`test`；真实下单仍缺 `accountId`、资金上限和明确授权。
