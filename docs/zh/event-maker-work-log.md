@@ -562,3 +562,9 @@
 - 复核 `PolymarketTradingFee.kt` 和测试：maker 不收费；taker 使用 `shares × rate × p × (1-p)`；项目测试覆盖 politics/crypto/sports 等费率与边界。
 - 回测报告已补充：0bps maker 是当前基线，10/25/50/100bps 是压力场景，不是当前 maker 收费事实。
 - 风险结论不变：真实队列、adverse selection、尾部结算和 markout 仍需 Shadow 证据；若订单实际跨价成为 taker，必须重新计算。
+### 08:02 尾部亏损与 markout 复核
+
+- 复核 `event-maker-queue-grid-full-v2-20261019-robust-cycles.csv` 中 3 个结算亏损回合。
+- 三笔亏损的 60 秒 markout 分别约为 -99.90、-99.90、-99.90 USDC，说明成交后价格几乎立即跌到接近 0。
+- 结论：这类尾部风险不能靠成交后止损解决；只能通过成交前拒绝、缩小单笔、分散市场和避免突发消息敏感市场来控制。
+- 该复核不改变当前“不能实盘”的结论。

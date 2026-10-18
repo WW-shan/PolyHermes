@@ -126,11 +126,11 @@ p0.97-0.99_off1.0_spread2.0_q1.0_c1_r0
 
 三个结算亏损回合：
 
-| 市场 | 入场价 | 结算价 | PnL |
-|---|---:|---:|---:|
-| China-Vietnam trade deal before June? | 0.967 | 0.000 | -100.00 |
-| Will the Iran ceasefire continue through May 25? | 0.969 | 0.000 | -100.00 |
-| US ceasefire against Iran continues through August 31? | 0.983 | 0.000 | -100.00 |
+| 市场 | 入场价 | 结算价 | 60 秒 markout | PnL |
+|---|---:|---:|---:|---:|
+| China-Vietnam trade deal before June? | 0.967 | 0.000 | -99.90 | -100.00 |
+| Will the Iran ceasefire continue through May 25? | 0.969 | 0.000 | -99.90 | -100.00 |
+| US ceasefire against Iran continues through August 31? | 0.983 | 0.000 | -99.90 | -100.00 |
 
 关键统计：
 
@@ -141,6 +141,8 @@ p0.97-0.99_off1.0_spread2.0_q1.0_c1_r0
 - 因此，样本内正 ROI 不能证明真实期望一定为正。
 
 这正是高胜率、负偏态策略的典型结构：大多数回合赚 2 美分左右，少数回合亏掉接近全部本金。
+
+- 三次尾部亏损在成交后 60 秒的 markout 都约为 `-99.90 USDC`，说明成交后价格几乎立即跌到接近 0；事后止损无法把亏损恢复到接近零，真正有效的控制只能发生在成交前（不提供该订单、缩小单笔、分散市场或停止在突发消息敏感市场做市）。
 
 ## 5. 队列敏感性
 
