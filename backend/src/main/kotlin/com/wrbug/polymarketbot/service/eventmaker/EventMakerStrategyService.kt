@@ -368,7 +368,9 @@ class EventMakerStrategyService(
             minRecentTradesPerSide30m = config.minRecentTradesPerSide30m,
             minRecentTrades2h = config.minRecentTrades2h,
             minRecentNotional2h = config.minRecentNotional2h,
-            minRecentTradesPerSide2h = config.minRecentTradesPerSide2h
+            minRecentTradesPerSide2h = config.minRecentTradesPerSide2h,
+            minPrice = config.minPrice,
+            maxPrice = config.maxPrice
         )
         if (candidates.isEmpty()) throw IllegalStateException("no_eligible_markets")
         val books = mutableMapOf<String, MarketBook>()

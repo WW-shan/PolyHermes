@@ -455,3 +455,22 @@
 - 代码审查：`LivePaperDataClient.discoverMarkets()` 当前每个 tag 只请求一页 100 条，随后 `sortedByDescending(volume24hr).take(40)`，再进行最近成交过滤；存在高成交额截断偏差。
 - 下一步：先补文档检查点；再实现分页、资格过滤前移和阶段计数；补测试；运行定向/全量测试；提交后检查真实候选并启动干净 Shadow。
 - 约束：Shadow 长进程启动后禁止 `compileKotlin`/`test`；真实下单仍缺 `accountId`、资金上限和明确授权。
+### 07:15 Gamma 分页、预筛与发现诊断实现
+
+- 动作：`LivePaperDataClient` 新增 `discoverMarketsDetailed()`；Gamma 按 tag 分页，默认每页 100、每标签最多 20 页，最多覆盖 2,000 条高成交额市场。
+- 动作：移除 `sortedByDescending(volume24hr).take(40)` 的硬截断；解析阶段先按 24h 成交额、结束时间、negRisk、订单簿、favorite bid 和价格带（含 1 美分容差）过滤，再对候选做最近成交过滤。
+- 动作：最近成交阈值为 0 时不再调用 Data API；非 0 时逐个候选检查 30 分钟和 2 小时成交笔数、成交额及买卖两侧笔数。
+- 动作：新增 `MarketDiscoveryStats`/`MarketDiscoveryResult`，记录每标签页数、扫描行数、合格市场数、活动过滤前后数量和停止原因；Shadow 写出 `market-discovery.json`，并嵌入 `summary.json`。
+- 动作：新增 `--discovery-pages` / `-PshadowDiscoveryPages`，默认 20；EventMaker 服务把 `config.minPrice`/`maxPrice` 传给发现阶段。
+- 动作：`LivePaperDataClient` 增加可注入的 Gamma/Data/CLOB base URL，便于本地 HTTP 测试，无需新增依赖。
+- 测试：新增 `LivePaperDataClientDiscoveryTest`，覆盖“价格带市场在第 40 条之后仍能发现”“零活动阈值不请求 Data API”“活动阈值拒绝无成交市场”“页数上限明确报告”。
+- 失败与修复：首次测试 4 个中 3 个失败，原因是测试桩第一页只返回价格带外市场；已改为按测试注入 responder。另修正停止原因判断，区分 `all_tags_exhausted`、`page_cap_reached` 和 `tag_error`。
+- 结果：`LivePaperDataClientDiscoveryTest` 4/4 通过；livepaper + eventmaker + service.eventmaker 定向测试全部通过。
+- 观察：一次真实 Gamma 只读审计扫描 Geopolitics 1,477 条，发现 8 个 favorite bid >= 0.88 的合格市场，其中价格带附近候选位于第一页；该审计不作为完整市场统计，待新 Shadow 的 `market-discovery.json` 复核。
+- 下一步：运行全量测试；提交；用新代码执行短 Shadow 发现，检查 `market-discovery.json` 和 `market-selection.json` 后再决定长测。
+### 07:17 全量回归通过
+
+- 命令：`.\gradlew.bat test --console=plain`。
+- 结果：`BUILD SUCCESSFUL`；96 个测试套件、449 个测试、0 failures、0 errors、2 skipped。
+- 新增测试：`LivePaperDataClientDiscoveryTest` 4/4 通过。
+- 结论：候选发现分页和诊断代码通过全量回归，可提交后用真实 API 做短 Shadow 发现验证。

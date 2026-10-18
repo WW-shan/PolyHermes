@@ -8,6 +8,7 @@ import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import com.wrbug.polymarketbot.research.livepaper.LivePaperWsClient
 import com.wrbug.polymarketbot.research.livepaper.LiveTradePrint
 import com.wrbug.polymarketbot.research.livepaper.MarketBook
+import com.wrbug.polymarketbot.research.livepaper.MarketDiscoveryStats
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerConfig
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerEngineResult
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerLiveEngine
@@ -41,7 +42,9 @@ private data class ShadowOptions(
     val proxyUrl: String?,
     val outputDir: Path,
     val maxMarkets: Int,
+    val maxDiscoveryPages: Int,
     val minVolume24hr: Double,
+
     val minRecentTrades30m: Int,
     val minRecentNotional30m: Double,
     val minRecentTradesPerSide30m: Int,
@@ -95,7 +98,9 @@ private data class ShadowSummary(
     val unrealizedPnl: Double,
     val totalPnl: Double,
     val openInventoryShares: Double,
+    val marketDiscovery: MarketDiscoveryStats,
     val haltedReason: String?,
+
     val lastErrors: List<String>
 )
 
@@ -145,6 +150,7 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     val activeOrderStaleBookSeconds = option("active-order-stale-seconds")?.toLongOrNull() ?: 600L
     val orderNotional = option("order-notional")?.toDoubleOrNull() ?: 25.0
     val fillVolumeFactor = option("fill-volume-factor")?.toDoubleOrNull() ?: 1.0
+    val discoveryPages = option("discovery-pages")?.toIntOrNull() ?: 20
     val minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90
     val maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99
     require(minutes > 0)
@@ -156,12 +162,15 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     require(activeOrderStaleBookSeconds >= staleBookSeconds)
     require(orderNotional > 0.0)
     require(fillVolumeFactor >= 0.0)
+    require(discoveryPages in 1..20)
     require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
     return ShadowOptions(
         proxyUrl = option("proxy"),
         outputDir = Paths.get(option("output") ?: "build/research/event-maker-shadow-$stamp"),
         maxMarkets = option("max-markets")?.toIntOrNull() ?: 6,
+        maxDiscoveryPages = discoveryPages,
         minVolume24hr = option("min-volume")?.toDoubleOrNull() ?: 50_000.0,
+
         minRecentTrades30m = option("min-recent-trades")?.toIntOrNull() ?: 0,
         minRecentNotional30m = option("min-recent-notional")?.toDoubleOrNull() ?: 0.0,
         minRecentTradesPerSide30m = option("min-recent-trades-per-side")?.toIntOrNull() ?: 0,
@@ -251,18 +260,30 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         )
         markoutsWriter.write("fill_timestamp,market_id,order_id,side,fill_price,shares,horizon_seconds,markout_at,book_age_ms,best_bid,best_ask,markout_pnl\n")
 
-        var candidates = dataClient.discoverMarkets(
-            options.maxMarkets * 3,
-            options.minVolume24hr,
-            options.allowNegRisk,
-            options.minRemainingMinutes,
-            options.minRecentTrades30m,
-            options.minRecentNotional30m,
-            options.minRecentTradesPerSide30m,
-            options.minRecentTrades2h,
-            options.minRecentNotional2h,
-            options.minRecentTradesPerSide2h
+        val discovery = dataClient.discoverMarketsDetailed(
+            maxMarkets = options.maxMarkets * 3,
+            minVolume24hr = options.minVolume24hr,
+            allowNegRisk = options.allowNegRisk,
+            minRemainingMinutes = options.minRemainingMinutes,
+            minRecentTrades30m = options.minRecentTrades30m,
+            minRecentNotional30m = options.minRecentNotional30m,
+            minRecentTradesPerSide30m = options.minRecentTradesPerSide30m,
+            minRecentTrades2h = options.minRecentTrades2h,
+            minRecentNotional2h = options.minRecentNotional2h,
+            minRecentTradesPerSide2h = options.minRecentTradesPerSide2h,
+            minPrice = options.minPrice,
+            maxPrice = options.maxPrice,
+            maxPagesPerTag = options.maxDiscoveryPages
         )
+        Files.writeString(
+            options.outputDir.resolve("market-discovery.json"),
+            prettyGson.toJson(discovery.stats),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        var candidates = discovery.markets
         require(candidates.isNotEmpty()) { "No eligible live markets" }
         candidates = candidates.map { market ->
             val tick = dataClient.getTickSize(market.favoriteTokenId)
@@ -457,6 +478,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             unrealizedPnl = unrealized,
             totalPnl = realized + unrealized,
             openInventoryShares = states.sumOf { it.inventoryShares.toDouble() },
+            marketDiscovery = discovery.stats,
             haltedReason = haltedReason ?: engine.haltedReason,
             lastErrors = errors.toList()
         )

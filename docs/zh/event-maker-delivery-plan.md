@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**实现、完整池回测和 Live mock 已完成；正在修复 Gamma 市场分页/候选截断并恢复干净 Shadow 验证**<br>
-> 最后更新：2026-10-19 06:57 +08:00<br>
+> 最后更新：2026-10-19 07:17 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -277,9 +277,9 @@ cd D:\Project\PolyHermes\backend
 
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
-| DISC-1 | Gamma 市场发现分页与资格过滤前移 | 进行中 | 代码、单元测试、阶段计数 |
+| DISC-1 | Gamma 市场发现分页与资格过滤前移 | 已完成 | 代码、4 个发现测试、`market-discovery.json` 统计 |
 | DISC-2 | 用真实 API 检查 0.97～0.99 候选覆盖 | 待执行 | 日志/`market-selection.json`、候选计数 |
-| TEST-2 | 定向和全量回归测试 | 待执行 | Gradle 测试输出 |
+| TEST-2 | 定向和全量回归测试 | 已完成 | 96 suites / 449 tests / 0 failures / 2 skipped |
 | GIT-2 | 提交并推送修复 | 待执行 | commit hash、`main -> main` |
 | OBS-3 | 修复后干净 Shadow 长测 | 等待合格候选 | `summary.json`、`markouts.csv`、`execution-diagnostics.json` |
 | CLEAN-1 | 清理一次性构建/研究产物 | 待执行 | 删除清单和保留清单 |

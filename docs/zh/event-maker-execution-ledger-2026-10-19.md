@@ -177,3 +177,16 @@ cd D:\Project\PolyHermes\backend
 - 根因假设：`LivePaperDataClient.discoverMarkets()` 每个 tag 只抓一页 100 条，按 24h volume 取前 40 个后才做活跃度和价格带筛选；可能把真正符合 0.97～0.99 的活跃市场截掉。
 - 本轮计划：1) 先记录计划和动作；2) 为 Gamma 发现增加分页和阶段诊断；3) 将价格带/资格过滤前移，避免先截断 40 个；4) 增加可注入数据源测试；5) 定向与全量测试；6) 检查真实候选；7) 仅在合格市场出现时启动干净 Shadow；8) 分析 fill/cycle/markout/PnL；9) 整理证据、文档、清理临时产物并提交；10) 未经账户、资金上限和明确授权不执行真实下单。
 - 安全边界：不降低价格带、不放宽 post-only、不改变风控来制造 fill；长 Shadow 启动后禁止重编译或跑测试。
+### 07:15 候选发现修复与定向测试
+
+- 已修改：`LivePaperDataClient` 分页扫描、价格带预筛、去掉前 40 截断、活动阈值短路、发现阶段统计和可注入 base URL。
+- 已修改：Shadow 输出 `market-discovery.json`，`summary.json` 增加 `marketDiscovery`；Gradle 增加 `shadowDiscoveryPages`；Spring 策略服务传入价格带。
+- 已新增：`LivePaperDataClientDiscoveryTest` 4 个测试，覆盖分页、价格带截断、活动过滤和页数上限诊断。
+- 已执行：`.\gradlew.bat test --tests "com.wrbug.polymarketbot.research.livepaper.*" --tests "com.wrbug.polymarketbot.research.eventmaker.*" --tests "com.wrbug.polymarketbot.service.eventmaker.*" --console=plain`。
+- 结果：BUILD SUCCESSFUL；定向测试通过，包含新测试 4/4。
+- 下一步：全量测试 → 提交 → 真实网络短 Shadow 发现 → 分析候选和盘口 → 长测。
+### 07:17 全量测试
+
+- 命令：`.\gradlew.bat test --console=plain`。
+- 结果：96 suites / 449 tests / 0 failures / 0 errors / 2 skipped。
+- 证据：`backend/build/test-results/test/`。

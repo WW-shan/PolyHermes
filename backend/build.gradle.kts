@@ -150,6 +150,7 @@ tasks.register<JavaExec>("eventMakerShadow") {
     val argsList = mutableListOf<String>()
     providers.gradleProperty("shadowProxy").orNull?.let { argsList += listOf("--proxy", it) }
     argsList += listOf("--max-markets", providers.gradleProperty("shadowMaxMarkets").orNull ?: "6")
+    argsList += listOf("--discovery-pages", providers.gradleProperty("shadowDiscoveryPages").orNull ?: "20")
     argsList += listOf("--min-volume", providers.gradleProperty("shadowMinVolume").orNull ?: "50000")
     argsList += listOf("--min-recent-trades", providers.gradleProperty("shadowMinRecentTrades").orNull ?: "0")
     argsList += listOf("--min-recent-notional", providers.gradleProperty("shadowMinRecentNotional").orNull ?: "0")
