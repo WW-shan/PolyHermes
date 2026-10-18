@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**keyset 发现和候选审计已完成；当前严格条件下无 2-tick 可报价市场，等待合格市场恢复干净 Shadow**<br>
-> 最后更新：2026-10-19 07:29 +08:00<br>
+> 最后更新：2026-10-19 07:43 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -283,6 +283,7 @@ cd D:\Project\PolyHermes\backend
 | TEST-2 | 定向和全量回归测试 | 已完成 | 96 suites / 450 tests / 0 failures / 2 skipped |
 | GIT-2 | 提交并推送修复 | 已完成 | `7b0bf7b`、`main -> main` |
 | OBS-3 | 修复后干净 Shadow 长测 | 等待合格候选 | 当前唯一活动候选价差 1 tick，不满足 2 tick |
+| WATCH-1 | 自动等待合格市场并启动 Shadow | 已完成 | 自动重试、attempt 日志、超时文件、实际 5 次等待冒烟 |
 | CLEAN-1 | 清理一次性构建/研究产物 | 已完成本轮 | 删除 9 个失效/重复目录，保留正式证据 |
 
 执行顺序：DISC-1 → 测试 → 真实候选检查 → 提交 → OBS-3 → 结果分析 → CLEAN-1。若真实候选仍为空，记录为真实市场空窗，不降低价格带。
@@ -302,3 +303,11 @@ cd D:\Project\PolyHermes\backend
 - 推送：`origin/main`，`a2e14c7..7b0bf7b main -> main`。
 - 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
 - 当前没有 Shadow/Backtest 进程；等待合格市场。
+
+### 10.7 2026-10-19 07:43 自动等待模式验收
+
+- 参数：`shadowWaitForMarketMinutes`、`shadowDiscoveryRetrySeconds`。
+- 输出：`discovery-attempts.jsonl`、`market-watch-timeout.json`、最新 `market-discovery.json`/`market-selection.json`。
+- 冒烟：0 分钟等待 1 次尝试；1 分钟等待/15 秒重试 5 次尝试；均正确超时且未伪造 fill。
+- 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 下一步：提交后启动长等待任务。出现合格市场后，同一 JVM 直接进入 Shadow，避免重复重编译。

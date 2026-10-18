@@ -151,6 +151,8 @@ tasks.register<JavaExec>("eventMakerShadow") {
     providers.gradleProperty("shadowProxy").orNull?.let { argsList += listOf("--proxy", it) }
     argsList += listOf("--max-markets", providers.gradleProperty("shadowMaxMarkets").orNull ?: "6")
     argsList += listOf("--discovery-pages", providers.gradleProperty("shadowDiscoveryPages").orNull ?: "50")
+    argsList += listOf("--wait-for-market-minutes", providers.gradleProperty("shadowWaitForMarketMinutes").orNull ?: "0")
+    argsList += listOf("--discovery-retry-seconds", providers.gradleProperty("shadowDiscoveryRetrySeconds").orNull ?: "60")
     argsList += listOf("--min-volume", providers.gradleProperty("shadowMinVolume").orNull ?: "50000")
     argsList += listOf("--min-recent-trades", providers.gradleProperty("shadowMinRecentTrades").orNull ?: "0")
     argsList += listOf("--min-recent-notional", providers.gradleProperty("shadowMinRecentNotional").orNull ?: "0")

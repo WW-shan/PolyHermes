@@ -210,3 +210,17 @@ cd D:\Project\PolyHermes\backend
 - 仅清理 `backend/build/research/` 内 9 个失效/重复目录，逐项校验绝对路径位于研究输出根目录。
 - 保留 keyset v3 诊断、v2 Shadow 冒烟和完整池/费用敏感性正式证据。
 - 本次没有删除源码、正式报告、测试结果或 Git 跟踪文件。
+### 07:36 自动等待模式计划
+
+- 目标：避免手动反复启动短 Shadow；增加等待合格市场的正式模式。
+- 新参数：`shadowWaitForMarketMinutes`、`shadowDiscoveryRetrySeconds`。
+- 新证据：`discovery-attempts.jsonl`、最新 `market-discovery.json`/`market-selection.json`、超时 `market-watch-timeout.json`。
+- 启动合格市场后才进入原有 Shadow 引擎；等待阶段不下单、不连接私有账户。
+### 07:43 自动等待模式完成
+
+- 新增参数：`shadowWaitForMarketMinutes`、`shadowDiscoveryRetrySeconds`。
+- 新增证据：`discovery-attempts.jsonl`、`market-watch-timeout.json`；summary 增加 `discoveryAttempts`。
+- 实际冒烟：0 分钟等待 1 次尝试；1 分钟等待/15 秒重试完成 5 次尝试，均无活动通过候选并正确超时。
+- 冒烟目录：`event-maker-shadow-wait-smoke-20261019`、`event-maker-shadow-wait-loop-smoke-20261019`。
+- 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 下一步：提交后启动长等待+Shadow，持续检查证据；等待期间禁止重编译。

@@ -46,6 +46,8 @@ cd D:\Project\PolyHermes\backend
   "-PshadowMinutes=120" `
   "-PshadowMaxMarkets=6" `
   "-PshadowDiscoveryPages=50" `
+  "-PshadowWaitForMarketMinutes=720" `
+  "-PshadowDiscoveryRetrySeconds=60" `
   "-PshadowMinVolume=100000" `
   "-PshadowMinPrice=0.97" `
   "-PshadowMaxPrice=0.99" `
@@ -82,6 +84,8 @@ cd D:\Project\PolyHermes\backend
 | `shadowMinutes` | 运行分钟数 |
 | `shadowMaxMarkets` | 最多市场数 |
 | `shadowDiscoveryPages` | Gamma keyset 每标签最多扫描页数（1～100，默认 50；每页 100） |
+| `shadowWaitForMarketMinutes` | 等待合格市场的分钟数；0 表示只检查一次，>0 时按重试间隔持续重新发现 |
+| `shadowDiscoveryRetrySeconds` | 无合格市场时的重新发现间隔秒数 |
 | `shadowMinVolume` | 24 小时最低成交额；因 keyset 按 volume24hr 降序，低于该值的后续页面自动停止 |
 | `shadowMinRecentTrades` | 近 30 分钟最少成交笔数 |
 | `shadowMinRecentNotional` | 近 30 分钟最少成交额 |
@@ -110,8 +114,10 @@ cd D:\Project\PolyHermes\backend
 输出文件：
 
 - `markets.json`：本次最终用于 Shadow 的市场。
-- `market-discovery.json`：完整发现结果，包括预筛候选、活动过滤逐候选诊断、30m/2h 成交统计、拒绝原因和分页计数。
-- `market-selection.json`：每个候选的价差、买一/卖一队列、入场/退出队列及拒绝原因。
+- `market-discovery.json`：最新一轮完整发现结果，包括预筛候选、活动过滤逐候选诊断、30m/2h 成交统计、拒绝原因和分页计数。
+- `market-selection.json`：最新一轮每个候选的价差、买一/卖一队列、入场/退出队列及拒绝原因。
+- `discovery-attempts.jsonl`：等待模式的每一轮尝试、候选/活动/选择数量和停止原因。
+- `market-watch-timeout.json`：等待超时证据，包含尝试次数和最新拒绝原因。
 - `events.jsonl`：报价、撤单、有效成交对账和 WS 状态。
 - `trades.csv`：去重后的公共成交。
 - `snapshots.csv`：每个市场每 10 秒的状态、库存、PnL 和回合数。

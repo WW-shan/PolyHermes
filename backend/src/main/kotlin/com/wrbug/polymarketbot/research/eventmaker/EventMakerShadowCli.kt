@@ -8,6 +8,7 @@ import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import com.wrbug.polymarketbot.research.livepaper.LivePaperWsClient
 import com.wrbug.polymarketbot.research.livepaper.LiveTradePrint
 import com.wrbug.polymarketbot.research.livepaper.MarketBook
+import com.wrbug.polymarketbot.research.livepaper.MarketDiscoveryResult
 import com.wrbug.polymarketbot.research.livepaper.MarketDiscoveryStats
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerConfig
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerEngineResult
@@ -43,6 +44,8 @@ private data class ShadowOptions(
     val outputDir: Path,
     val maxMarkets: Int,
     val maxDiscoveryPages: Int,
+    val waitForMarketMinutes: Int,
+    val discoveryRetrySeconds: Long,
     val minVolume24hr: Double,
 
     val minRecentTrades30m: Int,
@@ -98,10 +101,22 @@ private data class ShadowSummary(
     val unrealizedPnl: Double,
     val totalPnl: Double,
     val openInventoryShares: Double,
+    val discoveryAttempts: Int,
+    val marketWaitSeconds: Long,
     val marketDiscovery: MarketDiscoveryStats,
     val haltedReason: String?,
 
     val lastErrors: List<String>
+)
+
+private data class DiscoveryAttemptLog(
+    val attempt: Int,
+    val timestamp: Long,
+    val qualifiedMarkets: Int,
+    val activityPassedMarkets: Int,
+    val selectedMarkets: Int,
+    val selectionReasons: Map<String, Int>,
+    val stoppedReason: String
 )
 
 private data class ShadowSnapshot(
@@ -151,6 +166,8 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     val orderNotional = option("order-notional")?.toDoubleOrNull() ?: 25.0
     val fillVolumeFactor = option("fill-volume-factor")?.toDoubleOrNull() ?: 1.0
     val discoveryPages = option("discovery-pages")?.toIntOrNull() ?: 50
+    val waitForMarketMinutes = option("wait-for-market-minutes")?.toIntOrNull() ?: 0
+    val discoveryRetrySeconds = option("discovery-retry-seconds")?.toLongOrNull() ?: 60L
     val minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90
     val maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99
     require(minutes > 0)
@@ -163,12 +180,16 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     require(orderNotional > 0.0)
     require(fillVolumeFactor >= 0.0)
     require(discoveryPages in 1..100)
+    require(waitForMarketMinutes >= 0)
+    require(discoveryRetrySeconds > 0)
     require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
     return ShadowOptions(
         proxyUrl = option("proxy"),
         outputDir = Paths.get(option("output") ?: "build/research/event-maker-shadow-$stamp"),
         maxMarkets = option("max-markets")?.toIntOrNull() ?: 6,
         maxDiscoveryPages = discoveryPages,
+        waitForMarketMinutes = waitForMarketMinutes,
+        discoveryRetrySeconds = discoveryRetrySeconds,
         minVolume24hr = option("min-volume")?.toDoubleOrNull() ?: 50_000.0,
 
         minRecentTrades30m = option("min-recent-trades")?.toIntOrNull() ?: 0,
@@ -227,7 +248,11 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
     private var selectedMarkets: List<LivePaperMarket> = emptyList()
 
     fun run(): ShadowSummary = runBlocking {
+        val runnerStartedAt = System.currentTimeMillis()
         Files.createDirectories(options.outputDir)
+        listOf("summary.json", "state.json", "execution-diagnostics.json", "market-watch-timeout.json", "markets.json").forEach { name ->
+            Files.deleteIfExists(options.outputDir.resolve(name))
+        }
         eventsWriter = Files.newBufferedWriter(
             options.outputDir.resolve("events.jsonl"),
             StandardCharsets.UTF_8,
@@ -260,76 +285,151 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         )
         markoutsWriter.write("fill_timestamp,market_id,order_id,side,fill_price,shares,horizon_seconds,markout_at,book_age_ms,best_bid,best_ask,markout_pnl\n")
 
-        val discovery = dataClient.discoverMarketsDetailed(
-            maxMarkets = options.maxMarkets * 3,
-            minVolume24hr = options.minVolume24hr,
-            allowNegRisk = options.allowNegRisk,
-            minRemainingMinutes = options.minRemainingMinutes,
-            minRecentTrades30m = options.minRecentTrades30m,
-            minRecentNotional30m = options.minRecentNotional30m,
-            minRecentTradesPerSide30m = options.minRecentTradesPerSide30m,
-            minRecentTrades2h = options.minRecentTrades2h,
-            minRecentNotional2h = options.minRecentNotional2h,
-            minRecentTradesPerSide2h = options.minRecentTradesPerSide2h,
-            minPrice = options.minPrice,
-            maxPrice = options.maxPrice,
-            maxPagesPerTag = options.maxDiscoveryPages
-        )
-        Files.writeString(
-            options.outputDir.resolve("market-discovery.json"),
-            prettyGson.toJson(discovery),
+        val discoveryAttemptsWriter = Files.newBufferedWriter(
+            options.outputDir.resolve("discovery-attempts.jsonl"),
             StandardCharsets.UTF_8,
             StandardOpenOption.CREATE,
             StandardOpenOption.TRUNCATE_EXISTING,
             StandardOpenOption.WRITE
         )
-        var candidates = discovery.markets
-        require(candidates.isNotEmpty()) { "No eligible live markets" }
-        candidates = candidates.map { market ->
-            val tick = dataClient.getTickSize(market.favoriteTokenId)
-            if (tick != null) market.copy(tickSize = tick) else market
+        var discoveryAttempt = 0
+        lateinit var discovery: MarketDiscoveryResult
+        lateinit var discovered: List<LivePaperMarket>
+        val waitDeadline = System.currentTimeMillis() + options.waitForMarketMinutes * 60_000L
+        while (true) {
+            discoveryAttempt++
+            books.clear()
+            discovery = dataClient.discoverMarketsDetailed(
+                maxMarkets = options.maxMarkets * 3,
+                minVolume24hr = options.minVolume24hr,
+                allowNegRisk = options.allowNegRisk,
+                minRemainingMinutes = options.minRemainingMinutes,
+                minRecentTrades30m = options.minRecentTrades30m,
+                minRecentNotional30m = options.minRecentNotional30m,
+                minRecentTradesPerSide30m = options.minRecentTradesPerSide30m,
+                minRecentTrades2h = options.minRecentTrades2h,
+                minRecentNotional2h = options.minRecentNotional2h,
+                minRecentTradesPerSide2h = options.minRecentTradesPerSide2h,
+                minPrice = options.minPrice,
+                maxPrice = options.maxPrice,
+                maxPagesPerTag = options.maxDiscoveryPages
+            )
+            Files.writeString(
+                options.outputDir.resolve("market-discovery.json"),
+                prettyGson.toJson(discovery),
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE
+            )
+            var candidates = discovery.markets
+            candidates = if (candidates.isEmpty()) {
+                emptyList()
+            } else {
+                candidates.map { market ->
+                    val tick = dataClient.getTickSize(market.favoriteTokenId)
+                    if (tick != null) market.copy(tickSize = tick) else market
+                }.also { priced ->
+                    priced.flatMap { it.tokenIds }.forEach { tokenId ->
+                        dataClient.getBook(tokenId)?.let { books[tokenId] = it }
+                    }
+                }
+            }
+            val evaluations = if (candidates.isEmpty()) {
+                emptyList()
+            } else {
+                EventMakerMarketSelector.evaluate(
+                    markets = candidates,
+                    books = books,
+                    minSpreadTicks = options.minSpreadTicks,
+                    minPrice = options.minPrice,
+                    maxPrice = options.maxPrice,
+                    maxQueueAheadShares = options.maxQueueAheadShares,
+                    improveTicks = options.improveTicks,
+                    entryOffsetCents = options.entryOffsetCents,
+                    exitImproveTicks = options.exitImproveTicks,
+                    exitSpreadCents = options.exitSpreadCents
+                )
+            }
+            Files.writeString(
+                options.outputDir.resolve("market-selection.json"),
+                prettyGson.toJson(evaluations),
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE
+            )
+            discovered = if (candidates.isEmpty()) {
+                emptyList()
+            } else {
+                EventMakerMarketSelector.select(
+                    markets = candidates,
+                    books = books,
+                    maxMarkets = options.maxMarkets,
+                    minSpreadTicks = options.minSpreadTicks,
+                    minPrice = options.minPrice,
+                    maxPrice = options.maxPrice,
+                    maxQueueAheadShares = options.maxQueueAheadShares,
+                    improveTicks = options.improveTicks,
+                    entryOffsetCents = options.entryOffsetCents,
+                    exitImproveTicks = options.exitImproveTicks,
+                    exitSpreadCents = options.exitSpreadCents
+                )
+            }
+            val selectionReasons = evaluations.groupingBy { it.reason }.eachCount()
+            discoveryAttemptsWriter.write(
+                gson.toJson(
+                    DiscoveryAttemptLog(
+                        attempt = discoveryAttempt,
+                        timestamp = System.currentTimeMillis(),
+                        qualifiedMarkets = discovery.qualifiedMarkets.size,
+                        activityPassedMarkets = discovery.activityPassedMarkets.size,
+                        selectedMarkets = discovered.size,
+                        selectionReasons = selectionReasons,
+                        stoppedReason = discovery.stats.stoppedReason
+                    )
+                )
+            )
+            discoveryAttemptsWriter.newLine()
+            discoveryAttemptsWriter.flush()
+            println(
+                "marketDiscoveryAttempt attempt=$discoveryAttempt qualified=${discovery.qualifiedMarkets.size} " +
+                    "activityPassed=${discovery.activityPassedMarkets.size} selected=${discovered.size} " +
+                    "reasons=$selectionReasons stopped=${discovery.stats.stoppedReason}"
+            )
+            if (discovered.isNotEmpty()) break
+            val now = System.currentTimeMillis()
+            if (now >= waitDeadline) {
+                Files.writeString(
+                    options.outputDir.resolve("market-watch-timeout.json"),
+                    prettyGson.toJson(
+                        mapOf(
+                            "createdAt" to now,
+                            "waitForMarketMinutes" to options.waitForMarketMinutes,
+                            "attempts" to discoveryAttempt,
+                            "lastDiscoveryStoppedReason" to discovery.stats.stoppedReason,
+                            "lastSelectionReasons" to selectionReasons
+                        )
+                    ),
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE
+                )
+                discoveryAttemptsWriter.close()
+                eventsWriter.close()
+                snapshotsWriter.close()
+                tradesWriter.close()
+                markoutsWriter.close()
+                dataClient.close()
+                throw IllegalArgumentException("No eligible markets after $discoveryAttempt discovery attempt(s)")
+            }
+            val sleepMs = minOf(options.discoveryRetrySeconds * 1_000L, waitDeadline - now).coerceAtLeast(250L)
+            println("marketWait attempt=$discoveryAttempt retryInMs=$sleepMs waitRemainingSeconds=${maxOf(0L, waitDeadline - now) / 1_000L}")
+            delay(sleepMs)
         }
-        candidates.flatMap { it.tokenIds }.forEach { tokenId ->
-            dataClient.getBook(tokenId)?.let { books[tokenId] = it }
-        }
-        val evaluations = EventMakerMarketSelector.evaluate(
-            markets = candidates,
-            books = books,
-            minSpreadTicks = options.minSpreadTicks,
-            minPrice = options.minPrice,
-            maxPrice = options.maxPrice,
-            maxQueueAheadShares = options.maxQueueAheadShares,
-            improveTicks = options.improveTicks,
-            entryOffsetCents = options.entryOffsetCents,
-            exitImproveTicks = options.exitImproveTicks,
-            exitSpreadCents = options.exitSpreadCents
-        )
-        Files.writeString(
-            options.outputDir.resolve("market-selection.json"),
-            prettyGson.toJson(evaluations),
-            StandardCharsets.UTF_8,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE
-        )
-        println(
-            "marketSelection selected=${evaluations.count { it.selected }} " +
-                "reasons=${evaluations.groupingBy { it.reason }.eachCount()}"
-        )
-        val discovered = EventMakerMarketSelector.select(
-            markets = candidates,
-            books = books,
-            maxMarkets = options.maxMarkets,
-            minSpreadTicks = options.minSpreadTicks,
-            minPrice = options.minPrice,
-            maxPrice = options.maxPrice,
-            maxQueueAheadShares = options.maxQueueAheadShares,
-            improveTicks = options.improveTicks,
-            entryOffsetCents = options.entryOffsetCents,
-            exitImproveTicks = options.exitImproveTicks,
-            exitSpreadCents = options.exitSpreadCents
-        )
-        require(discovered.isNotEmpty()) { "No eligible markets with min spread ${options.minSpreadTicks} ticks" }
+        discoveryAttemptsWriter.close()
+        val marketWaitSeconds = (System.currentTimeMillis() - runnerStartedAt) / 1_000L
         val config = EventMakerConfig(
             mode = com.wrbug.polymarketbot.service.eventmaker.EventMakerMode.SHADOW,
             maxMarkets = discovered.size,
@@ -478,6 +578,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             unrealizedPnl = unrealized,
             totalPnl = realized + unrealized,
             openInventoryShares = states.sumOf { it.inventoryShares.toDouble() },
+            discoveryAttempts = discoveryAttempt,
+            marketWaitSeconds = marketWaitSeconds,
             marketDiscovery = discovery.stats,
             haltedReason = haltedReason ?: engine.haltedReason,
             lastErrors = errors.toList()

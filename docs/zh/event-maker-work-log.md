@@ -510,3 +510,24 @@
   - `event-maker-shadow-keyset-v2-20261019`
 - 保留：`event-maker-shadow-keyset-v3-20261019`（最终 keyset 候选诊断证据）、`event-maker-shadow-v2-smoke-20261019`、`event-maker-shadow-v2-smoke2-20261019`、完整池/费用敏感性正式 CSV。
 - 删除前已搜索 `docs/` 和 `backend/src/`，上述目录没有被正式报告引用。
+### 07:36 自动等待合格市场的计划
+
+- 背景：严格条件下当前无 2-tick 市场；手动短跑只能重复退出，不能形成有效等待。
+- 计划：给 Shadow CLI 增加 `waitForMarketMinutes` 和 `discoveryRetrySeconds`；每轮重新执行 keyset 发现、活动过滤、盘口获取和选择器评估。
+- 计划：每轮写入 `discovery-attempts.jsonl`，保留时间、预筛候选数、活动通过数、选择结果、拒绝原因和停止原因；`market-discovery.json`/`market-selection.json` 保留最新一轮。
+- 计划：等待期间不打开 WebSocket、不报价；出现合格市场后才启动原有 Shadow 引擎和成交/回合/markout 审计。
+- 计划：超时写出 `market-watch-timeout.json` 并明确失败，不伪造 summary 或 fill。
+- 安全边界：等待和自动启动仍为 Shadow，不下真实订单；长进程启动后禁止重编译或测试。
+### 07:43 自动等待合格市场模式完成
+
+- 动作：Shadow CLI 新增 `waitForMarketMinutes` 和 `discoveryRetrySeconds`；等待循环每轮重新执行 keyset 发现、活动过滤、tick/book 获取和 selector 评估。
+- 动作：新增 `discovery-attempts.jsonl`，每轮记录预筛候选数、活动通过数、最终选择数、选择原因和 discovery 停止原因。
+- 动作：`market-discovery.json` 和 `market-selection.json` 保留最新一轮；超时写出 `market-watch-timeout.json`。
+- 动作：启动时删除上次遗留的 `summary.json`、`state.json`、`execution-diagnostics.json`、`market-watch-timeout.json`、`markets.json`，避免把旧证据误当成本次结果。
+- 动作：`summary.json` 新增 `discoveryAttempts`；只有真正选出市场后才打开 WebSocket、启动 Shadow 引擎并产生 fill/cycle/markout。
+- 冒烟 1：`waitForMarketMinutes=0`，1 次尝试后超时；`discovery-attempts.jsonl` 和 `market-watch-timeout.json` 正确写出。
+- 冒烟 2：`waitForMarketMinutes=1`、`discoveryRetrySeconds=15`；完成 5 次尝试后超时，每次均记录 `qualifiedMarkets=6`、`activityPassedMarkets=0`、`selectedMarkets=0`、`stoppedReason=volume_floor_reached`。
+- 冒烟证据：`backend/build/research/event-maker-shadow-wait-smoke-20261019/`、`backend/build/research/event-maker-shadow-wait-loop-smoke-20261019/`。
+- 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 注意：等待期间行情会变化；两次真实检查中活动通过数从 1 变为 0，说明必须持续重新发现，不能缓存首次候选。
+- 下一步：提交自动等待模式；启动长时间后台等待+Shadow 任务，并持续检查 attempt 日志、summary、markouts 和 diagnostics。
