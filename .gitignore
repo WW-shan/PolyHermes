@@ -120,3 +120,7 @@ landing-page/
 clob-client-v2/
 settings.local.json
 .gstack/
+
+# Event Maker runtime state
+backend/data/event-maker-state.json
+backend/data/event-maker-state.json.*.tmp

@@ -310,3 +310,37 @@ cd D:\Project\PolyHermes\backend
 > **他的方法可以学习，但不能被这份历史成交回测证明为可复刻。**
 > **真正值得复刻的是 maker 执行和库存管理框架；真正需要补的是实时订单簿、真实 fill 和 adverse selection 数据。**
 > **在这些数据齐备之前，不跟单、不实盘。**
+---
+
+## 七、2026-10-19 可复现性复跑
+
+为确认回测入口和数据链路仍可重复运行，使用 30 个市场做小规模复跑：
+
+```powershell
+cd D:\Project\PolyHermes\backend
+
+.\gradlew.bat eventMakerBacktest `
+  "-PresearchProxy=http://127.0.0.1:10808" `
+  "-PresearchMaxMarkets=30" `
+  "-PresearchMinVolume=100000" `
+  "-PresearchFrom=2024-01-01" `
+  "-PresearchTo=2026-10-01" `
+  "-PresearchConcurrency=3" `
+  "-PresearchOutput=build/research/event-maker-repro-20261019" `
+  --console=plain
+```
+
+结果：
+
+- 市场池 4,187 个，抽样 30 个；
+- 成交历史抓取 30/30，失败 0；
+- 162 组配置全部完成模拟；
+- 训练/测试都至少有 20 个成交市场的稳健配置仍然不存在；
+- 最高 ROI 的配置只有 1 个成交市场，属于小样本，不可用于实盘决策；
+- 输出文件：
+  - `build/research/event-maker-repro-20261019-summary.csv`
+  - `build/research/event-maker-repro-20261019-balanced-markets.csv`
+  - `build/research/event-maker-repro-20261019-top-markets.csv`
+  - `build/research/event-maker-repro-20261019-top-cycles.csv`
+
+结论不变：**回测链路可复现，但没有证明当前策略有稳定正期望。**

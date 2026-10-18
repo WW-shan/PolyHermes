@@ -136,3 +136,29 @@ tasks.register<JavaExec>("livePaperMaker") {
     argsList += listOf("--output", providers.gradleProperty("liveOutput").orNull ?: "build/research/live-paper")
     args(argsList)
 }
+
+/**
+ * Unified Shadow runner using the production planner/risk/engine path.
+ * It never signs or places an order and does not require MySQL.
+ */
+tasks.register<JavaExec>("eventMakerShadow") {
+    group = "research"
+    description = "Run the unified event-maker Shadow engine against live public Polymarket data"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.wrbug.polymarketbot.research.eventmaker.EventMakerShadowCliKt")
+
+    val argsList = mutableListOf<String>()
+    providers.gradleProperty("shadowProxy").orNull?.let { argsList += listOf("--proxy", it) }
+    argsList += listOf("--max-markets", providers.gradleProperty("shadowMaxMarkets").orNull ?: "6")
+    argsList += listOf("--min-volume", providers.gradleProperty("shadowMinVolume").orNull ?: "50000")
+    argsList += listOf("--min-remaining-minutes", providers.gradleProperty("shadowMinRemainingMinutes").orNull ?: "120")
+    argsList += listOf("--minutes", providers.gradleProperty("shadowMinutes").orNull ?: "120")
+    argsList += listOf("--poll-seconds", providers.gradleProperty("shadowPollSeconds").orNull ?: "3")
+    argsList += listOf("--snapshot-seconds", providers.gradleProperty("shadowSnapshotSeconds").orNull ?: "10")
+    argsList += listOf("--max-queue", providers.gradleProperty("shadowMaxQueue").orNull ?: "500")
+    argsList += listOf("--min-spread-ticks", providers.gradleProperty("shadowMinSpreadTicks").orNull ?: "2")
+    argsList += listOf("--improve-ticks", providers.gradleProperty("shadowImproveTicks").orNull ?: "1")
+    if (providers.gradleProperty("shadowAllowNegRisk").orNull == "true") argsList += "--allow-neg-risk"
+    argsList += listOf("--output", providers.gradleProperty("shadowOutput").orNull ?: "build/research/event-maker-shadow")
+    args(argsList)
+}

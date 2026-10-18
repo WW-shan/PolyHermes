@@ -1,0 +1,495 @@
+package com.wrbug.polymarketbot.research.eventmaker
+
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.wrbug.polymarketbot.research.livepaper.LiveFeedEvent
+import com.wrbug.polymarketbot.research.livepaper.LivePaperDataClient
+import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
+import com.wrbug.polymarketbot.research.livepaper.LivePaperWsClient
+import com.wrbug.polymarketbot.research.livepaper.LiveTradePrint
+import com.wrbug.polymarketbot.research.livepaper.MarketBook
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerConfig
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerEngineResult
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerLiveEngine
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerLiveState
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerMarkoutCalculator
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerMarketSelector
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerQuotePlanner
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerRiskPolicy
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerShadowExecutionPort
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerShadowFill
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.nio.file.StandardOpenOption
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import kotlin.system.exitProcess
+
+private data class ShadowOptions(
+    val proxyUrl: String?,
+    val outputDir: Path,
+    val maxMarkets: Int,
+    val minVolume24hr: Double,
+    val minRemainingMinutes: Int,
+    val minutes: Int,
+    val allowNegRisk: Boolean,
+    val pollSeconds: Long,
+    val snapshotSeconds: Long,
+    val maxQueueAheadShares: Double,
+    val minSpreadTicks: Int,
+    val improveTicks: Int
+)
+
+private data class ShadowSummary(
+    val mode: String,
+    val startedAt: Long,
+    val stoppedAt: Long,
+    val durationSeconds: Long,
+    val markets: Int,
+    val trades: Long,
+    val duplicateTradeEvents: Long,
+    val bookUpdates: Long,
+    val quotesPlaced: Int,
+    val cancels: Int,
+    val fills: Int,
+    val completedCycles: Int,
+    val winningCycles: Int,
+    val losingCycles: Int,
+    val realizedPnl: Double,
+    val unrealizedPnl: Double,
+    val totalPnl: Double,
+    val openInventoryShares: Double,
+    val haltedReason: String?,
+    val lastErrors: List<String>
+)
+
+private data class ShadowSnapshot(
+    val timestamp: Long,
+    val marketId: String,
+    val phase: String,
+    val bestBid: Double?,
+    val bestAsk: Double?,
+    val entryPrice: String,
+    val inventoryShares: String,
+    val activeOrderId: String?,
+    val activeOrderPrice: String?,
+    val realizedPnl: Double,
+    val unrealizedPnl: Double,
+    val completedCycles: Int,
+    val fills: Int
+)
+
+private sealed interface ShadowEvent {
+    data class Feed(val event: LiveFeedEvent) : ShadowEvent
+    data class Tick(val now: Long) : ShadowEvent
+}
+
+fun main(args: Array<String>) {
+    val options = parseOptions(args)
+    println("Event Maker unified Shadow")
+    println("proxy=${options.proxyUrl ?: "(direct)"} output=${options.outputDir.toAbsolutePath()}")
+    val summary = EventMakerShadowRunner(options).run()
+    println(GsonBuilder().setPrettyPrinting().create().toJson(summary))
+    exitProcess(if (summary.haltedReason == null) 0 else 2)
+}
+
+private fun parseOptions(args: Array<String>): ShadowOptions {
+    fun option(name: String): String? {
+        val index = args.indexOf("--$name")
+        return if (index >= 0 && index + 1 < args.size) args[index + 1] else null
+    }
+
+    val stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
+    val minutes = option("minutes")?.toIntOrNull() ?: 120
+    val snapshotSeconds = option("snapshot-seconds")?.toLongOrNull() ?: 10L
+    val pollSeconds = option("poll-seconds")?.toLongOrNull() ?: 3L
+    require(minutes > 0)
+    require(snapshotSeconds > 0)
+    require(pollSeconds > 0)
+    return ShadowOptions(
+        proxyUrl = option("proxy"),
+        outputDir = Paths.get(option("output") ?: "build/research/event-maker-shadow-$stamp"),
+        maxMarkets = option("max-markets")?.toIntOrNull() ?: 6,
+        minVolume24hr = option("min-volume")?.toDoubleOrNull() ?: 50_000.0,
+        minRemainingMinutes = option("min-remaining-minutes")?.toIntOrNull() ?: 120,
+        minutes = minutes,
+        allowNegRisk = args.contains("--allow-neg-risk"),
+        pollSeconds = pollSeconds,
+        snapshotSeconds = snapshotSeconds,
+        maxQueueAheadShares = option("max-queue")?.toDoubleOrNull() ?: 500.0,
+        minSpreadTicks = option("min-spread-ticks")?.toIntOrNull() ?: 2,
+        improveTicks = option("improve-ticks")?.toIntOrNull() ?: 1
+    )
+}
+
+private class EventMakerShadowRunner(private val options: ShadowOptions) {
+    private val gson = Gson()
+    private val prettyGson = GsonBuilder().setPrettyPrinting().create()
+    private val dataClient = LivePaperDataClient(options.proxyUrl)
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val channel = Channel<ShadowEvent>(Channel.UNLIMITED)
+    private val books = mutableMapOf<String, MarketBook>()
+    private val seenTrades = object : LinkedHashMap<String, Boolean>(20_000, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean = size > 100_000
+    }
+    private val errors = ArrayDeque<String>()
+    private var wsClient: LivePaperWsClient? = null
+    private var trades = 0L
+    private var duplicateTradeEvents = 0L
+    private var bookUpdates = 0L
+    private var quotesPlaced = 0
+    private var cancels = 0
+    private var lastSnapshotAt = 0L
+    private lateinit var eventsWriter: java.io.BufferedWriter
+    private lateinit var snapshotsWriter: java.io.BufferedWriter
+    private lateinit var tradesWriter: java.io.BufferedWriter
+    private lateinit var markoutsWriter: java.io.BufferedWriter
+    private val pendingMarkouts = mutableListOf<PendingMarkout>()
+    private var selectedMarkets: List<LivePaperMarket> = emptyList()
+
+    fun run(): ShadowSummary = runBlocking {
+        Files.createDirectories(options.outputDir)
+        eventsWriter = Files.newBufferedWriter(
+            options.outputDir.resolve("events.jsonl"),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        snapshotsWriter = Files.newBufferedWriter(
+            options.outputDir.resolve("snapshots.csv"),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        snapshotsWriter.write("timestamp,market_id,phase,best_bid,best_ask,entry_price,inventory_shares,active_order_id,active_order_price,realized_pnl,unrealized_pnl,completed_cycles,fills\n")
+        tradesWriter = Files.newBufferedWriter(
+            options.outputDir.resolve("trades.csv"),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        tradesWriter.write("timestamp,condition_id,token_id,side,price,size,source,transaction_hash\n")
+        markoutsWriter = Files.newBufferedWriter(
+            options.outputDir.resolve("markouts.csv"),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        markoutsWriter.write("fill_timestamp,market_id,order_id,side,fill_price,shares,markout_at,best_bid,best_ask,markout_pnl\n")
+
+        var candidates = dataClient.discoverMarkets(
+            options.maxMarkets * 3,
+            options.minVolume24hr,
+            options.allowNegRisk,
+            options.minRemainingMinutes
+        )
+        require(candidates.isNotEmpty()) { "No eligible live markets" }
+        candidates = candidates.map { market ->
+            val tick = dataClient.getTickSize(market.favoriteTokenId)
+            if (tick != null) market.copy(tickSize = tick) else market
+        }
+        candidates.flatMap { it.tokenIds }.forEach { tokenId ->
+            dataClient.getBook(tokenId)?.let { books[tokenId] = it }
+        }
+        val discovered = EventMakerMarketSelector.select(
+            markets = candidates,
+            books = books,
+            maxMarkets = options.maxMarkets,
+            minSpreadTicks = options.minSpreadTicks,
+            minPrice = 0.90,
+            maxPrice = 0.99
+        )
+        require(discovered.isNotEmpty()) { "No eligible markets with min spread ${options.minSpreadTicks} ticks" }
+        val config = EventMakerConfig(
+            mode = com.wrbug.polymarketbot.service.eventmaker.EventMakerMode.SHADOW,
+            maxMarkets = discovered.size,
+            minVolume24hr = options.minVolume24hr,
+            minRemainingMinutes = options.minRemainingMinutes,
+            allowNegRisk = options.allowNegRisk,
+            orderNotional = 25.0,
+            maxQueueAheadShares = options.maxQueueAheadShares,
+            minSpreadTicks = options.minSpreadTicks,
+            improveTicks = options.improveTicks,
+            maxTotalInventoryNotional = 100.0,
+            maxDailyLoss = 5.0,
+            maxCyclesPerMarket = 3,
+            requoteSeconds = 120,
+            staleBookSeconds = 30
+        )
+        selectedMarkets = discovered
+        val states = discovered.map { EventMakerLiveState(it, config) }
+        shadowExecution = EventMakerShadowExecutionPort()
+        shadowExecution.reset()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), shadowExecution)
+        discovered.forEach { market -> books[market.favoriteTokenId]?.let { states.first { s -> s.market.conditionId == market.conditionId }.onBook(it) } }
+        val startedAt = System.currentTimeMillis()
+        val deadline = startedAt + options.minutes * 60_000L
+        lastSnapshotAt = startedAt
+        writeMarketList(discovered)
+        println("markets=${discovered.size} minutes=${options.minutes} minRemaining=${options.minRemainingMinutes}")
+
+        wsClient = LivePaperWsClient(
+            proxyUrl = options.proxyUrl,
+            tokenToCondition = discovered.flatMap { market -> market.tokenIds.map { it to market.conditionId } }.toMap(),
+            onEvent = { channel.trySend(ShadowEvent.Feed(it)) },
+            onStatus = { status -> println(status); writeEvent(mapOf("type" to "ws_status", "status" to status, "timestamp" to System.currentTimeMillis())) }
+        ).also { it.start() }
+        val jobs = mutableListOf<Job>()
+        jobs += scope.launch {
+            while (isActive) {
+                delay(options.pollSeconds * 1000L)
+                discovered.forEach { market ->
+                    dataClient.getRecentTrades(market).forEach { channel.trySend(ShadowEvent.Feed(LiveFeedEvent.Trade(it))) }
+                }
+            }
+        }
+        jobs += scope.launch {
+            while (isActive) {
+                delay(1_000)
+                channel.trySend(ShadowEvent.Tick(System.currentTimeMillis()))
+            }
+        }
+
+        var haltedReason: String? = null
+        try {
+            loop@ for (event in channel) {
+                when (event) {
+                    is ShadowEvent.Feed -> when (val feed = event.event) {
+                        is LiveFeedEvent.BookUpdated -> applyBook(feed.book, states, discovered)
+                        is LiveFeedEvent.PricesChanged -> feed.changes.forEach { change ->
+                            val current = books[change.tokenId] ?: MarketBook(change.tokenId, emptyList(), emptyList(), change.timestamp)
+                            applyBook(current.applyPriceChange(change), states, discovered)
+                        }
+                        is LiveFeedEvent.Trade -> applyTrade(feed.trade)
+                        is LiveFeedEvent.Unknown -> writeEvent(mapOf("type" to "unknown", "eventType" to feed.eventType))
+                    }
+                    is ShadowEvent.Tick -> Unit
+                }
+                val now = System.currentTimeMillis()
+                val result = engine.reconcile(states, 0L, now).merge(engine.quote(states, books, 0L, now))
+                recordEngineResult(result)
+                if (result.haltedReason != null) {
+                    haltedReason = result.haltedReason
+                    break@loop
+                }
+                writeDueMarkouts(now)
+                if (now - lastSnapshotAt >= options.snapshotSeconds * 1000L) {
+                    writeSnapshots(states, now)
+                    lastSnapshotAt = now
+                }
+                if (now >= deadline) break@loop
+            }
+        } finally {
+            jobs.forEach { it.cancel() }
+            wsClient?.close()
+            dataClient.close()
+            channel.close()
+            scope.cancel()
+            eventsWriter.close()
+            snapshotsWriter.close()
+            tradesWriter.close()
+            markoutsWriter.close()
+        }
+
+        val stoppedAt = System.currentTimeMillis()
+        val realized = states.sumOf { it.realizedPnl }
+        val unrealized = states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) }
+        val cycles = states.flatMap { it.cycles }
+        val summary = ShadowSummary(
+            mode = "SHADOW",
+            startedAt = startedAt,
+            stoppedAt = stoppedAt,
+            durationSeconds = (stoppedAt - startedAt) / 1000L,
+            markets = discovered.size,
+            trades = trades,
+            duplicateTradeEvents = duplicateTradeEvents,
+            bookUpdates = bookUpdates,
+            quotesPlaced = quotesPlaced,
+            cancels = cancels,
+            fills = states.sumOf { it.fills.size },
+            completedCycles = cycles.size,
+            winningCycles = cycles.count { it.pnl > 0.0 },
+            losingCycles = cycles.count { it.pnl < 0.0 },
+            realizedPnl = realized,
+            unrealizedPnl = unrealized,
+            totalPnl = realized + unrealized,
+            openInventoryShares = states.sumOf { it.inventoryShares.toDouble() },
+            haltedReason = haltedReason ?: engine.haltedReason,
+            lastErrors = errors.toList()
+        )
+        Files.writeString(
+            options.outputDir.resolve("summary.json"),
+            prettyGson.toJson(summary),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        Files.writeString(
+            options.outputDir.resolve("state.json"),
+            prettyGson.toJson(mapOf("markets" to states.map { it.toPersisted() })),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        summary
+    }
+
+    private fun applyBook(book: MarketBook, states: List<EventMakerLiveState>, markets: List<LivePaperMarket>) {
+        books[book.tokenId] = book
+        bookUpdates++
+        markets.firstOrNull { it.favoriteTokenId == book.tokenId }?.let { market ->
+            states.filter { it.market.conditionId == market.conditionId }.forEach { it.onBook(book) }
+        }
+    }
+
+    private fun applyTrade(trade: LiveTradePrint) {
+        if (seenTrades.put(trade.key, true) != null) {
+            duplicateTradeEvents++
+            return
+        }
+        trades++
+        tradesWriter.write(listOf(trade.timestamp, trade.conditionId, trade.tokenId, trade.side, trade.price, trade.size, trade.source, trade.transactionHash ?: "").joinToString(","))
+        tradesWriter.newLine()
+        shadowExecution.onTrade(trade).forEach { fill ->
+            pendingMarkouts += PendingMarkout(fill, fill.timestamp + 60_000L)
+        }
+    }
+
+    private lateinit var shadowExecution: EventMakerShadowExecutionPort
+
+    private fun recordEngineResult(result: EventMakerEngineResult) {
+        quotesPlaced += result.placed.size
+        cancels += result.canceled.size
+        val actionableErrors = result.errors.filterNot { it.startsWith("risk_blocked:") }
+        actionableErrors.forEach { addError(it) }
+        result.haltedReason?.let { addError(it) }
+        val meaningfulReconciled = result.reconciled.filter { it.events.isNotEmpty() }
+        if (result.placed.isNotEmpty() || result.canceled.isNotEmpty() || meaningfulReconciled.isNotEmpty() || actionableErrors.isNotEmpty()) {
+            writeEvent(
+                mapOf(
+                    "type" to "engine",
+                    "timestamp" to System.currentTimeMillis(),
+                    "placed" to result.placed,
+                    "canceled" to result.canceled,
+                    "reconciled" to meaningfulReconciled,
+                    "errors" to actionableErrors,
+                    "haltedReason" to result.haltedReason
+                )
+            )
+        }
+    }
+
+    private fun writeDueMarkouts(now: Long) {
+        val due = pendingMarkouts.filter { it.dueAt <= now }
+        if (due.isEmpty()) return
+        pendingMarkouts.removeAll(due.toSet())
+        due.forEach { pending ->
+            val fill = pending.fill
+            val market = selectedMarkets.firstOrNull { it.conditionId == fill.marketId }
+            val book = market?.let { books[it.favoriteTokenId] }
+            val bestBid = book?.bestBid
+            val bestAsk = book?.bestAsk
+            val pnl = EventMakerMarkoutCalculator.calculate(fill.side, fill.price, fill.shares, bestBid, bestAsk)
+            markoutsWriter.write(
+                listOf(
+                    fill.timestamp,
+                    fill.marketId,
+                    fill.orderId,
+                    fill.side.name,
+                    fill.price.toPlainString(),
+                    fill.shares.toPlainString(),
+                    now,
+                    bestBid ?: "",
+                    bestAsk ?: "",
+                    pnl ?: ""
+                ).joinToString(",")
+            )
+            markoutsWriter.newLine()
+        }
+        markoutsWriter.flush()
+    }
+
+    private data class PendingMarkout(
+        val fill: EventMakerShadowFill,
+        val dueAt: Long
+    )
+    private fun addError(message: String) {
+        errors.addLast(message)
+        while (errors.size > 100) errors.removeFirst()
+    }
+
+    private fun writeSnapshots(states: List<EventMakerLiveState>, now: Long) {
+        states.forEach { state ->
+            val book = books[state.market.favoriteTokenId]
+            val snapshot = ShadowSnapshot(
+                timestamp = now,
+                marketId = state.market.conditionId,
+                phase = state.phase.name,
+                bestBid = book?.bestBid,
+                bestAsk = book?.bestAsk,
+                entryPrice = state.entryPrice.toPlainString(),
+                inventoryShares = state.inventoryShares.toPlainString(),
+                activeOrderId = state.activeOrder?.orderId,
+                activeOrderPrice = state.activeOrder?.price?.toPlainString(),
+                realizedPnl = state.realizedPnl,
+                unrealizedPnl = state.markToMarket(book),
+                completedCycles = state.completedCycles,
+                fills = state.fills.size
+            )
+            snapshotsWriter.write(
+                listOf(
+                    snapshot.timestamp,
+                    snapshot.marketId,
+                    snapshot.phase,
+                    snapshot.bestBid ?: "",
+                    snapshot.bestAsk ?: "",
+                    snapshot.entryPrice,
+                    snapshot.inventoryShares,
+                    snapshot.activeOrderId ?: "",
+                    snapshot.activeOrderPrice ?: "",
+                    snapshot.realizedPnl,
+                    snapshot.unrealizedPnl,
+                    snapshot.completedCycles,
+                    snapshot.fills
+                ).joinToString(",")
+            )
+            snapshotsWriter.newLine()
+        }
+        snapshotsWriter.flush()
+    }
+
+    private fun writeMarketList(markets: List<LivePaperMarket>) {
+        Files.writeString(
+            options.outputDir.resolve("markets.json"),
+            prettyGson.toJson(markets),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+    }
+
+    private fun writeEvent(value: Any) {
+        eventsWriter.write(gson.toJson(value))
+        eventsWriter.newLine()
+        eventsWriter.flush()
+    }
+}
