@@ -213,7 +213,7 @@ p0.97-0.99_off1.0_spread2.0_q1.0_c1_r0
 
 ## 9. Shadow 验证状态
 
-已启动两组真实盘口 Shadow：
+曾启动两组真实盘口 Shadow，但旧长测因运行中重编译产生类版本冲突，不能作为有效证据：
 
 - 2h：`backend/build/research/event-maker-shadow-passive-2c-2h-20261019/`
 - 12h：`backend/build/research/event-maker-shadow-passive-2c-12h-20261019/`
@@ -224,12 +224,12 @@ p0.97-0.99_off1.0_spread2.0_q1.0_c1_r0
 - Xi Jinping out before 2027：BUY 0.963；
 - Will China invade Taiwan by end of 2026：BUY 0.968。
 
-截至 2026-10-19 05:22：
+截至 2026-10-19 06:52：
 
-- 两个进程仍在运行。
-- 选中市场在启动后没有新的公共成交。
-- 两组均 0 fill，`markouts.csv` 为空。
-- 因此当前不能对实盘成交质量下结论。
+- 旧 2h 进程结束时 `NoSuchMethodError`，无有效 `summary.json`。
+- 旧 12h 进程仍为 0 fill，已主动停止，避免结束时同类错误。
+- 用最终代码重启 2h 时，0.97～0.99 价格带无合格市场，未启动。
+- 当前不能对真实成交质量下结论，也不降低价格条件制造 fill。
 
 新代码已加入：
 

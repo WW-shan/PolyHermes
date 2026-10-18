@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-19）：完整池 4,187 市场回测的最强候选 ROI 仅约 +0.92%，低于持有基线 +1.11%；队列因子升到 50 后 ROI 转负。2h/12h Shadow 正在运行，截至 05:22 仍 0 fill。当前不应实盘、不应跟单，真实小资金 smoke 尚未执行。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-19）：完整池回测最强训练期候选 ROI 约 +0.81%，q50 和 50bps 费用下转负。新版 10min/1min Shadow 冒烟通过，但旧长测因运行中重编译导致类版本冲突而无效；当前 0.97～0.99 无合格活跃市场，尚未启动干净长测。当前不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。

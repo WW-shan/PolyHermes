@@ -1,6 +1,6 @@
 # Event Maker 执行台账（2026-10-19）
 
-> 最后更新：2026-10-19 05:32 +08:00
+> 最后更新：2026-10-19 06:52 +08:00
 > 目的：把目标、计划、实际动作、命令、结果、证据和恢复步骤持续写入仓库，避免依赖聊天记忆。
 > 当前状态：**进行中，不得标记完成**
 > 权威计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
@@ -26,7 +26,7 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 持续观察 2 小时和 12 小时真实盘口 Shadow | 进行中 | 两个输出目录、`events.jsonl`、`snapshots.csv`、最终 `summary.json` |
+| OBS-1 | 干净长测真实盘口 Shadow | 等待合格市场 | 需要 0.97～0.99 活跃市场；当前为空窗 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
 | BT-3 | 扩大到完整候选池，验证零结算亏损是否偶然 | 已完成 | 4,187 市场、864 配置、full/full-v2 CSV |
@@ -34,15 +34,14 @@
 | DOC-2 | 更新计划、日志、运行手册和正式报告 | 已完成 | 文档 diff、`git diff --check` |
 | TEST-1 | event-maker/research 定向测试和全量测试 | 已完成 | 95 suites / 445 tests / 0 failures / 2 skipped |
 | GIT-1 | 提交并推送全部已验证改动 | 已完成 | `06d168f`、`main -> main` |
-| OBS-2 | 分析 Shadow 完成结果并决定是否继续研究 | 待开始 | fill/markout/PnL/库存分析 |
+| OBS-2 | 分析 Shadow 完成结果 | 部分完成 | 10min/1min 冒烟通过；旧 2h/12h 无效或已停止 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
-## 3. 当前后台进程
+## 3. 最近后台进程与状态
 
 | 进程 | 会话 ID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| 被动入场 Shadow 2h | 47525 | 2026-10-19 04:50 +08:00 | 2026-10-19 06:50 +08:00 | `backend/build/research/event-maker-shadow-passive-2c-2h-20261019/` | 运行中，0 fill |
-| 被动入场 Shadow 12h | 58042 | 2026-10-19 04:52 +08:00 | 2026-10-19 16:52 +08:00 | `backend/build/research/event-maker-shadow-passive-2c-12h-20261019/` | 运行中，0 fill |
+| 旧被动入场 2h/12h | 47525 / 58042 | 04:50 / 04:52 | 已结束 | `event-maker-shadow-passive-2c-*` | 旧 2h 收尾类冲突无效；旧 12h 已停止；均 0 fill |
 
 轮询方式：使用统一执行会话 `write_stdin`，不要重复启动同名 Shadow。
 
@@ -54,7 +53,7 @@
 | Xi Jinping out before 2027 | 0.963 | 0 |
 | Will China invade Taiwan by end of 2026 | 0.968 | 0 |
 
-截至 05:22 的观察：选中市场在 Shadow 启动后没有新的公共成交，因此 0 fill 不代表队列假说已经被验证；继续等待长测。
+截至 06:52：旧 2h 收尾类冲突无效，旧 12h 已停止；新版 10min/1min 冒烟通过但 0 fill；当前无可交易的 0.97～0.99 市场。
 
 ## 4. 本轮动作记录
 
@@ -159,3 +158,11 @@ cd D:\Project\PolyHermes\backend
 - 推送：`origin/main`，`179f2b2..06d168f main -> main`。
 - 全量测试：95 suites / 445 tests / 0 failures / 0 errors / 2 skipped。
 - 当前仅剩真实盘口 Shadow 填充验证和需要用户授权的 Live smoke。
+
+### 06:52 长测失效处理
+
+- 旧 2h 在结束 diagnostics 时 `NoSuchMethodError`，无有效 summary；旧 12h 已停止。
+- 最终代码 10min/1min 冒烟通过，退出 activeOrders=0。
+- 当前 0.97～0.99 无可交易候选，唯一活跃 candidate 为 0.95；未降低价格带。
+- 当前没有运行中的 Shadow。
+- 后续干净长测启动后禁止重编译/跑测试。

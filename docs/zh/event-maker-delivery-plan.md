@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**实现、完整池回测、Shadow 和 Live mock 已完成；完整池显示 edge 很薄，真实 fill 与小资金 smoke 尚未通过**<br>
-> 最后更新：2026-10-19 05:32 +08:00<br>
+> 当前状态：**实现、完整池回测和 Live mock 已完成；边缘很薄，旧长测因工具链错误无效，当前等待合格市场重启干净 Shadow**<br>
+> 最后更新：2026-10-19 06:52 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -38,8 +38,9 @@
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
 | Live 订单对账 | 已完成，恢复/未知状态测试通过 | `EventMakerLiveState.kt` |
 | 2 小时 Shadow 长测 | 旧基线稳定性通过；策略 0 fill | `event-maker-shadow-2026-10-19.md` |
-| 被动入场 2h/12h Shadow | 运行中；截至 05:22 为 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
+| 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
+| 新干净长测 | 当前 0.97～0.99 无可交易市场，尚未启动 | 无候选；不强改价格带 |
 | 全量测试 | 95 suites / 445 tests / 0 failures / 2 skipped | `backend/build/test-results/test/` |
 | Live 端到端测试 | 引擎级 mock 已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
 
@@ -138,7 +139,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | 报价逻辑正确 | 单元测试覆盖买入/卖出/队列/tick | 已完成 |
 | 风险限制有效 | 单元测试覆盖库存/亏损/市场数 | 已完成 |
 | Shadow 无重复成交 | transaction hash 去重统计为 0 重复组 | 已完成（2h 基线 0 重复键） |
-| Shadow 有真实 fill | events/trades/snapshots 和回合明细 | 历史纸交易有 fill；被动 2h/12h 截至 05:22 仍 0 fill |
+| Shadow 有真实 fill | events/trades/snapshots 和回合明细 | 历史纸交易有 fill；新版冒烟 0 fill；旧长测无效或已停止 |
 | Live post-only | mock 捕获 `postOnly=true` 和 `orderType=GTC` | 已完成 |
 | Live 部分成交 | mock 状态机测试 | 已完成 |
 | Live 断线恢复 | 重连和对账测试 | 已完成（引擎恢复/未知状态测试） |
@@ -225,7 +226,7 @@ cd D:\Project\PolyHermes\backend
 - 已完成：策略模型、报价规划、风险策略、统一 Shadow/Live 引擎、Live 执行适配器、REST 接口、持久化恢复、账户与资金校验、执行守卫、逐笔/逐回合审计。
 - 已完成：编译修复、持久化测试、Live mock 集成测试、统一 Shadow 与 planner、执行守卫、逐笔/逐回合审计、运行手册。
 - 已验证：全量 95 suites / 445 tests / 0 failures / 2 skipped；完整池 4,187 市场 / 864 配置回测成功。
-- 已完成：旧 2 小时 Shadow 稳定性验收、去重与订单事件检查；被动 2h/12h Shadow 正在运行。
+- 已失效：旧被动 2h 在收尾时因同 classpath 重编译触发 `NoSuchMethodError`；旧 12h 已停止。新版 10min/1min 冒烟通过。
 - 未完成：真实小资金 Live smoke。原因是没有可用账户、资金和明确实盘授权；不得用 mock 结果冒充真实实盘验证。
 - 策略结论：训练期选参配置在完整池为总 ROI +0.81%、训练 +1.10%、测试 +0.56%；3 次结算亏损、最大回撤 146.49 USDC，q50 与 50bps 费用下转负。当前不能实盘，也不能跟单。
 
@@ -265,7 +266,7 @@ cd D:\Project\PolyHermes\backend
 3. 队列压力已完成：off1/q1 配置在 q10 为 +0.41%、q20 约 0、q50 为 -0.77%。
 4. 费用压力已完成：训练期选参配置在 25bps 双边费用下总 ROI +0.31%、测试 +0.06%；50bps 下转负。
 5. Shadow 修复已完成：`shadowFillVolumeFactor`、60/300/1800 秒 markout、盘口年龄和订单队列诊断。
-6. 正在运行：被动入场 2h/12h Shadow；截至 05:22 选中市场启动后无新成交，fill 为 0。
-7. 下一步：等待 2h 结束并检查 `summary.json`、`execution-diagnostics.json`；若无 fill，不降低价格条件，继续等 12h 或更换有真实成交流的市场。
+6. 当前没有运行中的 Shadow；0.97～0.99 价格带暂无合格活跃市场，不能通过降低价格带制造 fill。
+7. 下一步：等待合格的 0.97～0.99 活跃市场出现，再用最终代码启动干净的 2h/12h Shadow；启动后禁止重新编译或跑测试。
 8. 只有在保守成交因子下出现足够 fill、markout 可解释、尾部亏损可控且费用后仍为正，才讨论小资金 Live smoke。
 9. 真实 Live smoke 仍需要账户、资金上限、明确授权、时间窗口和市场范围。

@@ -437,3 +437,11 @@
 - 提交：`06d168f feat: harden event maker shadow and full-pool validation`。
 - 推送：`179f2b2..06d168f main -> main`。
 - 推送前全量测试：95 suites / 445 tests / 0 failures / 0 errors / 2 skipped。
+### 06:52 旧长测失效与当前市场空窗
+
+- 旧 2h Shadow 在结束时触发 `NoSuchMethodError`：长进程启动后重新编译了同一 classpath，退出时加载到新构造器签名，未能生成有效 `summary.json`。结论：该运行不能作为证据。
+- 为避免 12h 组在结束前重复同类错误，已停止旧 12h 进程；停止前仍为 0 fill。
+- 用最终代码重启 2h 时，0.97～0.99 价格带没有合格市场；唯一活跃候选 `US x Iran ceasefire continues through October 22?` 的 favorite 买一为 0.95，被 `price_out_of_range` 拒绝。
+- 决定：不降低价格带、不伪造成交；等待出现 0.97～0.99 活跃市场后再启动干净长测。
+- 操作规则：Shadow 长进程启动后，不再执行 `compileKotlin`/`test`，避免同 classpath 类版本冲突。
+- 当前无 Shadow 进程在运行。
