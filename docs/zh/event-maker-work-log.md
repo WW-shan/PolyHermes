@@ -292,7 +292,7 @@
   - `backend/build/research/event-maker-shadow-filtered-wide-45m-20261019/`
   - `backend/build/research/event-maker-shadow-aggressive-30m-20261019/`
   - 正式报告：`docs/zh/event-maker-shadow-2026-10-19.md`
-### 03:12 最终全量测试
+### 03:00 最终全量测试
 
 - 命令：`.\gradlew.bat test --console=plain`
 - 结果：95 个测试套件、428 个测试、0 失败、0 错误、2 跳过。
@@ -301,3 +301,28 @@
   - 发现并修复 Spring 执行端口 Bean 歧义：`ClobEventMakerExecutionAdapter` 标记为 `@Primary`。
   - 新增测试验证真实适配器是主执行端口。
 - 证据：`backend/build/test-results/test/`
+### 03:05 提交并推送
+
+- 提交：`6eca4ff feat: complete event maker execution and shadow validation`
+- 推送：`origin/main`，`e48164a..6eca4ff`
+- 状态：代码与验证已提交；计划/日志收尾修改尚未提交（以本段记录产生时为准）。
+- 说明：实盘小资金 smoke 仍未执行，原因是当前没有提供可用账户、资金和明确授权；mock/引擎级执行链路已验证。
+### 03:07 文档审计与执行记录收尾
+
+- 目标：把当前计划、实际动作、命令、结果、证据和阻塞项写入仓库，确保下一轮不依赖聊天记忆。
+- 前置状态：`main` 分支；`6eca4ff` 已推送；仅 `event-maker-delivery-plan.md` 和 `event-maker-work-log.md` 有未提交修改。
+- 执行的检查：
+  - `git status --short`
+  - `git log -3 --oneline`
+  - `git diff -- docs/zh/event-maker-delivery-plan.md docs/zh/event-maker-work-log.md`
+  - 从 `backend/build/test-results/test/TEST-*.xml` 汇总测试数。
+- 检查结果：
+  - 全量测试产物：95 suites / 428 tests / 0 failures / 0 errors / 2 skipped。
+  - 发现并修正日志时间线错误：原记录写 `03:12` 测试、`03:20` 提交，但 Git 实际提交时间为 `2026-10-19 03:05:36 +08:00`；现已改为 `03:00` 和 `03:05`。
+  - 文档此前误写“工作区干净”，已修正为代码提交后仍有文档收尾修改。
+- 文档动作：
+  - 更新计划顶部状态、当前基线、验收矩阵、当前检查点和下一步。
+  - 明确真实小资金 Live smoke 未执行，且当前不应实盘、不应跟单。
+  - 明确下一步先完成文档提交，再继续策略 edge 研究；真实 Live smoke 必须等待账户、资金和显式授权。
+- 证据：本文件及 `docs/zh/event-maker-delivery-plan.md`。
+- 下一步：提交并推送本轮文档，随后核对 `git status --short` 和 `git log -2 --oneline`。

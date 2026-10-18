@@ -7,6 +7,8 @@
 
 ## 1. 当前能力边界
 
+> 当前验证状态（2026-10-19）：执行链路稳定，2 小时 Shadow 长测无错误、无未知状态、无重复成交键，但统一策略为 0 fill；历史回测未证明稳定 edge。当前不应实盘、不应跟单。真实小资金 smoke 尚未执行，等待账户、资金和明确授权。证据见 [event-maker-shadow-2026-10-19.md](event-maker-shadow-2026-10-19.md)。
+
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
 - `LIVE` 默认关闭；必须显式设置 `liveTradingEnabled=true` 且提供 `accountId`。

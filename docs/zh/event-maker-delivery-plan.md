@@ -2,9 +2,10 @@
 
 > 创建时间：2026-10-18 23:37 +08:00  
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。  
-> 当前状态：**进行中（P3 持久化恢复与 P4 验证阶段）**  
-> 最后更新：2026-10-19 00:17 +08:00
-> 工作日志：[event-maker-work-log.md](event-maker-work-log.md)  
+> 当前状态：**实现、回测、Shadow 和 Live mock 验证已完成；真实小资金 smoke 待账户与明确授权**<br>
+> 最后更新：2026-10-19 03:07 +08:00<br>
+> 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
+> 恢复顺序：先读第 9.2 节“当前检查点”，再读第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)
 
 ## 1. 完成定义
@@ -18,6 +19,7 @@
 5. Live 模式有显式开关、账户校验、资金/库存/亏损上限和一键停止。
 6. 实际运行证据、命令、输出文件、测试结果和已知限制都写入仓库文档。
 7. 代码、测试、报告提交并推送。
+8. 在用户提供账户、资金并明确授权后，完成真实小资金 Live smoke，并记录订单、成交、撤单、对账和停止证据。
 
 ## 2. 当前基线
 
@@ -28,12 +30,14 @@
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | 7 tests passed |
-| Shadow Spring 服务 | 初版已完成，待统一 planner | `EventMakerStrategyService.kt` |
-| Live CLOB 执行适配器 | 初版已完成，待补集成测试 | `ClobEventMakerExecutionAdapter.kt` |
+| 策略核心单元测试 | 已完成 | event-maker 45 tests / 0 failures |
+| Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
+| Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
-| Live 订单对账 | 初版已完成，待补恢复测试 | `EventMakerLiveState.kt` |
-| Live 端到端测试 | 未完成 | 先做 mock E2E，再做小资金 smoke |
+| Live 订单对账 | 已完成，恢复/未知状态测试通过 | `EventMakerLiveState.kt` |
+| 2 小时 Shadow 长测 | 已完成稳定性验收；策略 0 fill | `event-maker-shadow-2026-10-19.md` |
+| 全量测试 | 95 suites / 428 tests / 0 failures | `backend/build/test-results/test/` |
+| Live 端到端测试 | 引擎级 mock 已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
 
 ## 3. 目标架构
 
@@ -116,7 +120,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [ ] 实际小资金 live smoke 通过（需要用户账户和显式授权）。
 - [x] 更新策略文档、运行手册和故障处理手册。
 - [x] 全量测试通过。
-- [ ] 提交并推送。
+- [x] 代码与验证提交并推送（`6eca4ff`）；计划/日志收尾随本文件所在提交完成。
 
 ## 5. 验收矩阵
 
@@ -132,6 +136,9 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | Live 断线恢复 | 重连和对账测试 | 已完成（引擎恢复/未知状态测试） |
 | 一键停止 | 停止后无活跃订单、无新报价 | 已完成（引擎撤单测试） |
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
+| Shadow 长测稳定性 | 2h 无错误、无未知状态、无重复成交键 | 已完成 |
+| 全量回归 | 95 suites / 428 tests / 0 failures / 2 skipped | 已完成 |
+| 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
 
@@ -201,24 +208,47 @@ cd D:\Project\PolyHermes\backend
 4. 计划文件同步更新 checkbox；不能只改日志而不改验收矩阵。
 5. 不允许用“应该可以”“看起来正常”替代测试输出或运行证据。
 
-### 9.2 当前检查点（2026-10-19 01:50）
+### 9.2 当前检查点（2026-10-19 03:07 +08:00）
 
+- 当前分支：`main`。
+- 最新代码/验证提交：`6eca4ff feat: complete event maker execution and shadow validation`，提交时间 `2026-10-19 03:05:36 +08:00`。
+- 文档收尾：本文件所在提交；提交后用 `git log -1 --oneline` 核对。
 - 已完成：策略模型、报价规划、风险策略、统一 Shadow/Live 引擎、Live 执行适配器、REST 接口、持久化恢复、账户与资金校验、执行守卫、逐笔/逐回合审计。
 - 已完成：编译修复、持久化测试、Live mock 集成测试、统一 Shadow 与 planner、执行守卫、逐笔/逐回合审计、运行手册。
-- 已验证：event-maker 45 tests；全量 428 tests / 0 failures；历史回测 30 市场 / 162 配置复跑成功。
+- 已验证：event-maker 45 tests / 0 failures；全量 95 suites / 428 tests / 0 failures / 2 skipped；历史回测 30 市场 / 162 配置复跑成功。
 - 已完成：2 小时 Shadow 稳定性验收、去重与订单事件检查、正式 Shadow 报告。
+- 未完成：真实小资金 Live smoke。原因是没有可用账户、资金和明确实盘授权；不得用 mock 结果冒充真实实盘验证。
+- 策略结论：执行链路稳定，但统一 Shadow 多次运行均为 0 fill，历史回测没有找到训练/测试都稳健的正收益配置。当前不应实盘，也不应跟单。
 
 ### 9.3 后续执行顺序
 
-1. 完成并验收 2 小时 Shadow 长测；
-2. 检查去重、未知状态、订单/回合记账；
-3. 运行最终全量测试；
-4. 在用户明确授权且有账户资金时执行小资金 smoke；
-5. 提交并推送。
+1. 提交并推送本轮计划/日志收尾文档，确认工作区干净。
+2. 保持 Shadow/mock 模式，继续验证策略 edge；不能通过放宽 post-only、风控或队列约束来制造成交。
+3. 只有用户提供可用账户、资金并明确授权后，才按运行手册执行最小金额 Live smoke。
+4. Live smoke 必须记录账户、配置、订单、成交、撤单、对账、PnL、错误和停止结果；任何未知状态都必须 fail-closed。
+5. 没有稳定 edge 证据前，不进入真实资金运行。
 
 ## 10. 当前下一步
 
-1. 等待 2 小时 Shadow 和筛选版 Shadow 完成；
-2. 分析 `summary.json`、`events.jsonl`、`trades.csv`、`snapshots.csv`、`state.json`；
-3. 写正式 Shadow 报告并更新验收矩阵；
-4. 最终提交推送。
+### 10.1 当前收尾
+
+1. 提交并推送 `event-maker-delivery-plan.md` 与 `event-maker-work-log.md`。
+2. 运行 `git status --short` 和 `git log -2 --oneline`，确认提交范围和工作区状态。
+3. 将最终提交哈希反馈给用户，并保留工作日志中的命令、结果和证据路径。
+
+### 10.2 需要用户输入的阻塞项
+
+真实小资金 Live smoke 需要：
+
+- 可用账户和 `accountId`；
+- 明确可用的资金上限；
+- 用户对真实下单的显式授权；
+- 允许运行的时间和市场范围。
+
+在上述条件满足前，只允许 Shadow、mock 和离线回测，不允许真实下单。
+
+### 10.3 策略研究下一步
+
+1. 继续分析 0 fill 的根因：市场筛选、队列位置、报价改善 tick、taker 流和 markout。
+2. 用历史数据和 Shadow 数据比较不同市场/价格/库存参数，要求训练与测试都覆盖足够样本。
+3. 只有同时满足稳定正收益、可解释成交来源、尾部风险可控和 Shadow 有真实 fill，才讨论小资金 smoke。
