@@ -1,6 +1,6 @@
 # Event Maker 执行台账（2026-10-19）
 
-> 最后更新：2026-10-19 07:26 +08:00
+> 最后更新：2026-10-19 07:29 +08:00
 > 目的：把目标、计划、实际动作、命令、结果、证据和恢复步骤持续写入仓库，避免依赖聊天记忆。
 > 当前状态：**进行中，不得标记完成**
 > 权威计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
@@ -199,3 +199,14 @@ cd D:\Project\PolyHermes\backend
 - 结论：当前严格条件下没有可报价市场；不是发现截断。禁止降低价格带、活动门槛或 `minSpreadTicks` 来制造 fill。
 - 测试：5/5 发现测试通过；全量 96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
 - 当前没有运行中的 Shadow 或 Backtest 进程。
+### 07:29 提交 keyset 修复
+
+- 提交：`7b0bf7b feat: use keyset pagination for market discovery`。
+- 推送：`origin/main`，`a2e14c7..7b0bf7b main -> main`。
+- 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 当前无 Shadow/Backtest 进程；等待满足严格条件的真实市场。
+### 07:32 清理记录
+
+- 仅清理 `backend/build/research/` 内 9 个失效/重复目录，逐项校验绝对路径位于研究输出根目录。
+- 保留 keyset v3 诊断、v2 Shadow 冒烟和完整池/费用敏感性正式证据。
+- 本次没有删除源码、正式报告、测试结果或 Git 跟踪文件。

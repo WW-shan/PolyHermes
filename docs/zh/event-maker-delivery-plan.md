@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**keyset 发现和候选审计已完成；当前严格条件下无 2-tick 可报价市场，等待合格市场恢复干净 Shadow**<br>
-> 最后更新：2026-10-19 07:26 +08:00<br>
+> 最后更新：2026-10-19 07:29 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -218,21 +218,22 @@ cd D:\Project\PolyHermes\backend
 4. 计划文件同步更新 checkbox；不能只改日志而不改验收矩阵。
 5. 不允许用“应该可以”“看起来正常”替代测试输出或运行证据。
 
-### 9.2 当前检查点（2026-10-19 05:32 +08:00）
+### 9.2 当前检查点（2026-10-19 07:29 +08:00）
 
 - 当前分支：`main`。
-- 最新已推送提交：`06d168f feat: harden event maker shadow and full-pool validation`。
-- 当前工作区：主体代码与文档已推送；本轮收尾只更新 commit hash 和最终状态。
+- 最新已推送提交：`7b0bf7b feat: use keyset pagination for market discovery`。
+- 当前工作区：主体代码与文档已推送；最新发现修复和证据已写入仓库。
 - 已完成：策略模型、报价规划、风险策略、统一 Shadow/Live 引擎、Live 执行适配器、REST 接口、持久化恢复、账户与资金校验、执行守卫、逐笔/逐回合审计。
 - 已完成：编译修复、持久化测试、Live mock 集成测试、统一 Shadow 与 planner、执行守卫、逐笔/逐回合审计、运行手册。
-- 已验证：全量 95 suites / 445 tests / 0 failures / 2 skipped；完整池 4,187 市场 / 864 配置回测成功。
-- 已失效：旧被动 2h 在收尾时因同 classpath 重编译触发 `NoSuchMethodError`；旧 12h 已停止。新版 10min/1min 冒烟通过。
+- 已验证：全量 96 suites / 450 tests / 0 failures / 2 skipped；完整池 4,187 市场 / 864 配置回测成功。
+- 已失效：旧被动 2h 在收尾时因同 classpath 重编译触发 `NoSuchMethodError`；旧 12h 已停止。
+- 已完成：官方 keyset 分页、价格预筛和逐候选活动诊断；真实扫描 6 个候选、1 个活动通过，但价差仅 1 tick。
 - 未完成：真实小资金 Live smoke。原因是没有可用账户、资金和明确实盘授权；不得用 mock 结果冒充真实实盘验证。
 - 策略结论：训练期选参配置在完整池为总 ROI +0.81%、训练 +1.10%、测试 +0.56%；3 次结算亏损、最大回撤 146.49 USDC，q50 与 50bps 费用下转负。当前不能实盘，也不能跟单。
 
 ### 9.3 后续执行顺序
 
-1. 提交并推送本轮计划/日志收尾文档，确认工作区干净。
+1. 保持 keyset 发现版本，监控满足价格带、成交额、活动度和 `minSpreadTicks` 的真实市场。
 2. 保持 Shadow/mock 模式，继续验证策略 edge；不能通过放宽 post-only、风控或队列约束来制造成交。
 3. 只有用户提供可用账户、资金并明确授权后，才按运行手册执行最小金额 Live smoke。
 4. Live smoke 必须记录账户、配置、订单、成交、撤单、对账、PnL、错误和停止结果；任何未知状态都必须 fail-closed。
@@ -242,9 +243,9 @@ cd D:\Project\PolyHermes\backend
 
 ### 10.1 当前收尾
 
-1. 提交并推送 `event-maker-delivery-plan.md` 与 `event-maker-work-log.md`。
-2. 运行 `git status --short` 和 `git log -2 --oneline`，确认提交范围和工作区状态。
-3. 将最终提交哈希反馈给用户，并保留工作日志中的命令、结果和证据路径。
+1. 最新提交 `7b0bf7b` 已推送；文档收尾提交后确认工作区干净。
+2. 等待满足全部策略条件的真实市场；不要通过放宽门槛制造 fill。
+3. 出现合格市场后使用最终代码启动干净 2h/12h Shadow，并在运行期间禁止重编译/测试。
 
 ### 10.2 需要用户输入的阻塞项
 
@@ -259,15 +260,15 @@ cd D:\Project\PolyHermes\backend
 
 ### 10.3 策略研究下一步
 
-当前研究轮次（2026-10-19 05:32）：
+当前研究轮次（2026-10-19 07:29）：
 
 1. 完整池回测已完成：训练期选参配置 `p0.97-0.99_off0.5_spread2.0_q1.0_c3_r0`，总 ROI +0.81%、训练 +1.10%、测试 +0.56%。
 2. 尾部风险已完成：278 回合中 3 次结算亏损，每次 -100 USDC；最大已实现回撤 146.49 USDC。
 3. 队列压力已完成：off1/q1 配置在 q10 为 +0.41%、q20 约 0、q50 为 -0.77%。
 4. 费用压力已完成：训练期选参配置在 25bps 双边费用下总 ROI +0.31%、测试 +0.06%；50bps 下转负。
 5. Shadow 修复已完成：`shadowFillVolumeFactor`、60/300/1800 秒 markout、盘口年龄和订单队列诊断。
-6. 当前没有运行中的 Shadow；0.97～0.99 价格带暂无合格活跃市场，不能通过降低价格带制造 fill。
-7. 下一步：先修复 Gamma 市场分页和候选截断，确认 0.97～0.99 候选扫描完整，再用最终代码启动干净的 2h/12h Shadow；启动后禁止重新编译或跑测试。
+6. 当前没有运行中的 Shadow；keyset 扫描确认严格条件下暂无 2-tick 可报价市场，不能通过降低价差或活动门槛制造 fill。
+7. 下一步：监控合格市场出现，再用最终代码启动干净的 2h/12h Shadow；启动后禁止重新编译或跑测试。
 8. 只有在保守成交因子下出现足够 fill、markout 可解释、尾部亏损可控且费用后仍为正，才讨论小资金 Live smoke。
 9. 真实 Live smoke 仍需要账户、资金上限、明确授权、时间窗口和市场范围。
 
@@ -277,12 +278,12 @@ cd D:\Project\PolyHermes\backend
 
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
-| DISC-1 | Gamma 市场发现分页与资格过滤前移 | 已完成 | 代码、5 个发现测试、`market-discovery.json` 统计 |
+| DISC-1 | Gamma 市场发现分页与资格过滤前移 | 已完成 | keyset 分页、5 个发现测试、`market-discovery.json` 统计 |
 | DISC-2 | 用真实 API 检查 0.97～0.99 候选覆盖 | 已完成 | keyset 扫描、6 个预筛候选、`market-discovery.json` |
-| TEST-2 | 定向和全量回归测试 | 已完成 | 96 suites / 449 tests / 0 failures / 2 skipped |
-| GIT-2 | 提交并推送修复 | 待执行 | commit hash、`main -> main` |
+| TEST-2 | 定向和全量回归测试 | 已完成 | 96 suites / 450 tests / 0 failures / 2 skipped |
+| GIT-2 | 提交并推送修复 | 已完成 | `7b0bf7b`、`main -> main` |
 | OBS-3 | 修复后干净 Shadow 长测 | 等待合格候选 | 当前唯一活动候选价差 1 tick，不满足 2 tick |
-| CLEAN-1 | 清理一次性构建/研究产物 | 待执行 | 删除清单和保留清单 |
+| CLEAN-1 | 清理一次性构建/研究产物 | 已完成本轮 | 删除 9 个失效/重复目录，保留正式证据 |
 
 执行顺序：DISC-1 → 测试 → 真实候选检查 → 提交 → OBS-3 → 结果分析 → CLEAN-1。若真实候选仍为空，记录为真实市场空窗，不降低价格带。
 
@@ -294,3 +295,10 @@ cd D:\Project\PolyHermes\backend
 - 6 个价格预筛候选，6 个活动过滤检查，1 个通过；唯一通过者价差 1 tick，被 `minSpreadTicks=2` 拒绝。
 - 当前不是市场发现故障，而是严格策略条件没有可报价市场。
 - 下一步不是放宽条件，而是等待满足价格带、成交额、活动度和价差要求的市场；出现后再启动干净 2h/12h Shadow。
+
+### 10.6 2026-10-19 07:29 提交记录
+
+- 提交：`7b0bf7b feat: use keyset pagination for market discovery`。
+- 推送：`origin/main`，`a2e14c7..7b0bf7b main -> main`。
+- 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 当前没有 Shadow/Backtest 进程；等待合格市场。

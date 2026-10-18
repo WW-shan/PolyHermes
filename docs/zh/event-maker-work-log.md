@@ -490,3 +490,23 @@
   - 其余 5 个候选主要因 30 分钟成交笔数低于 3 被过滤，不能通过放宽活动门槛伪造活跃度。
 - 结论：这不是“发现逻辑空窗”，而是当前严格条件（0.97～0.99、成交额 >=100k、活动门槛、价差 >=2 tick）下确实没有可报价市场。不得降低价差或活动门槛来制造成交。
 - 当前无 Shadow/Backtest 进程；等待满足全部条件的真实市场后再启动干净 2h/12h Shadow。
+### 07:29 提交 keyset 修复
+
+- 提交：`7b0bf7b feat: use keyset pagination for market discovery`；已推送 `a2e14c7..7b0bf7b main -> main`。
+- 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 当前无 Shadow/Backtest 进程；等待满足价格带、成交额、活动度和 2-tick 价差的真实市场。
+### 07:32 清理失效与一次性运行目录
+
+- 清理范围仅限 `backend/build/research/`，删除前逐项验证解析后的绝对路径位于该目录下。
+- 已删除 9 个失效或已被正式证据替代的目录：
+  - `event-maker-shadow-fill-smoke-20261019`
+  - `event-maker-shadow-fill-smoke2-20261019`
+  - `event-maker-shadow-fill-smoke3-20261019`
+  - `event-maker-shadow-fill-smoke4-20261019`
+  - `event-maker-shadow-final-2h-20261019`
+  - `event-maker-discovery-audit-20261019`
+  - `event-maker-shadow-discovery-20261019`
+  - `event-maker-shadow-keyset-20261019`
+  - `event-maker-shadow-keyset-v2-20261019`
+- 保留：`event-maker-shadow-keyset-v3-20261019`（最终 keyset 候选诊断证据）、`event-maker-shadow-v2-smoke-20261019`、`event-maker-shadow-v2-smoke2-20261019`、完整池/费用敏感性正式 CSV。
+- 删除前已搜索 `docs/` 和 `backend/src/`，上述目录没有被正式报告引用。
