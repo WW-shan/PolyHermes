@@ -176,6 +176,13 @@ p0.97-0.99_off1.0_spread2.0_q1.0_c1_r0
 
 结论：2 美分价差不足以吸收 50bps 双边费用。只有在接近零费用、且没有额外滑点和失败的情况下才略微为正。
 
+补充说明（2026-10-19 07:58）：
+
+- 项目当前按 Polymarket 官方协议口径处理：maker 不收费，taker fee = `shares × feeRate × p × (1-p)`，只有 FAK/市价成交才计费；实现与测试见 `PolymarketTradingFee.kt`、`PolymarketTradingFeeTest.kt`。
+- 策略所有订单为 post-only maker，因此 `0 bps` 是当前基线；10/25/50/100bps 是费用恶化压力测试，不是当前 maker 收费事实。
+- 这不会消除策略风险：队列优先权、adverse selection、结算归零尾部、真实 markout 和流动性奖励不稳定仍然没有得到实盘证明。
+- 若未来协议对 maker 收费、post-only 被穿透或订单实际以 taker 成交，必须重新计算净收益。
+
 ## 7. 年份、标签与集中度
 
 训练期选出配置：

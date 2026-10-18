@@ -557,3 +557,8 @@
 - 新增 `scripts/audit-event-maker-shadow.ps1`：校验 summary、execution diagnostics、state、trades 和 markouts 的一致性，并写出 `shadow-audit.json`。
 - 审计脚本在 `event-maker-shadow-v2-smoke2-20261019` 上运行通过：fills/stateFills 均为 0、cycles/stateCycles 均为 0、activeOrders=0、重复成交行=0、failures=[]、passed=true。
 - 该审计只能验证内部一致性，不能替代真实 fill/PnL 证据，也不能把 mock/Shadow 结果冒充实盘。
+### 07:58 校验 maker/taker 费用口径
+
+- 复核 `PolymarketTradingFee.kt` 和测试：maker 不收费；taker 使用 `shares × rate × p × (1-p)`；项目测试覆盖 politics/crypto/sports 等费率与边界。
+- 回测报告已补充：0bps maker 是当前基线，10/25/50/100bps 是压力场景，不是当前 maker 收费事实。
+- 风险结论不变：真实队列、adverse selection、尾部结算和 markout 仍需 Shadow 证据；若订单实际跨价成为 taker，必须重新计算。
