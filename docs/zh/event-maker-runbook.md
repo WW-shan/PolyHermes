@@ -139,6 +139,23 @@ cd D:\Project\PolyHermes\backend
 8. `markouts.csv` 的盘口年龄不能长期超过 `shadowActiveOrderStaleSeconds`。
 9. Shadow 退出后 `execution-diagnostics.json` 的 `activeOrders` 必须为 0，最终快照必须回到 FLAT。
 
+### 4.1 检查后台等待任务
+
+```powershell
+cd D:\Project\PolyHermes
+.\scripts\check-event-maker-watch.ps1
+```
+
+脚本输出：
+
+- `wrapperAlive` / `shadowAlive`：包装进程和 JavaExec 是否存活；
+- `attempts`：已完成发现轮数；
+- `lastAttempt`：最近一轮候选、活动过滤、选择数和停止原因；
+- `state=waiting`：仍在等待；
+- `state=summary`：已进入 Shadow 并完成，同时显示 markets/fills/cycles/totalPnl；
+- `state=timeout`：等待超时，显示尝试次数和最后拒绝原因。
+
+禁止在等待或 Shadow 运行期间执行编译或测试；需要改代码时先停止 PID，并记录停止原因。
 ## 5. Spring REST 控制
 
 启动 Shadow：
