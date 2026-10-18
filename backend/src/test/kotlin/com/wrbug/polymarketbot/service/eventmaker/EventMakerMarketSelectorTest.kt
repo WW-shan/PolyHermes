@@ -52,10 +52,68 @@ class EventMakerMarketSelectorTest {
 
         assertEquals(emptyList<LivePaperMarket>(), selected)
     }
-    private fun book(tokenId: String, bid: Double, ask: Double) = MarketBook(
+    @Test
+    fun `wide spread can ignore deep best ask when exit improves price`() {
+        val market = market("wide", 0.001)
+        val books = mapOf("token-wide" to book("token-wide", 0.95, 0.96, 100.0, 100_000.0))
+
+        val selected = EventMakerMarketSelector.select(
+            listOf(market),
+            books,
+            maxMarkets = 3,
+            minSpreadTicks = 2,
+            maxQueueAheadShares = 500.0,
+            improveTicks = 1,
+            exitImproveTicks = 1
+        )
+
+        assertEquals(listOf(market), selected)
+    }
+    @Test
+    fun `passive entry offset ignores deep best bid queue`() {
+        val market = market("passive", 0.001)
+        val books = mapOf("token-passive" to book("token-passive", 0.985, 0.987, 100_000.0, 100_000.0))
+
+        val selected = EventMakerMarketSelector.select(
+            listOf(market),
+            books,
+            maxMarkets = 3,
+            minSpreadTicks = 2,
+            maxQueueAheadShares = 500.0,
+            improveTicks = 0,
+            entryOffsetCents = 1.0,
+            exitImproveTicks = 1
+        )
+
+        assertEquals(listOf(market), selected)
+    }
+    @Test
+    fun `market with oversized exit queue is excluded`() {
+        val market = market("deep-exit", 0.001)
+        val books = mapOf("token-deep-exit" to book("token-deep-exit", 0.973, 0.974, 2_000.0, 5_000.0))
+
+        val selected = EventMakerMarketSelector.select(
+            listOf(market),
+            books,
+            maxMarkets = 3,
+            minSpreadTicks = 1,
+            maxQueueAheadShares = 3_000.0,
+            exitSpreadCents = 0.1
+        )
+
+        assertEquals(emptyList<LivePaperMarket>(), selected)
+    }
+
+    private fun book(
+        tokenId: String,
+        bid: Double,
+        ask: Double,
+        bidSize: Double = 100.0,
+        askSize: Double = 100.0
+    ) = MarketBook(
         tokenId = tokenId,
-        bids = listOf(BookLevel(bid, 100.0)),
-        asks = listOf(BookLevel(ask, 100.0)),
+        bids = listOf(BookLevel(bid, bidSize)),
+        asks = listOf(BookLevel(ask, askSize)),
         updatedAt = 1_000L
     )
 

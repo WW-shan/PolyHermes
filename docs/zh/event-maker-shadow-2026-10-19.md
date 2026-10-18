@@ -1,14 +1,14 @@
 # Event Maker 统一 Shadow 长测报告
 
-> 日期：2026-10-19 +08:00  
-> 引擎：`EventMakerLiveEngine` + `EventMakerQuotePlanner` + `EventMakerRiskPolicy` + `EventMakerShadowExecutionPort`  
-> 性质：真实公共盘口/公共成交上的 Shadow 测试，不签名、不下单、不接触资金  
-> 计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)  
+> 日期：2026-10-19 +08:00
+> 引擎：`EventMakerLiveEngine` + `EventMakerQuotePlanner` + `EventMakerRiskPolicy` + `EventMakerShadowExecutionPort`
+> 性质：真实公共盘口/公共成交上的 Shadow 测试，不签名、不下单、不接触资金
+> 计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)
 
 ## 1. 一句话结论
 
-**执行链路稳定，但在当前选中的市场里没有获得任何 maker 成交。**  
+**执行链路稳定，但在当前选中的市场里没有获得任何 maker 成交。**
 因此当前策略只能证明“能安全运行、能对账、能审计”，不能证明“能赚钱”，更不能用于真实资金。
 
 ## 2. 运行配置
@@ -22,7 +22,7 @@
 - `maxCyclesPerMarket=3`；
 - 公共盘口 + 公共成交；
 - 按 transaction hash、token、side、size 去重；
-- 成交模拟：先消耗前方队列，再按公共 taker 成交数量成交。
+- 成交模拟：先消耗前方队列，再按公共 taker 成交量累计；新版本默认还要求达到 `shadowFillVolumeFactor × 订单股数` 后才成交。
 
 ## 3. 长测结果
 
@@ -84,7 +84,7 @@ best ask = 0.980
 tick = 0.001
 ```
 
-买方想改善 1 tick 就会变成 `0.980`，等于 best ask，属于跨价，会被 post-only 拒绝。  
+买方想改善 1 tick 就会变成 `0.980`，等于 best ask，属于跨价，会被 post-only 拒绝。
 因此只能挂在 `0.979`，排在现有买单后面。
 
 实测盘口队列示例：
@@ -102,7 +102,7 @@ tick = 0.001
 
 ### 5.3 提高改善 tick 数没有解决问题
 
-`improveTicks=2` 运行 30 分钟，105 笔报价、98 次撤单，仍然 0 成交。  
+`improveTicks=2` 运行 30 分钟，105 笔报价、98 次撤单，仍然 0 成交。
 继续提高改善 tick 数会靠近甚至跨过 best ask，不能靠这个参数强行制造 maker 成交。
 
 ## 6. 与历史回测的关系
@@ -154,5 +154,11 @@ cd D:\Project\PolyHermes\backend
 
 ## 9. 最终结论
 
-> **框架完成，执行安全测试通过；策略 edge 未通过。**  
+> **框架完成，执行安全测试通过；策略 edge 未通过。**
 > **当前不应实盘，也不应跟单。**
+## 10. 2026-10-19 后续更新
+
+- 完整池回测见 [event-maker-robust-backtest-2026-10-19.md](event-maker-robust-backtest-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+- 新启动 2h/12h 被动入场 Shadow，使用 1 美分 dip、2 美分退出目标；截至 05:22 选中市场启动后没有新公共成交，两组均为 0 fill。
+- 新代码默认 `shadowFillVolumeFactor=1`，并输出 60/300/1800 秒 markout、盘口年龄和 `execution-diagnostics.json`。
+- 这些运行尚未完成，不能把 0 fill 解释为策略有效，也不能据此实盘。

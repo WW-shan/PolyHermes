@@ -56,6 +56,77 @@ class EventMakerQuotePlannerTest {
     }
 
     @Test
+    fun `one cent passive offset places below best bid with zero queue`() {
+        val passiveConfig = config.copy(
+            improveTicks = 0,
+            entryOffsetCents = 1.0,
+            maxQueueAheadShares = 5_000.0
+        )
+        val intent = planner.planBuy(
+            passiveConfig,
+            book(0.985, 2_460.0, 0.987, 1_000.0),
+            tick,
+            2_000
+        )
+
+        assertNotNull(intent)
+        assertEquals(BigDecimal("0.975"), intent!!.price)
+        assertEquals(0.0, intent.queueAheadShares, 1e-9)
+        assertEquals("passive_offset", intent.reason)
+    }
+    @Test
+    fun `sell above best ask has no queue ahead`() {
+        val aboveAskConfig = config.copy(
+            exitImproveTicks = 0,
+            exitSpreadCents = 1.0,
+            maxQueueAheadShares = 5_000.0
+        )
+        val intent = planner.planSell(
+            aboveAskConfig,
+            book(0.973, 2_460.0, 0.974, 2_739.0),
+            tick,
+            BigDecimal("0.973"),
+            BigDecimal("25.69"),
+            2_000
+        )
+
+        assertNotNull(intent)
+        assertEquals(BigDecimal("0.983"), intent!!.price)
+        assertEquals(0.0, intent.queueAheadShares, 1e-9)
+    }
+    @Test
+    fun `one tick spread is rejected at quote time`() {
+        val intent = planner.planBuy(config, book(0.960, 100.0, 0.961, 100.0), tick, 2_000)
+
+        assertNull(intent)
+    }
+    @Test
+    fun `one tick spread is allowed when joining the queue`() {
+        val joinConfig = config.copy(minSpreadTicks = 1, improveTicks = 0, maxQueueAheadShares = 5_000.0)
+        val intent = planner.planBuy(joinConfig, book(0.973, 2_460.0, 0.974, 2_739.0), tick, 2_000)
+
+        assertNotNull(intent)
+        assertEquals(BigDecimal("0.973"), intent!!.price)
+        assertEquals(2_460.0, intent.queueAheadShares, 1e-9)
+    }
+
+    @Test
+    fun `sell joins best ask when exit improvement is disabled`() {
+        val joinConfig = config.copy(exitImproveTicks = 0, exitSpreadCents = 0.1, maxQueueAheadShares = 5_000.0)
+        val intent = planner.planSell(
+            joinConfig,
+            book(0.973, 2_460.0, 0.974, 2_739.0),
+            tick,
+            BigDecimal("0.973"),
+            BigDecimal("25.69"),
+            2_000
+        )
+
+        assertNotNull(intent)
+        assertEquals(BigDecimal("0.974"), intent!!.price)
+        assertEquals(2_739.0, intent.queueAheadShares, 1e-9)
+    }
+    @Test
     fun `stale book is rejected`() {
         val intent = planner.planBuy(config, book(0.96, 100.0, 0.97, 100.0, updatedAt = 1_000), tick, 100_000)
 

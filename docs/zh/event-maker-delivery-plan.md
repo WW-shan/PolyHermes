@@ -1,12 +1,13 @@
 # Event Maker 策略交付计划与验收矩阵
 
-> 创建时间：2026-10-18 23:37 +08:00  
-> 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。  
-> 当前状态：**实现、回测、Shadow 和 Live mock 验证已完成；真实小资金 smoke 待账户与明确授权**<br>
-> 最后更新：2026-10-19 03:07 +08:00<br>
+> 创建时间：2026-10-18 23:37 +08:00<br>
+> 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
+> 当前状态：**实现、完整池回测、Shadow 和 Live mock 已完成；完整池显示 edge 很薄，真实 fill 与小资金 smoke 尚未通过**<br>
+> 最后更新：2026-10-19 05:32 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
-> 恢复顺序：先读第 9.2 节“当前检查点”，再读第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
-> 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)
+> 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
+> 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
+> 正式回测：[完整池回测与策略审计](event-maker-robust-backtest-2026-10-19.md)<br>
 
 ## 1. 完成定义
 
@@ -27,16 +28,19 @@
 |---|---|---|
 | adonpoli 成交结构分析 | 已完成 | 历史报告 |
 | 1,000 市场 / 162 配置历史回测 | 已完成 | `event-maker-backtest-2026-10-17.md` |
+| 4,187 市场 / 864 配置完整池回测 | 已完成；策略 edge 不足以实盘 | `event-maker-robust-backtest-2026-10-19.md` |
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | event-maker 45 tests / 0 failures |
+| 策略核心单元测试 | 已完成 | event-maker/research 定向测试与全量 445 tests 通过 |
 | Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
 | Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
 | Live 订单对账 | 已完成，恢复/未知状态测试通过 | `EventMakerLiveState.kt` |
-| 2 小时 Shadow 长测 | 已完成稳定性验收；策略 0 fill | `event-maker-shadow-2026-10-19.md` |
-| 全量测试 | 95 suites / 428 tests / 0 failures | `backend/build/test-results/test/` |
+| 2 小时 Shadow 长测 | 旧基线稳定性通过；策略 0 fill | `event-maker-shadow-2026-10-19.md` |
+| 被动入场 2h/12h Shadow | 运行中；截至 05:22 为 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
+| 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
+| 全量测试 | 95 suites / 445 tests / 0 failures / 2 skipped | `backend/build/test-results/test/` |
 | Live 端到端测试 | 引擎级 mock 已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
 
 ## 3. 目标架构
@@ -115,29 +119,34 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 ### P4：验证与交付
 
 - [x] 历史回测重复运行，结果写入报告。
-- [x] Shadow 长测运行完成（稳定性通过；策略成交 edge 未通过）。
+- [x] 完整候选池 4,187 市场、864 配置回测完成。
+- [x] 训练期唯一选参、费用压力、队列压力、MAE 和 markout 分析完成。
+- [x] Shadow 长测运行完成（旧基线稳定性通过；策略成交 edge 未通过）。
+- [ ] 保守成交因子下 Shadow 产生足够 fill，且 markout/PnL/尾部风险可解释。
 - [x] Live mock 端到端测试通过（引擎级 mock 流程）。
 - [ ] 实际小资金 live smoke 通过（需要用户账户和显式授权）。
 - [x] 更新策略文档、运行手册和故障处理手册。
 - [x] 全量测试通过。
-- [x] 代码与验证提交并推送（`6eca4ff`）；计划/日志收尾随本文件所在提交完成。
+- [x] 早期执行框架提交并推送（`6eca4ff`、`179f2b2`）。
+- [ ] 本轮完整池回测、Shadow 修复和文档提交并推送。
 
 ## 5. 验收矩阵
 
 | 需求 | 必须提供的证据 | 当前 |
 |---|---|---|
-| 回测可复现 | 命令、输入参数、summary、报告 | 已完成（30 市场复跑） |
+| 回测可复现 | 命令、输入参数、summary、报告 | 已完成（4,187 市场完整池） |
 | 报价逻辑正确 | 单元测试覆盖买入/卖出/队列/tick | 已完成 |
 | 风险限制有效 | 单元测试覆盖库存/亏损/市场数 | 已完成 |
 | Shadow 无重复成交 | transaction hash 去重统计为 0 重复组 | 已完成（2h 基线 0 重复键） |
-| Shadow 有真实 fill | events/trades/snapshots 和回合明细 | 历史纸交易有 fill；统一引擎长测 0 fill |
+| Shadow 有真实 fill | events/trades/snapshots 和回合明细 | 历史纸交易有 fill；被动 2h/12h 截至 05:22 仍 0 fill |
 | Live post-only | mock 捕获 `postOnly=true` 和 `orderType=GTC` | 已完成 |
 | Live 部分成交 | mock 状态机测试 | 已完成 |
 | Live 断线恢复 | 重连和对账测试 | 已完成（引擎恢复/未知状态测试） |
 | 一键停止 | 停止后无活跃订单、无新报价 | 已完成（引擎撤单测试） |
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
-| Shadow 长测稳定性 | 2h 无错误、无未知状态、无重复成交键 | 已完成 |
-| 全量回归 | 95 suites / 428 tests / 0 failures / 2 skipped | 已完成 |
+| Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；新被动 Shadow 运行中 |
+| 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；q50 与 50bps 均转负 |
+| 全量回归 | 95 suites / 445 tests / 0 failures / 2 skipped | 已完成 |
 | 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
@@ -208,17 +217,17 @@ cd D:\Project\PolyHermes\backend
 4. 计划文件同步更新 checkbox；不能只改日志而不改验收矩阵。
 5. 不允许用“应该可以”“看起来正常”替代测试输出或运行证据。
 
-### 9.2 当前检查点（2026-10-19 03:07 +08:00）
+### 9.2 当前检查点（2026-10-19 05:32 +08:00）
 
 - 当前分支：`main`。
-- 最新代码/验证提交：`6eca4ff feat: complete event maker execution and shadow validation`，提交时间 `2026-10-19 03:05:36 +08:00`。
-- 文档收尾：本文件所在提交；提交后用 `git log -1 --oneline` 核对。
+- 最新已推送提交：`179f2b2 docs: finalize event maker execution ledger`。本轮的报价、队列、过滤器和诊断改动尚未提交。
+- 当前工作区：代码、测试、计划、日志、运行手册和完整池报告尚未提交；提交前必须完成 `git diff --check` 和最终审查。
 - 已完成：策略模型、报价规划、风险策略、统一 Shadow/Live 引擎、Live 执行适配器、REST 接口、持久化恢复、账户与资金校验、执行守卫、逐笔/逐回合审计。
 - 已完成：编译修复、持久化测试、Live mock 集成测试、统一 Shadow 与 planner、执行守卫、逐笔/逐回合审计、运行手册。
-- 已验证：event-maker 45 tests / 0 failures；全量 95 suites / 428 tests / 0 failures / 2 skipped；历史回测 30 市场 / 162 配置复跑成功。
-- 已完成：2 小时 Shadow 稳定性验收、去重与订单事件检查、正式 Shadow 报告。
+- 已验证：全量 95 suites / 445 tests / 0 failures / 2 skipped；完整池 4,187 市场 / 864 配置回测成功。
+- 已完成：旧 2 小时 Shadow 稳定性验收、去重与订单事件检查；被动 2h/12h Shadow 正在运行。
 - 未完成：真实小资金 Live smoke。原因是没有可用账户、资金和明确实盘授权；不得用 mock 结果冒充真实实盘验证。
-- 策略结论：执行链路稳定，但统一 Shadow 多次运行均为 0 fill，历史回测没有找到训练/测试都稳健的正收益配置。当前不应实盘，也不应跟单。
+- 策略结论：训练期选参配置在完整池为总 ROI +0.81%、训练 +1.10%、测试 +0.56%；3 次结算亏损、最大回撤 146.49 USDC，q50 与 50bps 费用下转负。当前不能实盘，也不能跟单。
 
 ### 9.3 后续执行顺序
 
@@ -249,6 +258,14 @@ cd D:\Project\PolyHermes\backend
 
 ### 10.3 策略研究下一步
 
-1. 继续分析 0 fill 的根因：市场筛选、队列位置、报价改善 tick、taker 流和 markout。
-2. 用历史数据和 Shadow 数据比较不同市场/价格/库存参数，要求训练与测试都覆盖足够样本。
-3. 只有同时满足稳定正收益、可解释成交来源、尾部风险可控和 Shadow 有真实 fill，才讨论小资金 smoke。
+当前研究轮次（2026-10-19 05:32）：
+
+1. 完整池回测已完成：训练期选参配置 `p0.97-0.99_off0.5_spread2.0_q1.0_c3_r0`，总 ROI +0.81%、训练 +1.10%、测试 +0.56%。
+2. 尾部风险已完成：278 回合中 3 次结算亏损，每次 -100 USDC；最大已实现回撤 146.49 USDC。
+3. 队列压力已完成：off1/q1 配置在 q10 为 +0.41%、q20 约 0、q50 为 -0.77%。
+4. 费用压力已完成：训练期选参配置在 25bps 双边费用下总 ROI +0.31%、测试 +0.06%；50bps 下转负。
+5. Shadow 修复已完成：`shadowFillVolumeFactor`、60/300/1800 秒 markout、盘口年龄和订单队列诊断。
+6. 正在运行：被动入场 2h/12h Shadow；截至 05:22 选中市场启动后无新成交，fill 为 0。
+7. 下一步：等待 2h 结束并检查 `summary.json`、`execution-diagnostics.json`；若无 fill，不降低价格条件，继续等 12h 或更换有真实成交流的市场。
+8. 只有在保守成交因子下出现足够 fill、markout 可解释、尾部亏损可控且费用后仍为正，才讨论小资金 Live smoke。
+9. 真实 Live smoke 仍需要账户、资金上限、明确授权、时间窗口和市场范围。

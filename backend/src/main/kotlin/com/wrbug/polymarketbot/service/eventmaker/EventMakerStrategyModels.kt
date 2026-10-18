@@ -13,16 +13,25 @@ data class EventMakerConfig(
     val accountId: Long? = null,
     val maxMarkets: Int = 3,
     val minVolume24hr: Double = 20_000.0,
+    val minRecentTrades30m: Int = 0,
+    val minRecentNotional30m: Double = 0.0,
+    val minRecentTradesPerSide30m: Int = 0,
+    val minRecentTrades2h: Int = 0,
+    val minRecentNotional2h: Double = 0.0,
+    val minRecentTradesPerSide2h: Int = 0,
     val minRemainingMinutes: Int = 720,
     val allowNegRisk: Boolean = true,
     val minPrice: Double = 0.90,
     val maxPrice: Double = 0.99,
     val improveTicks: Int = 1,
+    val entryOffsetCents: Double = 0.0,
     val exitSpreadCents: Double = 1.0,
     val exitImproveTicks: Int = 1,
     val requoteSeconds: Long = 120,
+    val maxOrderAgeSeconds: Long = 3600,
     val orderNotional: Double = 25.0,
     val maxQueueAheadShares: Double = 500.0,
+    val shadowFillVolumeFactor: Double = 1.0,
     val minSpreadTicks: Int = 2,
     val maxTotalInventoryNotional: Double = 100.0,
     val maxDailyLoss: Double = 5.0,
@@ -30,19 +39,29 @@ data class EventMakerConfig(
     val liveTradingEnabled: Boolean = false,
     val pollSeconds: Long = 3,
     val reconcileSeconds: Long = 2,
-    val staleBookSeconds: Long = 30
+    val staleBookSeconds: Long = 30,
+    val activeOrderStaleBookSeconds: Long = 600
 ) {
     init {
         require(maxMarkets >= 1)
         require(minVolume24hr >= 0.0)
+        require(minRecentTrades30m >= 0)
+        require(minRecentNotional30m >= 0.0)
+        require(minRecentTradesPerSide30m >= 0)
+        require(minRecentTrades2h >= 0)
+        require(minRecentNotional2h >= 0.0)
+        require(minRecentTradesPerSide2h >= 0)
         require(minRemainingMinutes >= 1)
         require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
         require(improveTicks >= 0)
+        require(entryOffsetCents >= 0.0)
         require(exitSpreadCents > 0.0)
         require(exitImproveTicks >= 0)
         require(requoteSeconds > 0)
+        require(maxOrderAgeSeconds >= requoteSeconds)
         require(orderNotional > 0.0)
         require(maxQueueAheadShares >= 0.0)
+        require(shadowFillVolumeFactor >= 0.0)
         require(minSpreadTicks >= 1)
         require(maxTotalInventoryNotional > 0.0)
         require(maxDailyLoss > 0.0)
@@ -50,6 +69,7 @@ data class EventMakerConfig(
         require(pollSeconds > 0)
         require(reconcileSeconds > 0)
         require(staleBookSeconds > 0)
+        require(activeOrderStaleBookSeconds >= staleBookSeconds)
     }
 }
 

@@ -18,6 +18,7 @@ class EventMakerLiveEngineTest {
         maxTotalInventoryNotional = 100.0,
         requoteSeconds = 120,
         staleBookSeconds = 60,
+        activeOrderStaleBookSeconds = 60,
         maxCyclesPerMarket = 3
     )
     private val market = market()
@@ -52,6 +53,78 @@ class EventMakerLiveEngineTest {
         assertTrue(state.realizedPnl > 0.0)
     }
 
+    @Test
+    fun `unchanged quote keeps queue priority after requote interval`() = runTest {
+        val now = System.currentTimeMillis()
+        val state = EventMakerLiveState(market, config)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, now))
+        engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+
+        state.onBook(book(0.95, 0.97, now + 121_000L))
+        val result = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now + 121_000L)
+
+        assertTrue(result.canceled.isEmpty())
+        assertNotNull(state.activeOrder)
+        assertEquals(0, port.cancelCount)
+    }
+
+    @Test
+    fun `changed quote is cancelled after requote cooldown`() = runTest {
+        val now = System.currentTimeMillis()
+        val state = EventMakerLiveState(market, config)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, now))
+        engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+
+        state.onBook(book(0.94, 0.96, now + 121_000L))
+        val result = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now + 121_000L)
+
+        assertEquals(1, result.canceled.size)
+        assertEquals("requote", result.canceled.single().reason)
+        assertNull(state.activeOrder)
+    }
+
+    @Test
+    fun `active order is cancelled at max age and on stale book`() = runTest {
+        val now = System.currentTimeMillis()
+        val state = EventMakerLiveState(market, config)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, now))
+        engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+
+        state.onBook(book(0.95, 0.97, now + 3_601_000L))
+        val maxAge = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now + 3_601_000L)
+        assertEquals("max_age", maxAge.canceled.single().reason)
+
+        val nextState = EventMakerLiveState(market, config)
+        val nextPort = FakeExecutionPort()
+        val nextEngine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), nextPort)
+        nextState.onBook(book(0.95, 0.97, now))
+        nextEngine.quote(listOf(nextState), mapOf("token" to nextState.lastBook!!), 7L, now)
+        val stale = nextEngine.quote(listOf(nextState), mapOf("token" to nextState.lastBook!!), 7L, now + 61_000L)
+
+        assertEquals("stale_book", stale.canceled.single().reason)
+    }
+    @Test
+    fun `quiet book keeps active order until active stale threshold`() = runTest {
+        val now = System.currentTimeMillis()
+        val slowConfig = config.copy(activeOrderStaleBookSeconds = 600)
+        val state = EventMakerLiveState(market, slowConfig)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(slowConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, now))
+        engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+
+        val result = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now + 61_000L)
+
+        assertTrue(result.canceled.isEmpty())
+        assertNotNull(state.activeOrder)
+        assertEquals(0, port.cancelCount)
+    }
     @Test
     fun `partial fill is reconciled then remaining order is cancelled`() = runTest {
         val now = System.currentTimeMillis()

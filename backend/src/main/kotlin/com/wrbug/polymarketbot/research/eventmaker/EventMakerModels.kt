@@ -65,7 +65,10 @@ data class EventMakerCycle(
     val exitType: MakerExitType,
     val holdingSeconds: Long,
     val pnl: Double,
-    val fee: Double
+    val fee: Double,
+    val timeToFillSeconds: Long = 0,
+    val maxAdverseExcursion: Double = 0.0,
+    val markout60sPnl: Double? = null
 )
 
 data class EventMakerMarketResult(
@@ -84,7 +87,8 @@ data class EventMakerMarketResult(
     val roi: Double,
     val holdBaselinePnl: Double,
     val holdBaselineRoi: Double,
-    val holdBaselineDeployed: Double
+    val holdBaselineDeployed: Double,
+    val maxAdverseExcursion: Double = 0.0
 ) {
     val filled: Boolean get() = cycles.isNotEmpty()
 }
@@ -121,5 +125,9 @@ data class EventMakerSummary(
     val testRoi: Double,
     val testFilledMarkets: Int,
     val testCycles: Int,
-    val splitTimestamp: Long
+    val splitTimestamp: Long,
+    val maxAdverseExcursion: Double = 0.0,
+    val averageTimeToFillSeconds: Double = 0.0,
+    val settledLosses: Int = 0,
+    val breakEvenLossRate: Double = 0.0
 )

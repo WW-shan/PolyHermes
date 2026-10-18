@@ -20,7 +20,8 @@ class EventMakerBacktestEngine(
         val entryTimestamp: Long,
         val entryPrice: Double,
         val shares: Double,
-        val entryFee: Double
+        val entryFee: Double,
+        val timeToFillSeconds: Long
     )
 
     private data class BuyOrder(
@@ -114,7 +115,8 @@ class EventMakerBacktestEngine(
                             entryTimestamp = trade.timestamp,
                             entryPrice = currentOrder.limitPrice,
                             shares = currentOrder.shares,
-                            entryFee = entryFee
+                            entryFee = entryFee,
+                            timeToFillSeconds = max(0L, trade.timestamp - currentOrder.placedTimestamp)
                         )
                         sellPrice = roundUpToTick(min(0.999, currentOrder.limitPrice + exitSpread), tick)
                         sellEligibleVolume = 0.0
@@ -138,7 +140,8 @@ class EventMakerBacktestEngine(
                             exitType = MakerExitType.SELL,
                             holdingSeconds = max(0L, trade.timestamp - currentInventory.entryTimestamp),
                             pnl = pnl,
-                            fee = currentInventory.entryFee + exitFee
+                            fee = currentInventory.entryFee + exitFee,
+                            timeToFillSeconds = currentInventory.timeToFillSeconds
                         )
                         inventory = null
                         sellPrice = null
@@ -164,12 +167,32 @@ class EventMakerBacktestEngine(
                 exitType = MakerExitType.SETTLE,
                 holdingSeconds = max(0L, market.closedTimestamp - openInventory.entryTimestamp),
                 pnl = pnl,
-                fee = openInventory.entryFee
+                fee = openInventory.entryFee,
+                timeToFillSeconds = openInventory.timeToFillSeconds
             )
         }
 
-        val deployed = cycles.sumOf { it.entryPrice * it.shares }
-        val pnl = cycles.sumOf { it.pnl }
+        val enrichedCycles = cycles.map { cycle ->
+            val pathEnd = cycle.exitTimestamp ?: market.closedTimestamp
+            val markedPrices = buildList {
+                add(cycle.entryPrice)
+                trades.forEach { trade ->
+                    if (trade.timestamp >= cycle.entryTimestamp && trade.timestamp <= pathEnd) add(trade.price)
+                }
+                if (cycle.exitType == MakerExitType.SETTLE) cycle.exitPrice?.let(::add)
+            }
+            val worstMarkPrice = markedPrices.minOrNull() ?: cycle.entryPrice
+            val entryFee = cycle.entryPrice * cycle.shares * config.makerFeeRate
+            val markoutTarget = cycle.entryTimestamp + 60_000L
+            val markoutTrade = trades.firstOrNull { it.timestamp >= markoutTarget }
+                ?: trades.lastOrNull { it.timestamp in cycle.entryTimestamp..markoutTarget }
+            cycle.copy(
+                maxAdverseExcursion = (worstMarkPrice - cycle.entryPrice) * cycle.shares - entryFee,
+                markout60sPnl = markoutTrade?.let { (it.price - cycle.entryPrice) * cycle.shares - entryFee }
+            )
+        }
+        val deployed = enrichedCycles.sumOf { it.entryPrice * it.shares }
+        val pnl = enrichedCycles.sumOf { it.pnl }
         val baselineCost = min(0.999, referencePrice + tick)
         val baselineShares = config.orderNotional / baselineCost
         val baselinePayoff = if (won) 1.0 else 0.0
@@ -184,13 +207,14 @@ class EventMakerBacktestEngine(
             favoriteOutcomeIndex = favoriteIndex,
             favoriteWon = won,
             eligible = true,
-            cycles = cycles,
+            cycles = enrichedCycles,
             deployedNotional = deployed,
             pnl = pnl,
             roi = if (deployed > 0.0) pnl / deployed else 0.0,
             holdBaselinePnl = baselinePnl,
             holdBaselineRoi = baselinePnl / config.orderNotional,
-            holdBaselineDeployed = config.orderNotional
+            holdBaselineDeployed = config.orderNotional,
+            maxAdverseExcursion = enrichedCycles.minOfOrNull { it.maxAdverseExcursion } ?: 0.0
         )
     }
 
@@ -238,6 +262,9 @@ class EventMakerBacktestEngine(
         val settled = cycles.count { it.exitType == MakerExitType.SETTLE }
         val wins = cycles.count { it.pnl > 0.0 }
         val losses = cycles.count { it.pnl < 0.0 }
+        val settledLosses = cycles.count { it.exitType == MakerExitType.SETTLE && it.pnl < 0.0 }
+        val averageWin = if (wins == 0) 0.0 else cycles.filter { it.pnl > 0.0 }.sumOf { it.pnl } / wins
+        val breakEvenLossRate = if (averageWin <= 0.0) 0.0 else averageWin / (averageWin + config.orderNotional)
         val deployed = filled.sumOf { it.deployedNotional }
         val pnl = filled.sumOf { it.pnl }
         val holdDeployed = eligible.sumOf { it.holdBaselineDeployed }
@@ -245,8 +272,8 @@ class EventMakerBacktestEngine(
         var cumulative = 0.0
         var peak = 0.0
         var maxDrawdown = 0.0
-        for (result in filled.sortedBy { it.closedTimestamp }) {
-            cumulative += result.pnl
+        for (cycle in cycles.sortedWith(compareBy<EventMakerCycle> { it.exitTimestamp ?: Long.MAX_VALUE }.thenBy { it.entryTimestamp })) {
+            cumulative += cycle.pnl
             peak = max(peak, cumulative)
             maxDrawdown = max(maxDrawdown, peak - cumulative)
         }
@@ -290,7 +317,11 @@ class EventMakerBacktestEngine(
             testRoi = if (testDeployed > 0.0) testPnl / testDeployed else 0.0,
             testFilledMarkets = test.size,
             testCycles = testCycles,
-            splitTimestamp = trainEndTimestamp
+            splitTimestamp = trainEndTimestamp,
+            maxAdverseExcursion = cycles.minOfOrNull { it.maxAdverseExcursion } ?: 0.0,
+            averageTimeToFillSeconds = if (cycles.isEmpty()) 0.0 else cycles.sumOf { it.timeToFillSeconds }.toDouble() / cycles.size,
+            settledLosses = settledLosses,
+            breakEvenLossRate = breakEvenLossRate
         )
     }
 

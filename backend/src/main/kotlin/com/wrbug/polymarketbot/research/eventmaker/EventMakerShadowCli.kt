@@ -42,6 +42,14 @@ private data class ShadowOptions(
     val outputDir: Path,
     val maxMarkets: Int,
     val minVolume24hr: Double,
+    val minRecentTrades30m: Int,
+    val minRecentNotional30m: Double,
+    val minRecentTradesPerSide30m: Int,
+    val minRecentTrades2h: Int,
+    val minRecentNotional2h: Double,
+    val minRecentTradesPerSide2h: Int,
+    val minPrice: Double,
+    val maxPrice: Double,
     val minRemainingMinutes: Int,
     val minutes: Int,
     val allowNegRisk: Boolean,
@@ -49,7 +57,16 @@ private data class ShadowOptions(
     val snapshotSeconds: Long,
     val maxQueueAheadShares: Double,
     val minSpreadTicks: Int,
-    val improveTicks: Int
+    val improveTicks: Int,
+    val entryOffsetCents: Double,
+    val exitImproveTicks: Int,
+    val exitSpreadCents: Double,
+    val requoteSeconds: Long,
+    val maxOrderAgeSeconds: Long,
+    val staleBookSeconds: Long,
+    val activeOrderStaleBookSeconds: Long,
+    val orderNotional: Double,
+    val fillVolumeFactor: Double
 )
 
 private data class ShadowSummary(
@@ -64,6 +81,13 @@ private data class ShadowSummary(
     val quotesPlaced: Int,
     val cancels: Int,
     val fills: Int,
+    val crossingOrders: Int,
+    val crossingTrades: Int,
+    val crossingShares: Double,
+    val queueConsumedShares: Double,
+    val filledShares: Double,
+    val executionDiagnosticsFile: String,
+    val markoutHorizonsSeconds: List<Long>,
     val completedCycles: Int,
     val winningCycles: Int,
     val losingCycles: Int,
@@ -115,14 +139,37 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     val minutes = option("minutes")?.toIntOrNull() ?: 120
     val snapshotSeconds = option("snapshot-seconds")?.toLongOrNull() ?: 10L
     val pollSeconds = option("poll-seconds")?.toLongOrNull() ?: 3L
+    val requoteSeconds = option("requote-seconds")?.toLongOrNull() ?: 120L
+    val maxOrderAgeSeconds = option("max-order-age-seconds")?.toLongOrNull() ?: 3600L
+    val staleBookSeconds = option("stale-book-seconds")?.toLongOrNull() ?: 30L
+    val activeOrderStaleBookSeconds = option("active-order-stale-seconds")?.toLongOrNull() ?: 600L
+    val orderNotional = option("order-notional")?.toDoubleOrNull() ?: 25.0
+    val fillVolumeFactor = option("fill-volume-factor")?.toDoubleOrNull() ?: 1.0
+    val minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90
+    val maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99
     require(minutes > 0)
     require(snapshotSeconds > 0)
     require(pollSeconds > 0)
+    require(requoteSeconds > 0)
+    require(maxOrderAgeSeconds >= requoteSeconds)
+    require(staleBookSeconds > 0)
+    require(activeOrderStaleBookSeconds >= staleBookSeconds)
+    require(orderNotional > 0.0)
+    require(fillVolumeFactor >= 0.0)
+    require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
     return ShadowOptions(
         proxyUrl = option("proxy"),
         outputDir = Paths.get(option("output") ?: "build/research/event-maker-shadow-$stamp"),
         maxMarkets = option("max-markets")?.toIntOrNull() ?: 6,
         minVolume24hr = option("min-volume")?.toDoubleOrNull() ?: 50_000.0,
+        minRecentTrades30m = option("min-recent-trades")?.toIntOrNull() ?: 0,
+        minRecentNotional30m = option("min-recent-notional")?.toDoubleOrNull() ?: 0.0,
+        minRecentTradesPerSide30m = option("min-recent-trades-per-side")?.toIntOrNull() ?: 0,
+        minRecentTrades2h = option("min-recent-trades-2h")?.toIntOrNull() ?: 0,
+        minRecentNotional2h = option("min-recent-notional-2h")?.toDoubleOrNull() ?: 0.0,
+        minRecentTradesPerSide2h = option("min-recent-trades-per-side-2h")?.toIntOrNull() ?: 0,
+        minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90,
+        maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99,
         minRemainingMinutes = option("min-remaining-minutes")?.toIntOrNull() ?: 120,
         minutes = minutes,
         allowNegRisk = args.contains("--allow-neg-risk"),
@@ -130,9 +177,20 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
         snapshotSeconds = snapshotSeconds,
         maxQueueAheadShares = option("max-queue")?.toDoubleOrNull() ?: 500.0,
         minSpreadTicks = option("min-spread-ticks")?.toIntOrNull() ?: 2,
-        improveTicks = option("improve-ticks")?.toIntOrNull() ?: 1
+        improveTicks = option("improve-ticks")?.toIntOrNull() ?: 1,
+        entryOffsetCents = option("entry-offset-cents")?.toDoubleOrNull() ?: 0.0,
+        exitImproveTicks = option("exit-improve-ticks")?.toIntOrNull() ?: 1,
+        exitSpreadCents = option("exit-spread-cents")?.toDoubleOrNull() ?: 1.0,
+        requoteSeconds = requoteSeconds,
+        maxOrderAgeSeconds = maxOrderAgeSeconds,
+        staleBookSeconds = staleBookSeconds,
+        activeOrderStaleBookSeconds = activeOrderStaleBookSeconds,
+        orderNotional = orderNotional,
+        fillVolumeFactor = fillVolumeFactor
     )
 }
+
+private val MARKOUT_HORIZONS_SECONDS = listOf(60L, 300L, 1_800L)
 
 private class EventMakerShadowRunner(private val options: ShadowOptions) {
     private val gson = Gson()
@@ -191,13 +249,19 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             StandardOpenOption.TRUNCATE_EXISTING,
             StandardOpenOption.WRITE
         )
-        markoutsWriter.write("fill_timestamp,market_id,order_id,side,fill_price,shares,markout_at,best_bid,best_ask,markout_pnl\n")
+        markoutsWriter.write("fill_timestamp,market_id,order_id,side,fill_price,shares,horizon_seconds,markout_at,book_age_ms,best_bid,best_ask,markout_pnl\n")
 
         var candidates = dataClient.discoverMarkets(
             options.maxMarkets * 3,
             options.minVolume24hr,
             options.allowNegRisk,
-            options.minRemainingMinutes
+            options.minRemainingMinutes,
+            options.minRecentTrades30m,
+            options.minRecentNotional30m,
+            options.minRecentTradesPerSide30m,
+            options.minRecentTrades2h,
+            options.minRecentNotional2h,
+            options.minRecentTradesPerSide2h
         )
         require(candidates.isNotEmpty()) { "No eligible live markets" }
         candidates = candidates.map { market ->
@@ -207,35 +271,79 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         candidates.flatMap { it.tokenIds }.forEach { tokenId ->
             dataClient.getBook(tokenId)?.let { books[tokenId] = it }
         }
+        val evaluations = EventMakerMarketSelector.evaluate(
+            markets = candidates,
+            books = books,
+            minSpreadTicks = options.minSpreadTicks,
+            minPrice = options.minPrice,
+            maxPrice = options.maxPrice,
+            maxQueueAheadShares = options.maxQueueAheadShares,
+            improveTicks = options.improveTicks,
+            entryOffsetCents = options.entryOffsetCents,
+            exitImproveTicks = options.exitImproveTicks,
+            exitSpreadCents = options.exitSpreadCents
+        )
+        Files.writeString(
+            options.outputDir.resolve("market-selection.json"),
+            prettyGson.toJson(evaluations),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        println(
+            "marketSelection selected=${evaluations.count { it.selected }} " +
+                "reasons=${evaluations.groupingBy { it.reason }.eachCount()}"
+        )
         val discovered = EventMakerMarketSelector.select(
             markets = candidates,
             books = books,
             maxMarkets = options.maxMarkets,
             minSpreadTicks = options.minSpreadTicks,
-            minPrice = 0.90,
-            maxPrice = 0.99
+            minPrice = options.minPrice,
+            maxPrice = options.maxPrice,
+            maxQueueAheadShares = options.maxQueueAheadShares,
+            improveTicks = options.improveTicks,
+            entryOffsetCents = options.entryOffsetCents,
+            exitImproveTicks = options.exitImproveTicks,
+            exitSpreadCents = options.exitSpreadCents
         )
         require(discovered.isNotEmpty()) { "No eligible markets with min spread ${options.minSpreadTicks} ticks" }
         val config = EventMakerConfig(
             mode = com.wrbug.polymarketbot.service.eventmaker.EventMakerMode.SHADOW,
             maxMarkets = discovered.size,
             minVolume24hr = options.minVolume24hr,
+            minRecentTrades30m = options.minRecentTrades30m,
+            minRecentNotional30m = options.minRecentNotional30m,
+            minRecentTradesPerSide30m = options.minRecentTradesPerSide30m,
+            minRecentTrades2h = options.minRecentTrades2h,
+            minRecentNotional2h = options.minRecentNotional2h,
+            minRecentTradesPerSide2h = options.minRecentTradesPerSide2h,
             minRemainingMinutes = options.minRemainingMinutes,
             allowNegRisk = options.allowNegRisk,
-            orderNotional = 25.0,
+            minPrice = options.minPrice,
+            maxPrice = options.maxPrice,
+            orderNotional = options.orderNotional,
+            shadowFillVolumeFactor = options.fillVolumeFactor,
             maxQueueAheadShares = options.maxQueueAheadShares,
             minSpreadTicks = options.minSpreadTicks,
             improveTicks = options.improveTicks,
+            entryOffsetCents = options.entryOffsetCents,
+            exitSpreadCents = options.exitSpreadCents,
+            exitImproveTicks = options.exitImproveTicks,
             maxTotalInventoryNotional = 100.0,
             maxDailyLoss = 5.0,
             maxCyclesPerMarket = 3,
-            requoteSeconds = 120,
-            staleBookSeconds = 30
+            requoteSeconds = options.requoteSeconds,
+            maxOrderAgeSeconds = options.maxOrderAgeSeconds,
+            staleBookSeconds = options.staleBookSeconds,
+            activeOrderStaleBookSeconds = options.activeOrderStaleBookSeconds
         )
         selectedMarkets = discovered
         val states = discovered.map { EventMakerLiveState(it, config) }
         shadowExecution = EventMakerShadowExecutionPort()
         shadowExecution.reset()
+        shadowExecution.configureFillModel(options.fillVolumeFactor)
         val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), shadowExecution)
         discovered.forEach { market -> books[market.favoriteTokenId]?.let { states.first { s -> s.market.conditionId == market.conditionId }.onBook(it) } }
         val startedAt = System.currentTimeMillis()
@@ -296,6 +404,9 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                 if (now >= deadline) break@loop
             }
         } finally {
+            val shutdownResult = runBlocking { engine.cancelAll(states, 0L) }
+            recordEngineResult(shutdownResult)
+            writeSnapshots(states, System.currentTimeMillis())
             jobs.forEach { it.cancel() }
             wsClient?.close()
             dataClient.close()
@@ -307,6 +418,15 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             markoutsWriter.close()
         }
 
+        val diagnostics = shadowExecution.diagnostics()
+        Files.writeString(
+            options.outputDir.resolve("execution-diagnostics.json"),
+            prettyGson.toJson(diagnostics),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
         val stoppedAt = System.currentTimeMillis()
         val realized = states.sumOf { it.realizedPnl }
         val unrealized = states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) }
@@ -323,6 +443,13 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             quotesPlaced = quotesPlaced,
             cancels = cancels,
             fills = states.sumOf { it.fills.size },
+            crossingOrders = diagnostics.ordersWithCrossingTrades,
+            crossingTrades = diagnostics.totalCrossingTrades,
+            crossingShares = diagnostics.totalCrossingShares.toDouble(),
+            queueConsumedShares = diagnostics.totalQueueConsumedShares.toDouble(),
+            filledShares = diagnostics.totalFilledShares.toDouble(),
+            executionDiagnosticsFile = "execution-diagnostics.json",
+            markoutHorizonsSeconds = MARKOUT_HORIZONS_SECONDS,
             completedCycles = cycles.size,
             winningCycles = cycles.count { it.pnl > 0.0 },
             losingCycles = cycles.count { it.pnl < 0.0 },
@@ -369,7 +496,13 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         tradesWriter.write(listOf(trade.timestamp, trade.conditionId, trade.tokenId, trade.side, trade.price, trade.size, trade.source, trade.transactionHash ?: "").joinToString(","))
         tradesWriter.newLine()
         shadowExecution.onTrade(trade).forEach { fill ->
-            pendingMarkouts += PendingMarkout(fill, fill.timestamp + 60_000L)
+            MARKOUT_HORIZONS_SECONDS.forEach { horizonSeconds ->
+                pendingMarkouts += PendingMarkout(
+                    fill = fill,
+                    horizonSeconds = horizonSeconds,
+                    dueAt = fill.timestamp + horizonSeconds * 1_000L
+                )
+            }
         }
     }
 
@@ -407,6 +540,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             val book = market?.let { books[it.favoriteTokenId] }
             val bestBid = book?.bestBid
             val bestAsk = book?.bestAsk
+            val bookAgeMs = book?.let { (now - it.updatedAt).coerceAtLeast(0L) }
             val pnl = EventMakerMarkoutCalculator.calculate(fill.side, fill.price, fill.shares, bestBid, bestAsk)
             markoutsWriter.write(
                 listOf(
@@ -416,7 +550,9 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     fill.side.name,
                     fill.price.toPlainString(),
                     fill.shares.toPlainString(),
+                    pending.horizonSeconds,
                     now,
+                    bookAgeMs ?: "",
                     bestBid ?: "",
                     bestAsk ?: "",
                     pnl ?: ""
@@ -429,6 +565,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
 
     private data class PendingMarkout(
         val fill: EventMakerShadowFill,
+        val horizonSeconds: Long,
         val dueAt: Long
     )
     private fun addError(message: String) {

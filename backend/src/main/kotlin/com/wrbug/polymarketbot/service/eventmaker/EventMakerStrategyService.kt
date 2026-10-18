@@ -173,6 +173,7 @@ class EventMakerStrategyService(
         val books = prepared.books
         val states = discovered.map { EventMakerLiveState(it, config) }
         shadowExecutionPort.reset()
+        shadowExecutionPort.configureFillModel(config.shadowFillVolumeFactor)
         val engine = EventMakerLiveEngine(config, quotePlanner, riskPolicy, shadowExecutionPort)
         currentEngine = engine
         val seenTrades = linkedMapOf<String, Boolean>()
@@ -361,7 +362,13 @@ class EventMakerStrategyService(
             maxMarkets = (config.maxMarkets * 3).coerceAtLeast(config.maxMarkets),
             minVolume24hr = config.minVolume24hr,
             allowNegRisk = config.allowNegRisk,
-            minRemainingMinutes = config.minRemainingMinutes
+            minRemainingMinutes = config.minRemainingMinutes,
+            minRecentTrades30m = config.minRecentTrades30m,
+            minRecentNotional30m = config.minRecentNotional30m,
+            minRecentTradesPerSide30m = config.minRecentTradesPerSide30m,
+            minRecentTrades2h = config.minRecentTrades2h,
+            minRecentNotional2h = config.minRecentNotional2h,
+            minRecentTradesPerSide2h = config.minRecentTradesPerSide2h
         )
         if (candidates.isEmpty()) throw IllegalStateException("no_eligible_markets")
         val books = mutableMapOf<String, MarketBook>()
@@ -374,7 +381,12 @@ class EventMakerStrategyService(
             maxMarkets = config.maxMarkets,
             minSpreadTicks = config.minSpreadTicks,
             minPrice = config.minPrice,
-            maxPrice = config.maxPrice
+            maxPrice = config.maxPrice,
+            maxQueueAheadShares = config.maxQueueAheadShares,
+            improveTicks = config.improveTicks,
+            entryOffsetCents = config.entryOffsetCents,
+            exitImproveTicks = config.exitImproveTicks,
+            exitSpreadCents = config.exitSpreadCents
         )
         if (selected.isEmpty()) throw IllegalStateException("no_eligible_markets_with_min_spread")
         return PreparedMarkets(selected, books)

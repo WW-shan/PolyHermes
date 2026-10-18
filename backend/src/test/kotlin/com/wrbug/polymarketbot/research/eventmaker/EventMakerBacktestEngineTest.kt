@@ -32,6 +32,23 @@ class EventMakerBacktestEngineTest {
     }
 
     @Test
+    fun `maker fees reduce round trip pnl`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_100, 0, 0.975, 300.0),
+                trade(9_200, 0, 0.985, 300.0)
+            )
+        )
+        val result = engine.simulateMarket(market, baseConfig().copy(makerFeeRate = 0.01))
+
+        assertEquals(1, result.cycles.size)
+        assertTrue(result.cycles.single().fee > 2.0)
+        assertTrue(result.pnl < 0.0)
+    }
+
+    @Test
     fun `does not fill when queue volume is insufficient`() {
         val market = market(
             winnerIndex = 0,
@@ -148,6 +165,35 @@ class EventMakerBacktestEngineTest {
         assertEquals(2, result.cycles.size)
         assertTrue(result.cycles.all { it.exitType == MakerExitType.SELL })
         assertTrue(result.pnl > 0.0)
+    }
+
+    @Test
+    fun `summary reports settlement tail risk and realized drawdown`() {
+        val winner = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_100, 0, 0.975, 300.0),
+                trade(9_200, 0, 0.985, 300.0)
+            )
+        ).copy(conditionId = "winner", closedTimestamp = 10_000)
+        val loser = market(
+            winnerIndex = 1,
+            trades = listOf(
+                trade(18_990, 0, 0.980, 10.0),
+                trade(19_100, 0, 0.975, 300.0)
+            )
+        ).copy(conditionId = "loser", closedTimestamp = 20_000)
+
+        val (summary, _) = EventMakerBacktestEngine(trainEndTimestamp = 15_000)
+            .run(listOf(winner, loser), baseConfig())
+
+        assertEquals(2, summary.totalCycles)
+        assertEquals(1, summary.settledLosses)
+        assertTrue(summary.maxDrawdown > 90.0)
+        assertTrue(summary.maxAdverseExcursion < -99.0)
+        assertEquals(100.0, summary.averageTimeToFillSeconds, 0.0001)
+        assertTrue(summary.breakEvenLossRate in 0.009..0.011)
     }
 
     private fun baseConfig(maxCycles: Int = 1) = EventMakerConfig(

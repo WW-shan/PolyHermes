@@ -33,7 +33,13 @@ class LivePaperDataClient(proxyUrl: String? = null) {
         maxMarkets: Int,
         minVolume24hr: Double,
         allowNegRisk: Boolean = false,
-        minRemainingMinutes: Int = 30
+        minRemainingMinutes: Int = 30,
+        minRecentTrades30m: Int = 0,
+        minRecentNotional30m: Double = 0.0,
+        minRecentTradesPerSide30m: Int = 0,
+        minRecentTrades2h: Int = 0,
+        minRecentNotional2h: Double = 0.0,
+        minRecentTradesPerSide2h: Int = 0
     ): List<LivePaperMarket> =
         withContext(Dispatchers.IO) {
             val found = linkedMapOf<String, LivePaperMarket>()
@@ -61,11 +67,29 @@ class LivePaperDataClient(proxyUrl: String? = null) {
                 }
             }
             val now = System.currentTimeMillis()
-            val ranked = found.values.sortedByDescending { it.volume24hr }.take(40).map { market ->
-                val recent = runCatching { getRecentTrades(market) }.getOrDefault(emptyList())
-                    .filter { it.timestamp >= now - 30 * 60 * 1000L }
-                val recentNotional = recent.sumOf { it.price * it.size }
-                Triple(market, recentNotional, recent.size)
+            val ranked = found.values.sortedByDescending { it.volume24hr }.take(40).mapNotNull { market ->
+                val allRecent = runCatching { getRecentTrades(market) }.getOrDefault(emptyList())
+                val recent30m = allRecent.filter { it.timestamp >= now - 30 * 60 * 1000L }
+                val recent2h = allRecent.filter { it.timestamp >= now - 120 * 60 * 1000L }
+                val recentNotional30m = recent30m.sumOf { it.price * it.size }
+                val recentNotional2h = recent2h.sumOf { it.price * it.size }
+                val buy30m = recent30m.count { it.side.equals("BUY", true) }
+                val sell30m = recent30m.count { it.side.equals("SELL", true) }
+                val buy2h = recent2h.count { it.side.equals("BUY", true) }
+                val sell2h = recent2h.count { it.side.equals("SELL", true) }
+                val minPerSide30m = minRecentTradesPerSide30m.coerceAtLeast(0)
+                val minPerSide2h = minRecentTradesPerSide2h.coerceAtLeast(0)
+                if (recent30m.size < minRecentTrades30m.coerceAtLeast(0) ||
+                    recentNotional30m < minRecentNotional30m.coerceAtLeast(0.0) ||
+                    buy30m < minPerSide30m || sell30m < minPerSide30m ||
+                    recent2h.size < minRecentTrades2h.coerceAtLeast(0) ||
+                    recentNotional2h < minRecentNotional2h.coerceAtLeast(0.0) ||
+                    buy2h < minPerSide2h || sell2h < minPerSide2h
+                ) {
+                    null
+                } else {
+                    Triple(market, recentNotional30m, recent30m.size)
+                }
             }.sortedWith(
                 compareByDescending<Triple<LivePaperMarket, Double, Int>> { it.second }
                     .thenByDescending { it.third }

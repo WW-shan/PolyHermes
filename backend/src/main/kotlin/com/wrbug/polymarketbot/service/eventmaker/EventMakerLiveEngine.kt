@@ -6,7 +6,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 data class EventMakerEnginePlacement(
     val marketId: String,
-    val order: EventMakerLiveOrder
+    val order: EventMakerLiveOrder,
+    val queueAheadShares: Double = 0.0
 )
 
 data class EventMakerEngineCancel(
@@ -76,14 +77,47 @@ class EventMakerLiveEngine(
         for (state in states) {
             val active = state.activeOrder
             if (active != null) {
-                if (now - active.createdAt >= config.requoteSeconds * 1000L) {
+                val book = books[state.market.favoriteTokenId] ?: state.lastBook
+                val tick = BigDecimal.valueOf(state.market.tickSize)
+                val bookFresh = book != null && now - book.updatedAt <= config.staleBookSeconds * 1000L
+                val desired = if (bookFresh) {
+                    when (active.side) {
+                        EventMakerSide.BUY -> quotePlanner.planBuy(config, book!!, tick, now)
+                        EventMakerSide.SELL -> quotePlanner.planSell(
+                            config = config,
+                            book = book!!,
+                            tickSize = tick,
+                            entryPrice = state.entryPrice,
+                            heldShares = state.inventoryShares,
+                            now = now
+                        )
+                    }
+                } else {
+                    null
+                }
+                val ageMs = now - active.createdAt
+                val activeBookStale = book == null ||
+                    now - book.updatedAt > config.activeOrderStaleBookSeconds * 1000L
+                val priceChanged = bookFresh && (desired == null || desired.price.compareTo(active.price) != 0)
+                val maxAgeReached = ageMs >= config.maxOrderAgeSeconds * 1000L
+                val shouldCancel = activeBookStale ||
+                    maxAgeReached ||
+                    (ageMs >= config.requoteSeconds * 1000L && priceChanged)
+                if (shouldCancel) {
+                    val reason = when {
+                        activeBookStale -> "stale_book"
+                        maxAgeReached -> "max_age"
+                        else -> "requote"
+                    }
                     executionPort.cancel(accountId, active.orderId).fold(
                         onSuccess = {
                             activeAccounts.remove(active.orderId)
                             state.onOrderCanceled()
                             result = result.merge(
                                 EventMakerEngineResult(
-                                    canceled = listOf(EventMakerEngineCancel(state.market.conditionId, active.orderId, "requote"))
+                                    canceled = listOf(
+                                        EventMakerEngineCancel(state.market.conditionId, active.orderId, reason)
+                                    )
                                 )
                             )
                         },
@@ -127,7 +161,7 @@ class EventMakerLiveEngine(
                         activeAccounts[order.orderId] = accountId
                         result = result.merge(
                             EventMakerEngineResult(
-                                placed = listOf(EventMakerEnginePlacement(state.market.conditionId, order))
+                                placed = listOf(EventMakerEnginePlacement(state.market.conditionId, order, intent.queueAheadShares))
                             )
                         )
                     }

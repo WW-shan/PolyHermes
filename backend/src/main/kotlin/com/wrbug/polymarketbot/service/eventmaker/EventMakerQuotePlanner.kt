@@ -22,16 +22,16 @@ class EventMakerQuotePlanner {
         val tick = tickSize.max(BigDecimal.valueOf(0.0001))
         val bid = BigDecimal.valueOf(bestBid)
         val ask = BigDecimal.valueOf(bestAsk)
-        val improved = bid + tick.multiply(BigDecimal(config.improveTicks))
+        val spreadTicks = ask.subtract(bid).divide(tick, 0, RoundingMode.HALF_UP)
+        if (spreadTicks < BigDecimal.valueOf(config.minSpreadTicks.toLong())) return null
+        val entryOffset = BigDecimal.valueOf(config.entryOffsetCents / 100.0)
+        val improved = bid.subtract(entryOffset).add(tick.multiply(BigDecimal(config.improveTicks)))
         val rawLimit = improved.min(ask - tick).max(tick)
         val limit = roundDown(rawLimit, tick)
         if (limit <= BigDecimal.ZERO || limit >= ask) return null
 
-        val queueAhead = if (limit <= bid + tick.divide(BigDecimal.TEN)) {
-            book.bidSizeAt(bestBid)
-        } else {
-            0.0
-        }
+        val joinsBestBid = limit.subtract(bid).abs() <= tick.divide(BigDecimal.TEN)
+        val queueAhead = if (joinsBestBid) book.bidSizeAt(bestBid) else 0.0
         if (queueAhead > config.maxQueueAheadShares) return null
 
         val shares = BigDecimal.valueOf(config.orderNotional)
@@ -42,7 +42,11 @@ class EventMakerQuotePlanner {
             price = limit,
             shares = shares,
             queueAheadShares = queueAhead,
-            reason = if (config.improveTicks > 0 && queueAhead <= 0.0) "improved_price" else "join_queue"
+            reason = when {
+                config.entryOffsetCents > 0.0 -> "passive_offset"
+                config.improveTicks > 0 && queueAhead <= 0.0 -> "improved_price"
+                else -> "join_queue"
+            }
         )
     }
 
@@ -72,7 +76,7 @@ class EventMakerQuotePlanner {
         val limit = roundUp(rawLimit, tick).min(BigDecimal.valueOf(0.999))
         if (limit <= bid || limit <= entryPrice) return null
 
-        val queueAhead = if (limit < ask - tick.divide(BigDecimal.TEN)) {
+        val queueAhead = if (limit > ask || limit < ask - tick.divide(BigDecimal.TEN)) {
             0.0
         } else {
             book.askSizeAtOrBelow(limit.toDouble())

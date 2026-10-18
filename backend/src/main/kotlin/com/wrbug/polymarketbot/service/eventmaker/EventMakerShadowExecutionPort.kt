@@ -12,7 +12,6 @@ import java.util.concurrent.atomic.AtomicLong
  * It consumes public taker trades after the simulated order's queue-ahead has been cleared.
  * It never signs, submits, or cancels a real order.
  */
-@Component
 data class EventMakerShadowFill(
     val orderId: String,
     val marketId: String,
@@ -22,10 +21,57 @@ data class EventMakerShadowFill(
     val timestamp: Long
 )
 
+data class EventMakerShadowOrderDiagnostics(
+    val orderId: String,
+    val marketId: String,
+    val side: EventMakerSide,
+    val price: BigDecimal,
+    val originalShares: BigDecimal,
+    val filledShares: BigDecimal,
+    val queueAheadAtPlacement: BigDecimal,
+    val queueAheadRemaining: BigDecimal,
+    val opposingTradeCount: Int,
+    val crossingTradeCount: Int,
+    val crossingTradeShares: BigDecimal,
+    val eligibleCrossingShares: BigDecimal,
+    val queueConsumedShares: BigDecimal,
+    val status: String,
+    val createdAt: Long,
+    val canceledAt: Long?
+)
+
+data class EventMakerShadowExecutionDiagnostics(
+    val fillVolumeFactor: Double,
+    val totalOrders: Int,
+    val activeOrders: Int,
+    val ordersWithCrossingTrades: Int,
+    val totalOpposingTrades: Int,
+    val totalCrossingTrades: Int,
+    val totalCrossingShares: BigDecimal,
+    val totalEligibleCrossingShares: BigDecimal,
+    val totalQueueConsumedShares: BigDecimal,
+    val totalFilledShares: BigDecimal,
+    val orders: List<EventMakerShadowOrderDiagnostics>
+)
+
+@Component
 class EventMakerShadowExecutionPort : EventMakerExecutionPort {
     private val lock = Any()
     private val nextId = AtomicLong(0)
     private val orders = linkedMapOf<String, SimulatedOrder>()
+
+    @Volatile
+    private var fillVolumeFactor = 1.0
+
+    /**
+     * Requires cumulative crossing taker flow of [factor] times the order size after queue
+     * ahead is exhausted. The default 1 is the conservative baseline; tests may explicitly
+     * set 0 only to reproduce the legacy optimistic behavior.
+     */
+    fun configureFillModel(factor: Double) = synchronized(lock) {
+        require(factor >= 0.0) { "fillVolumeFactor must be non-negative" }
+        fillVolumeFactor = factor
+    }
 
     override suspend fun validateAccount(accountId: Long): Result<Unit> = Result.success(Unit)
 
@@ -35,6 +81,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         intent: EventMakerQuoteIntent
     ): Result<EventMakerLiveOrder> = synchronized(lock) {
         val orderId = "shadow-${nextId.incrementAndGet()}"
+        val queueAhead = BigDecimal.valueOf(intent.queueAheadShares)
         val order = SimulatedOrder(
             id = orderId,
             market = market,
@@ -42,7 +89,8 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
             price = intent.price,
             originalShares = intent.shares,
             remainingShares = intent.shares,
-            queueAhead = BigDecimal.valueOf(intent.queueAheadShares),
+            queueAheadAtPlacement = queueAhead,
+            queueAheadRemaining = queueAhead,
             createdAt = System.currentTimeMillis()
         )
         orders[orderId] = order
@@ -61,7 +109,10 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         if (order.status == "FILLED") {
             return@synchronized Result.success(Unit)
         }
-        order.status = "CANCELLED"
+        if (order.status == "LIVE") {
+            order.status = "CANCELLED"
+            order.canceledAt = System.currentTimeMillis()
+        }
         Result.success(Unit)
     }
 
@@ -70,21 +121,40 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         orders.values.forEach { order ->
             if (order.status != "LIVE" || trade.tokenId != order.market.favoriteTokenId) return@forEach
             if (trade.timestamp < order.createdAt - 1_000L) return@forEach
+
+            val oppositeSide = when (order.side) {
+                EventMakerSide.BUY -> trade.side.equals("SELL", true)
+                EventMakerSide.SELL -> trade.side.equals("BUY", true)
+            }
+            if (!oppositeSide) return@forEach
+            order.opposingTradeCount++
+
             val crosses = when (order.side) {
-                EventMakerSide.BUY -> trade.side.equals("SELL", true) && trade.price <= order.price.toDouble() + 1e-9
-                EventMakerSide.SELL -> trade.side.equals("BUY", true) && trade.price >= order.price.toDouble() - 1e-9
+                EventMakerSide.BUY -> trade.price <= order.price.toDouble() + 1e-9
+                EventMakerSide.SELL -> trade.price >= order.price.toDouble() - 1e-9
             }
             if (!crosses) return@forEach
 
             var available = BigDecimal.valueOf(trade.size)
-            if (order.queueAhead > BigDecimal.ZERO) {
-                val consumed = order.queueAhead.min(available)
-                order.queueAhead -= consumed
+            order.crossingTradeCount++
+            order.crossingTradeShares += available
+            if (order.queueAheadRemaining > BigDecimal.ZERO) {
+                val consumed = order.queueAheadRemaining.min(available)
+                order.queueAheadRemaining -= consumed
+                order.queueConsumedShares += consumed
                 available -= consumed
             }
             if (available <= BigDecimal.ZERO) return@forEach
 
-            val quantity = order.remainingShares.min(available)
+            order.eligibleCrossingShares += available
+            val requiredCrossingShares = order.originalShares.multiply(BigDecimal.valueOf(fillVolumeFactor))
+            if (order.eligibleCrossingShares + SHARE_EPSILON < requiredCrossingShares) return@forEach
+
+            val quantity = if (fillVolumeFactor <= 0.0) {
+                order.remainingShares.min(available)
+            } else {
+                order.remainingShares
+            }
             if (quantity > BigDecimal.ZERO) {
                 order.remainingShares -= quantity
                 if (order.remainingShares <= SHARE_EPSILON) {
@@ -95,6 +165,42 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
             }
         }
         filled
+    }
+
+    fun diagnostics(): EventMakerShadowExecutionDiagnostics = synchronized(lock) {
+        val snapshots = orders.values.map { order ->
+            EventMakerShadowOrderDiagnostics(
+                orderId = order.id,
+                marketId = order.market.conditionId,
+                side = order.side,
+                price = order.price,
+                originalShares = order.originalShares,
+                filledShares = order.originalShares - order.remainingShares,
+                queueAheadAtPlacement = order.queueAheadAtPlacement,
+                queueAheadRemaining = order.queueAheadRemaining,
+                opposingTradeCount = order.opposingTradeCount,
+                crossingTradeCount = order.crossingTradeCount,
+                crossingTradeShares = order.crossingTradeShares,
+                eligibleCrossingShares = order.eligibleCrossingShares,
+                queueConsumedShares = order.queueConsumedShares,
+                status = order.status,
+                createdAt = order.createdAt,
+                canceledAt = order.canceledAt
+            )
+        }
+        EventMakerShadowExecutionDiagnostics(
+            fillVolumeFactor = fillVolumeFactor,
+            totalOrders = snapshots.size,
+            activeOrders = snapshots.count { it.status == "LIVE" },
+            ordersWithCrossingTrades = snapshots.count { it.crossingTradeCount > 0 },
+            totalOpposingTrades = snapshots.sumOf { it.opposingTradeCount },
+            totalCrossingTrades = snapshots.sumOf { it.crossingTradeCount },
+            totalCrossingShares = snapshots.fold(BigDecimal.ZERO) { total, item -> total + item.crossingTradeShares },
+            totalEligibleCrossingShares = snapshots.fold(BigDecimal.ZERO) { total, item -> total + item.eligibleCrossingShares },
+            totalQueueConsumedShares = snapshots.fold(BigDecimal.ZERO) { total, item -> total + item.queueConsumedShares },
+            totalFilledShares = snapshots.fold(BigDecimal.ZERO) { total, item -> total + item.filledShares },
+            orders = snapshots
+        )
     }
 
     fun reset() = synchronized(lock) {
@@ -110,9 +216,16 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         val price: BigDecimal,
         val originalShares: BigDecimal,
         var remainingShares: BigDecimal,
-        var queueAhead: BigDecimal,
+        val queueAheadAtPlacement: BigDecimal,
+        var queueAheadRemaining: BigDecimal,
         val createdAt: Long,
-        var status: String = "LIVE"
+        var status: String = "LIVE",
+        var canceledAt: Long? = null,
+        var opposingTradeCount: Int = 0,
+        var crossingTradeCount: Int = 0,
+        var crossingTradeShares: BigDecimal = BigDecimal.ZERO,
+        var eligibleCrossingShares: BigDecimal = BigDecimal.ZERO,
+        var queueConsumedShares: BigDecimal = BigDecimal.ZERO
     ) {
         fun toLiveOrder(): EventMakerLiveOrder = EventMakerLiveOrder(
             orderId = id,

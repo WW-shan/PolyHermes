@@ -334,3 +334,100 @@
 - 结果：计划、验收矩阵、运行手册和工作日志已同步；工作区干净。
 - 说明：本段是后续仅文档记录提交，不改变代码或运行行为。
 - 当前阻塞：真实小资金 Live smoke 仍等待可用账户、资金和明确授权。
+### 03:14 策略 edge 根因调查开始
+
+- 本轮目标：查清统一 Shadow 多次 0 fill 的原因，验证“队列优先级被定时撤单破坏”的假设，并改进执行策略。
+- 已执行检查：
+  - 读取 2 小时 Shadow 的 `events.jsonl`、`trades.csv`、`snapshots.csv`、`markets.json`。
+  - 按订单存活窗口重放成交：240 个报价订单中，有 51 笔反向成交穿过报价价格；但模拟器全部被前方队列挡住。
+  - 统计 2 小时 `trades.csv`：1,799 行，运行窗口内 194 行，运行开始前历史成交 1,605 行。
+  - 检查当前 CLOB 盘口：中国入侵台湾市场 `0.979` 买盘约 5,920 股，说明 25 USDC 小单前面确实可能有较大队列。
+- 关键发现：
+  - 订单每 120 秒无条件撤单重挂，队列优先级每次归零。
+  - 当前 Shadow 没有记录下单时前方队列和队列消耗，无法直接区分“队列太深”和“模拟器错误”。
+- 计划动作：
+  1. 增加 Shadow 队列诊断并输出 `execution-diagnostics.json`。
+  2. 修改统一引擎：价格未变时保留订单；价格变化或超过最大订单年龄时才撤单。
+  3. 增加单元测试覆盖保留队列、价格变化撤单、超时撤单。
+  4. 运行更长订单寿命的 Shadow 实验，比较 fill、markout、PnL。
+- 证据：`backend/build/research/event-maker-shadow-2h-20261019/`、本文件、`event-maker-delivery-plan.md`。
+### 04:18 队列保留、活跃度筛选与 1-tick 往返实验
+
+- 本轮目标：从“能运行但 0 fill”推进到“可解释、可成交、可审计”的 maker 策略。
+- 代码动作：
+  - `EventMakerLiveEngine` 改为价格未变时保留订单队列；价格变化且超过冷却时间、盘口过期或超过最大订单年龄才撤单。
+  - `EventMakerConfig` / DTO 增加 `maxOrderAgeSeconds`、`minRecentTrades30m`、`minRecentNotional30m`、`minRecentTradesPerSide30m`。
+  - `LivePaperDataClient` 增加近 30 分钟成交笔数、成交额和买卖两侧活跃度筛选。
+  - `EventMakerMarketSelector` 增加候选级评估和过滤原因，新增买一/卖一队列上限、目标卖价高于卖一时的退出队列处理。
+  - `EventMakerQuotePlanner` 增加报价时价差过滤；1-tick 市场允许显式加入队列；卖出价高于卖一时前方队列按 0 处理。
+  - `EventMakerShadowExecutionPort` 输出 `execution-diagnostics.json`，记录下单队列、已消耗队列、穿越成交和成交份额。
+  - Shadow CLI/Gradle 增加价格带、重挂冷却、最大订单年龄、退出 tick、退出价差、订单名义金额和活跃度参数。
+- 测试：event-maker + research 定向测试 `61 tests / 0 failures`。
+- 实验 1：30 分钟“不主动重挂”控制组，7 市场、14 次报价、0 fill、0 错误。结论：长期保留旧价格订单会形成陈旧报价，不能作为主策略。
+- 实验 2：2 分钟活跃度冒烟，选中 `Xi Jinping out before 2027?`，买一队列 20 股，诊断文件正常。
+- 实验 3：2 小时 1-tick 往返 Shadow 正在运行，输出 `backend/build/research/event-maker-shadow-xi-1tick-2h-20261019/`；当前选中 3 个市场，包含 Xi Jinping、Glucksmann 和 Flávio，参数为 `improveTicks=0`、`exitImproveTicks=0`、`exitSpreadCents=0.1`、`maxQueueAheadShares=5000`、`requoteSeconds=300`。
+- 回测：864 配置高队列网格正在独立运行，输出 `backend/build/research/event-maker-queue-grid-20261019-summary.csv`；队列因子覆盖 1/2/5/10/20/50，入场偏移覆盖 0/0.25/0.5/1 美分。
+- 下一步：等待 Shadow 和回测完成，检查 fill、markout、回合 PnL、队列诊断和训练/测试稳定性；没有成交或没有稳定 edge 就继续迭代，不进入实盘。
+
+### 04:38 活跃度窗口修正与最终 2 小时实验
+
+- 发现：初始报价盘口新鲜度和已挂订单撤单阈值混用，安静市场 30 秒无更新就撤单，导致队列反复重置。
+- 修复：新增 activeOrderStaleBookSeconds；盘口不新鲜时不再把 desired=null 当成价格变化；只有盘口恢复新鲜且价格确实变化后才重挂。
+- 活跃度：新增近 2 小时成交笔数、成交额和买卖两侧成交数过滤，避免 30 分钟窗口漏掉脉冲式市场。
+- 回测：30 市场只有 2 个可交易样本；100 市场 0.97~0.99 基准 10 个可交易、4 个成交、ROI +1.02%；300 市场 31 个可交易、14 个成交、ROI +1.02%，队列因子 1~50 的头部 ROI 约 +2.06%~+2.10%，但没有稳健配置。
+- 正在运行：2 小时 Shadow 输出 event-maker-shadow-2h-active-2h-20261019，选中 Xi Jinping 和 Flavio，使用 1-tick 往返、2 小时活跃度、盘口静默 300 秒、已挂订单过期 1800 秒。
+- 正在运行：1000 市场、864 配置回测，输出 event-maker-queue-grid-1000m-20261019-summary.csv。
+- 当前判断：仍不能宣称稳定 edge，等待 Shadow 成交和 1000 市场回测结果。
+### 04:51 1000 市场稳健回测与 1 美分被动入场
+
+- 回测：1,000 市场、864 配置，成交历史 1000/1000 抓取成功。
+- 首个稳健结果：
+  - 配置 `p0.97-0.99_off1.0_spread2.0_q1.0_c1_r0`
+  - 可交易市场 103，成交市场 41，总回合 41，全部 SELL，ROI +2.06%，最大回撤 0，胜率 100%。
+  - 训练窗口 20 个成交市场、测试窗口 21 个成交市场；两端 ROI 分别约 +2.06%/+2.06%。
+- 队列敏感性：同一配置在 queueFactor 5/10/20/50 下仍有正 ROI；queueFactor 10 时有 40 个成交市场、5 个结算回合、ROI +1.94%，说明结果对队列深度不是完全敏感。
+- 仍需警惕：成交全部或绝大多数为 SELL，100% 胜率，回测没有真实 L2 队列、撤单竞争和 adverse selection；不能直接实盘。
+- 代码：实时报价器新增 `entryOffsetCents`，可把买入价放到买一下方 1 美分，队列为 0；卖出使用 entry + 2 美分目标。
+- 实时实验：2 小时 Shadow `backend/build/research/event-maker-shadow-passive-2c-2h-20261019/` 已启动，选中 Israel x Iran、Xi Jinping、China Taiwan，分别挂 0.960、0.963、0.968 的被动买单。
+- 正式报告：`docs/zh/event-maker-robust-backtest-2026-10-19.md`。
+- 下一步：观察是否出现真实 dip fill；若 2 小时无成交，延长 Shadow 运行时间，而不是直接降低价格条件。
+
+### 05:05 建立可恢复执行台账
+
+- 本轮目标：先把计划、后台进程、实际动作、命令、证据和恢复顺序写入仓库，再继续研究，不依赖聊天记忆。
+- 动作：创建 `docs/zh/event-maker-execution-ledger-2026-10-19.md`，包含目标边界、任务队列、2h/12h Shadow 会话、动作时间线、关键命令、证据规则和恢复顺序。
+- 动作：更新交付计划顶部恢复入口、当前检查点、最新提交状态和策略研究下一步。
+- 动作：清理工作日志中的反引号加 n 字面量，拆成独立 Markdown 行。
+- 核对：轮询会话 `47525`、`58042`，两个 Shadow 均仍运行；尚无 fill，`markouts.csv` 为空。
+- 下一步：审查 1,000 市场回测分布和异常，再补费用、延迟、队列及年份样本外敏感性测试。
+### 2026-10-19 05:27 完整池证伪与回测方法修正
+
+- 数据：完整候选池 4,187 个市场，成交历史抓取 4,187/4,187 成功，864 组配置完成。
+- 1,000 市场初步配置 p0.97-0.99_off1.0_spread2.0_q1.0_c1_r0 在完整池变为：可交易 450、成交 179、SELL/SETTLE 177/2、胜率 98.9%、PnL +164.99、ROI +0.92%、最大回撤 100、持有基线 +1.11%。
+- 训练期唯一选参：p0.97-0.99_off0.5_spread2.0_q1.0_c3_r0，训练 ROI +1.10%、测试 ROI +0.56%、总 ROI +0.81%。
+- 队列压力：off1/spread2/c1/r0 配置在 q1/q10/q20/q50 下 ROI 分别为 +0.92%/+0.41%/+0.006%/-0.77%，深队列下 edge 消失。
+- 尾部：179 回合中 2 次结算亏损，每次 -100 USDC；实际亏损率 1.12%，盈亏平衡亏损率约 2.02%，Wilson 95% 上界约 3.98%，仍不能排除负期望。
+- 方法修复：回测参数选择改为只用训练期；最大回撤改为按回合退出时间计算；新增最大浮亏、time-to-fill、60 秒 markout、结算亏损数和盈亏平衡亏损率；新增 0/10/25/50/100 bps maker fee 敏感性输出。
+- Shadow 修复：新增 shadowFillVolumeFactor，避免旧模拟器“任意反向成交即成交”的乐观假设；markout 扩展为 60/300/1800 秒并记录盘口年龄；成交价差 tick 计算改为 HALF_UP，避免浮点边界误判。
+- 测试：BacktestEngine、ShadowExecutionPort、QuotePlanner 定向测试通过；中途发现 factor=0 部分成交回归并已修复。
+- 已完成：修正后完整池复跑 `backend/build/research/event-maker-queue-grid-full-v2-20261019`，生成训练期选参、费用敏感性、MAE 和 markout 的正式结果。
+- 当前判断：策略是薄价差被动 maker，收益依赖队列优先权和低尾部损失率；当前没有足够证据投入真实资金。
+
+### 05:35 修正后完整池结果与 CLI 冒烟
+
+- 修正后完整池：4,187/4,187 市场抓取成功，864 配置完成。
+- 训练期选参：`p0.97-0.99_off0.5_spread2.0_q1.0_c3_r0`，成交 240、回合 278、SELL/SETTLE 266/12、3 次结算亏损。
+- PnL +224.37、ROI +0.81%、训练 +1.10%、测试 +0.56%、最大已实现回撤 146.49。
+- 最大浮亏 -100、平均最大浮亏 -6.99、P10 最大浮亏 -11.35；60 秒 markout 平均 +0.392，21/278 为负。
+- 50bps 双边 maker fee 下总 ROI -0.18%、测试 -0.43%；100bps 下 -1.17%。
+- 发现并修复 `printSummary` 新参数顺序错位导致的 `IllegalFormatConversionException`。
+- 20 市场 CLI 冒烟通过：summary、balanced markets、top markets、top cycles 均正常写出，console 的 MAE/time-to-fill/tailLoss/breakEven 字段正常显示。
+- 正式报告已改为完整池结论，运行手册已同步新参数、保守成交因子和 markout。
+- 额外发现并修复 Spring 装配错误：@Component 原先误标在 EventMakerShadowFill，已移到 EventMakerShadowExecutionPort，并新增回归测试。
+### 06:03 保守 Shadow 冒烟与停止语义修复
+
+- 10 分钟保守 Shadow：1 个市场、201 笔唯一公共成交、35,599 次轮询重复被去重、348 次盘口更新、1 次报价、0 fill、0 错误。
+- 发现：10 分钟到期退出时模拟订单仍为 LIVE，`execution-diagnostics.json` 的 `activeOrders=1`。
+- 修复：Shadow CLI 在退出路径调用 `cancelAll`，记录 `stop` 撤单并刷新最终快照。
+- 1 分钟复测：200 笔唯一成交、1 次报价、1 次退出撤单、0 fill、0 错误；`activeOrders=0`，订单 `CANCELLED`，最终快照 `FLAT`。
+- 证据：`backend/build/research/event-maker-shadow-v2-smoke-20261019/`、`backend/build/research/event-maker-shadow-v2-smoke2-20261019/`。

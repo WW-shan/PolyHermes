@@ -4,13 +4,21 @@ import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import com.wrbug.polymarketbot.research.livepaper.LiveTradePrint
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
 class EventMakerShadowExecutionPortTest {
-    private val port = EventMakerShadowExecutionPort()
+    private val port = EventMakerShadowExecutionPort().apply { configureFillModel(0.0) }
     private val market = market()
+
+    @Test
+    fun `shadow port is registered as a spring component`() {
+        assertNotNull(EventMakerShadowExecutionPort::class.java.getAnnotation(org.springframework.stereotype.Component::class.java))
+        assertNull(EventMakerShadowFill::class.java.getAnnotation(org.springframework.stereotype.Component::class.java))
+    }
 
     @Test
     fun `public trade first consumes queue then partially fills maker order`() = runTest {
@@ -42,6 +50,39 @@ class EventMakerShadowExecutionPortTest {
         port.onTrade(trade("BUY", 0.98, 10.0, sell.createdAt + 10L))
         assertEquals("FILLED", port.getOrder(0L, sell.orderId).getOrThrow().status)
         assertEquals(0, port.activeOrderCount())
+    }
+
+    @Test
+    fun `diagnostics expose queue consumption and crossing flow`() = runTest {
+        val placed = port.place(0L, market, intent(EventMakerSide.BUY, "0.96", "10.00", 2.0)).getOrThrow()
+        val now = placed.createdAt + 10L
+
+        port.onTrade(trade("SELL", 0.96, 1.5, now))
+        port.onTrade(trade("SELL", 0.96, 1.0, now + 1))
+
+        val diagnostics = port.diagnostics()
+        val order = diagnostics.orders.single()
+        assertEquals(1, diagnostics.ordersWithCrossingTrades)
+        assertEquals(2, diagnostics.totalCrossingTrades)
+        assertEquals(0, BigDecimal("2.5").compareTo(order.crossingTradeShares))
+        assertEquals(0, BigDecimal("2.0").compareTo(order.queueConsumedShares))
+        assertEquals(0, BigDecimal("0.5").compareTo(order.filledShares))
+        assertEquals(0, BigDecimal.ZERO.compareTo(order.queueAheadRemaining))
+    }
+    @Test
+    fun `fill volume factor requires cumulative crossing flow`() = runTest {
+        port.configureFillModel(2.0)
+        val placed = port.place(0L, market, intent(EventMakerSide.BUY, "0.96", "10.00", 0.0)).getOrThrow()
+        val now = placed.createdAt + 10L
+
+        val first = port.onTrade(trade("SELL", 0.96, 10.0, now))
+        assertTrue(first.isEmpty())
+        assertEquals("LIVE", port.getOrder(0L, placed.orderId).getOrThrow().status)
+
+        val fills = port.onTrade(trade("SELL", 0.96, 10.0, now + 1))
+        assertEquals(1, fills.size)
+        assertEquals(0, BigDecimal("10.00").compareTo(fills.single().shares))
+        assertEquals("FILLED", port.getOrder(0L, placed.orderId).getOrThrow().status)
     }
 
     private fun intent(side: EventMakerSide, price: String, shares: String, queue: Double) =
