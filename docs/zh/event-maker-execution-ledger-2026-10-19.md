@@ -224,3 +224,23 @@ cd D:\Project\PolyHermes\backend
 - 冒烟目录：`event-maker-shadow-wait-smoke-20261019`、`event-maker-shadow-wait-loop-smoke-20261019`。
 - 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
 - 下一步：提交后启动长等待+Shadow，持续检查证据；等待期间禁止重编译。
+### 07:50 后台等待与 2 小时 Shadow 启动计划
+
+- 任务：最多等待 180 分钟，60 秒重试；选出市场后运行 120 分钟 Shadow。
+- 证据目录：`backend/build/research/event-maker-shadow-watch-20261019/`。
+- 约束：仅公共数据，不真实下单；进程运行期间禁止编译和测试。
+- 完成后按 `summary.json`、`execution-diagnostics.json`、`markouts.csv`、`state.json` 和 attempt 日志逐项验收。
+### 07:47 后台等待任务进程
+
+| 项目 | 值 |
+|---|---|
+| 包装进程 | PowerShell PID 3764 |
+| Gradle 启动进程 | cmd.exe PID 10628 |
+| JavaExec Shadow | java.exe PID 24888 |
+| 输出目录 | `backend/build/research/event-maker-shadow-watch-20261019/` |
+| 等待上限 | 180 分钟 |
+| 重试间隔 | 60 秒 |
+| 选出后 Shadow | 120 分钟 |
+| 首次结果 | qualified=6, activityPassed=0, selected=0, volume_floor_reached |
+
+恢复规则：先检查 PID 3764/24888 和 `watch-process.json`，再读 `discovery-attempts.jsonl`、`stdout.log`、`stderr.log`。进程运行期间禁止编译和测试。

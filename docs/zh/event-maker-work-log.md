@@ -531,3 +531,22 @@
 - 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
 - 注意：等待期间行情会变化；两次真实检查中活动通过数从 1 变为 0，说明必须持续重新发现，不能缓存首次候选。
 - 下一步：提交自动等待模式；启动长时间后台等待+Shadow 任务，并持续检查 attempt 日志、summary、markouts 和 diagnostics。
+### 07:50 启动后台等待与 2 小时 Shadow 的计划
+
+- 输出目录：`backend/build/research/event-maker-shadow-watch-20261019/`；stdout/stderr 写到同目录 `stdout.log`、`stderr.log`。
+- 参数：最多等待 180 分钟，60 秒重新发现一次；出现合格市场后 Shadow 运行 120 分钟。
+- 严格条件保持不变：价格为 0.97～0.99、24h 成交额 >=100,000、30m/2h 活动门槛、`minSpreadTicks=2`、保守成交因子 1。
+- 安全边界：只读公共盘口和成交，不签名、不下真实订单；等待阶段也不打开 WebSocket。
+- 运行期间禁止执行 `compileKotlin`、`test` 或其他会改写同一 classpath 的任务。
+- 完成后检查：`discovery-attempts.jsonl`、`market-discovery.json`、`market-selection.json`、`summary.json`、`execution-diagnostics.json`、`markouts.csv`、`state.json`。
+### 07:47 后台等待任务已启动
+
+- 启动命令：通过隐藏的 PowerShell 包装脚本启动 `eventMakerShadow`，参数见 `backend/build/research/event-maker-shadow-watch-20261019/run.ps1`。
+- 进程树：
+  - PowerShell 包装：PID `3764`
+  - `cmd.exe`：PID `10628`
+  - Gradle JavaExec：PID `24888`
+- 输出：`backend/build/research/event-maker-shadow-watch-20261019/`
+- 启动参数：最多等待 180 分钟、每 60 秒重新发现、选出市场后 Shadow 运行 120 分钟；严格价格带、活动度和 2-tick 价差条件不变。
+- 首次状态：`qualified=6 activityPassed=0 selected=0 stopped=volume_floor_reached`，正在等待第 2 次发现。
+- 运行期间禁令：不执行 `compileKotlin`、`test` 或其他会改写 classpath 的任务；只允许读取日志、写入文档和提交文档。

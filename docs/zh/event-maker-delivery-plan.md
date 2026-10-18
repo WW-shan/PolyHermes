@@ -282,7 +282,7 @@ cd D:\Project\PolyHermes\backend
 | DISC-2 | 用真实 API 检查 0.97～0.99 候选覆盖 | 已完成 | keyset 扫描、6 个预筛候选、`market-discovery.json` |
 | TEST-2 | 定向和全量回归测试 | 已完成 | 96 suites / 450 tests / 0 failures / 2 skipped |
 | GIT-2 | 提交并推送修复 | 已完成 | `7b0bf7b`、`main -> main` |
-| OBS-3 | 修复后干净 Shadow 长测 | 等待合格候选 | 当前唯一活动候选价差 1 tick，不满足 2 tick |
+| OBS-3 | 修复后干净 Shadow 长测 | 后台等待中 | 最多等待 180 分钟，选出后运行 120 分钟 |
 | WATCH-1 | 自动等待合格市场并启动 Shadow | 已完成 | 自动重试、attempt 日志、超时文件、实际 5 次等待冒烟 |
 | CLEAN-1 | 清理一次性构建/研究产物 | 已完成本轮 | 删除 9 个失效/重复目录，保留正式证据 |
 
