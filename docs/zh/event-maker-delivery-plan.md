@@ -128,7 +128,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [x] 更新策略文档、运行手册和故障处理手册。
 - [x] 全量测试通过。
 - [x] 早期执行框架提交并推送（`6eca4ff`、`179f2b2`）。
-- [ ] 本轮完整池回测、Shadow 修复和文档提交并推送。
+- [x] 本轮完整池回测、Shadow 修复和文档提交并推送（`06d168f`）。
 
 ## 5. 验收矩阵
 
@@ -220,8 +220,8 @@ cd D:\Project\PolyHermes\backend
 ### 9.2 当前检查点（2026-10-19 05:32 +08:00）
 
 - 当前分支：`main`。
-- 最新已推送提交：`179f2b2 docs: finalize event maker execution ledger`。本轮的报价、队列、过滤器和诊断改动尚未提交。
-- 当前工作区：代码、测试、计划、日志、运行手册和完整池报告尚未提交；提交前必须完成 `git diff --check` 和最终审查。
+- 最新已推送提交：`06d168f feat: harden event maker shadow and full-pool validation`。
+- 当前工作区：主体代码与文档已推送；本轮收尾只更新 commit hash 和最终状态。
 - 已完成：策略模型、报价规划、风险策略、统一 Shadow/Live 引擎、Live 执行适配器、REST 接口、持久化恢复、账户与资金校验、执行守卫、逐笔/逐回合审计。
 - 已完成：编译修复、持久化测试、Live mock 集成测试、统一 Shadow 与 planner、执行守卫、逐笔/逐回合审计、运行手册。
 - 已验证：全量 95 suites / 445 tests / 0 failures / 2 skipped；完整池 4,187 市场 / 864 配置回测成功。

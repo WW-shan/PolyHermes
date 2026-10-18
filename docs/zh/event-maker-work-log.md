@@ -431,3 +431,9 @@
 - 修复：Shadow CLI 在退出路径调用 `cancelAll`，记录 `stop` 撤单并刷新最终快照。
 - 1 分钟复测：200 笔唯一成交、1 次报价、1 次退出撤单、0 fill、0 错误；`activeOrders=0`，订单 `CANCELLED`，最终快照 `FLAT`。
 - 证据：`backend/build/research/event-maker-shadow-v2-smoke-20261019/`、`backend/build/research/event-maker-shadow-v2-smoke2-20261019/`。
+
+### 06:10 提交与推送
+
+- 提交：`06d168f feat: harden event maker shadow and full-pool validation`。
+- 推送：`179f2b2..06d168f main -> main`。
+- 推送前全量测试：95 suites / 445 tests / 0 failures / 0 errors / 2 skipped。

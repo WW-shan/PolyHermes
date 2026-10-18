@@ -33,7 +33,7 @@
 | CODE-1 | 审查报价、队列保留、诊断、过滤器和 Shadow 成交模型 | 已完成 | 代码修改、定向测试、全量 445 tests |
 | DOC-2 | 更新计划、日志、运行手册和正式报告 | 已完成 | 文档 diff、`git diff --check` |
 | TEST-1 | event-maker/research 定向测试和全量测试 | 已完成 | 95 suites / 445 tests / 0 failures / 2 skipped |
-| GIT-1 | 提交并推送全部已验证改动 | 待开始 | commit hash、`git status`、push 结果 |
+| GIT-1 | 提交并推送全部已验证改动 | 已完成 | `06d168f`、`main -> main` |
 | OBS-2 | 分析 Shadow 完成结果并决定是否继续研究 | 待开始 | fill/markout/PnL/库存分析 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
@@ -152,3 +152,10 @@ cd D:\Project\PolyHermes\backend
 4. 执行 `git status --short`、`git diff --check`、`git log -3 --oneline`。
 5. 轮询已有 Shadow 会话，禁止重复启动。
 6. 从任务队列第一个非阻塞未完成项继续。
+
+### 06:10 提交与推送
+
+- 提交：`06d168f feat: harden event maker shadow and full-pool validation`。
+- 推送：`origin/main`，`179f2b2..06d168f main -> main`。
+- 全量测试：95 suites / 445 tests / 0 failures / 0 errors / 2 skipped。
+- 当前仅剩真实盘口 Shadow 填充验证和需要用户授权的 Live smoke。

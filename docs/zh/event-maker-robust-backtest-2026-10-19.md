@@ -8,6 +8,7 @@
 > 计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)
 > 执行台账：[event-maker-execution-ledger-2026-10-19.md](event-maker-execution-ledger-2026-10-19.md)
+> 提交：`06d168f feat: harden event maker shadow and full-pool validation`
 
 ## 1. 结论
 
