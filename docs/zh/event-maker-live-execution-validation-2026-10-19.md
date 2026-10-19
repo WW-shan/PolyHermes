@@ -139,10 +139,10 @@ cd D:\Project\PolyHermes\backend
 .\gradlew.bat test --console=plain
 ```
 
-当前结果（2026-10-19 23:30，schema v3 日亏损锚点后）：
+当前结果（2026-10-20 00:00，停机/估值/时钟边界补强后）：
 
 ```text
-全量：103 suites / 536 tests，0 failures，0 errors，2 skipped
+全量：103 suites / 538 tests，0 failures，0 errors，2 skipped
 定向：DailyPnlBudget / StateStore / LiveEngine / StrategyServiceSafety / StartupRecovery 通过
 ```
 

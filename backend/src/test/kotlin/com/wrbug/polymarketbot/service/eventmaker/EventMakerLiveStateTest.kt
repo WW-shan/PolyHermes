@@ -1,6 +1,8 @@
 package com.wrbug.polymarketbot.service.eventmaker
 
+import com.wrbug.polymarketbot.research.livepaper.BookLevel
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
+import com.wrbug.polymarketbot.research.livepaper.MarketBook
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -169,6 +171,16 @@ class EventMakerLiveStateTest {
         val error = assertThrows(IllegalStateException::class.java) { restored.restore(corrupted) }
 
         assertEquals(true, error.message!!.startsWith("persisted_favorite_token_mismatch"))
+    }
+
+    @Test
+    fun `missing bid marks open inventory to zero instead of no loss`() {
+        val buy = order("buy-1", EventMakerSide.BUY, "0.96", "10.00", "10.00", "FILLED")
+        state.onOrderPlaced(buy)
+        state.reconcile(buy, 1_000)
+        state.onBook(MarketBook("token", emptyList(), listOf(BookLevel(0.97, 100.0)), 2_000))
+
+        assertEquals(-9.6, state.markToMarket(state.lastBook), 1e-9)
     }
 
     @Test

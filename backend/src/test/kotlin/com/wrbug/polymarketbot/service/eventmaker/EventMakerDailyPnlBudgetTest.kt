@@ -39,6 +39,21 @@ class EventMakerDailyPnlBudgetTest {
     }
 
     @Test
+    fun `backwards clock jump keeps the persisted daily budget anchor`() {
+        val futureDay = EventMakerDailyPnlBudget.currentDay(now) + 1
+
+        val anchor = EventMakerDailyPnlBudget.resolve(
+            now = now,
+            persistedDay = futureDay,
+            persistedBaseline = 10.0,
+            totalRealizedPnl = 7.0
+        )
+
+        assertEquals(futureDay, anchor.day)
+        assertEquals(10.0, anchor.baseline, 1e-9)
+    }
+
+    @Test
     fun `missing or invalid persisted baseline fails closed to a fresh anchor`() {
         val today = EventMakerDailyPnlBudget.currentDay(now)
 

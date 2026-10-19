@@ -1,13 +1,13 @@
 # Event Maker 运行手册与故障处理
 
-> 更新时间：2026-10-19 23:30 +08:00<br>
+> 更新时间：2026-10-20 00:00 +08:00<br>
 > 适用代码：`backend/src/main/kotlin/com/wrbug/polymarketbot/service/eventmaker/`  
 > 计划与验收：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)  
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-19 23:30）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 536 tests 通过。日亏损预算已改为持久化 UTC 日锚点：同日重启沿用、跨 UTC 日重锚，旧 v2 状态 fail-closed；v2 Shadow 因发现该缺口而中止（0 fill、无真实订单）；v3 Shadow 已用最终代码启动，当前在严格活动门槛下等待。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-20 00:00）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 538 tests 通过。日亏损使用持久化 UTC 锚点，同日重启不重置、跨日重锚、时钟回拨不重置；无买盘持仓按最坏估值。对账/初始 tick 的未知状态和日亏损会主动关闭事件通道并进入统一清理。v3 Shadow 严格门槛下 0 选中后因本轮修复停止，v4 待最终提交后重启。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。

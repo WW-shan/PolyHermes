@@ -1139,7 +1139,7 @@
 - 测试：
   - 新增 `EventMakerDailyPnlBudgetTest` 4 条：同日沿用、跨日重锚、缺失/非法锚点、非有限累计 PnL。
   - `EventMakerStateStoreTest` 新增缺失日锚点和非有限 baseline 拒绝测试，并验证 v3 日锚点 round-trip。
-  - 全量：`103 suites / 536 tests / 0 failures / 0 errors / 2 skipped`。
+  - 全量：`103 suites / 538 tests / 0 failures / 0 errors / 2 skipped`。
 - v2 Shadow（PID 8300 / wrapper 5600）于 23:20 主动停止：运行 29m、1 个市场、2 次 Shadow 挂单、1 次 requote、0 fill、无真实订单。Gradle wrapper 因强制终止记录 exit -1；该目录不作为最终 Shadow 验收。
 - 下一步：提交本修复后，在新目录 `event-maker-safe-candidate-shadow-main-v3-20261019/` 用最终代码重启正式候选 Shadow。
 ### 23:42 v3 Shadow 启动
@@ -1149,3 +1149,11 @@
 - wrapper PID `23852`，Java PID `20988`，启动 `2026-10-19 23:41:45 +08:00`。
 - 首两轮均为 qualified=2、activityPassed=0、selected=0，原因 `recent_trades_30m_below_min=2`。
 - 当前 waiting；日志 0 异常，stderr 为空；严格活动门槛和价格带保持不变。
+### 23:55 对账停机与估值边界补强
+
+- 发现 `reconcileJob` 没有消费 `applyEngineResult` 的 halted 返回值；若没有后续 WS 事件，未知订单状态或日亏损触发后可能继续保留活动订单。现关闭 feed channel，统一进入 cancel/reconcile/persist 清理。
+- 初始 tick 同样检查 engine halted 和日亏损，避免初始化后继续挂单。
+- 无买盘时 `markToMarket` 不再返回 0 浮亏，改为 bid=0 的最坏估值，并补单测。
+- 系统时间回拨时不重置日亏损锚点，保留持久化未来日直到时间追上，并补单测。
+- 全量测试：103 suites / 538 tests / 0 failures / 0 errors / 2 skipped。
+- v3 Shadow 在 23:55 主动停止；运行期间严格门槛下 5 轮均 activityPassed=0、selected=0，未产生 Shadow 订单或真实订单。

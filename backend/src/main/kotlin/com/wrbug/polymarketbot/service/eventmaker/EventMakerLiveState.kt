@@ -293,7 +293,9 @@ class EventMakerLiveState(
 
     fun markToMarket(book: MarketBook?): Double {
         if (inventoryShares <= BigDecimal.ZERO) return 0.0
-        val bid = book?.bestBid ?: return 0.0
+        // With no visible bid the position has no demonstrable exit, so risk must
+        // use the worst-case mark (zero) instead of silently treating loss as zero.
+        val bid = book?.bestBid ?: 0.0
         return BigDecimal.valueOf(bid).subtract(entryPrice).multiply(inventoryShares).toDouble()
     }
 

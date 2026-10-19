@@ -415,15 +415,26 @@ class EventMakerStrategyService(
         val reconcileJob = runScope?.launch {
             while (isActive) {
                 delay(config.reconcileSeconds * 1000L)
+                var closeFeed: Boolean
                 stateMutex.withLock {
                     // Roll the daily anchor before order reconciliation can apply
                     // the first fill of a new UTC day.
                     rollDailyPnlBaseline(engine, states)
                     val result = runEngineTick(engine, states, books, accountId)
-                    applyEngineResult(result)
+                    val engineStopped = applyEngineResult(result) || engine.haltedReason != null
                     updateStatus(states, books, trades, bookUpdates)
+                    val dailyLoss = riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))
+                    if (dailyLoss) status = status.copy(lastError = "daily_loss_limit")
                     persistLive(status.startedAt, accountId, states, engine)
                     lastPersistAt = System.currentTimeMillis()
+                    closeFeed = engineStopped || dailyLoss
+                }
+                if (closeFeed) {
+                    // Wake the main event loop so its finally block performs the
+                    // common cancel/reconcile/persist shutdown path even when no WS
+                    // event arrives after an order-state or daily-loss halt.
+                    feedChannel?.close()
+                    return@launch
                 }
             }
         }
@@ -431,13 +442,19 @@ class EventMakerStrategyService(
         ensureNoUnmanagedOpenOrders(accountId, persisted)
         ensureNoUnmanagedPositions(accountId, persisted)
 
+        var initialHalt: Boolean
         stateMutex.withLock {
             rollDailyPnlBaseline(engine, states)
             val initial = runEngineTick(engine, states, books, accountId)
-            applyEngineResult(initial)
+            initialHalt = applyEngineResult(initial) || engine.haltedReason != null
             updateStatus(states, books, trades, bookUpdates)
+            if (riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))) {
+                status = status.copy(lastError = "daily_loss_limit")
+                initialHalt = true
+            }
             persistLive(status.startedAt, accountId, states, engine)
         }
+        if (initialHalt) feedChannel?.close()
         try {
             for (event in channel) {
                 if (runId != generation.get()) break

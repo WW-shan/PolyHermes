@@ -27,11 +27,15 @@ object EventMakerDailyPnlBudget {
     ): EventMakerDailyPnlAnchor {
         require(totalRealizedPnl.isFinite()) { "totalRealizedPnl must be finite" }
         val today = currentDay(now)
-        val reusableBaseline = persistedDay == today &&
+        val reusableBaseline = persistedDay != null &&
             persistedBaseline != null &&
-            persistedBaseline.isFinite()
+            persistedBaseline.isFinite() &&
+            persistedDay >= today
+        // A backwards clock jump must not reset the budget. Keep the persisted
+        // (future) anchor until UTC time catches up.
+        val anchorDay = if (reusableBaseline) persistedDay!! else today
         return EventMakerDailyPnlAnchor(
-            day = today,
+            day = anchorDay,
             baseline = if (reusableBaseline) persistedBaseline!! else totalRealizedPnl
         )
     }
