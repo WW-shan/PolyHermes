@@ -799,3 +799,16 @@
 - 提交并推送：`194baf0 fix: scope activity gate to the quoted favorite token`（`2f718ae..194baf0 main -> main`）。
 - 两臂已重启：主臂 Java PID `2424`（wrapper 16648）；实验臂 Java PID `21272`（wrapper 24584）。
 - 行为变化观察：首轮拒绝原因由 `recent_trades_30m_below_min` 变为 `recent_notional_30m_below_min`，说明门槛已按 favorite token 重新评估（此前被非 favorite 成交抬高）。
+
+### 15:3x-16:0x LIVE 事件循环限流炸弹修复（严重实盘缺陷）
+
+- 缺陷：LIVE 事件循环在**每一个 WS 事件**上都执行 `runEngineTick`，而它内部先 `engine.reconcile`——对每个活跃订单发一次真实 CLOB `getOrder` REST 调用，并且每次都 `persistLive` 写盘。
+- 实测事件速率：历史 Shadow 运行 `bookUpdates/duration` 为 **7.28 次/秒**（2h 运行 52,426 次盘口更新）。按 3 个活跃订单估算：**约 22 次 REST/秒、每小时 78,639 次**——必然触发 CLOB 限流；且每次都在 `stateMutex` 内执行，阻塞报价路径。
+- 修复：
+  - 事件循环改为只调用新的 `runQuoteTick`（仅 `engine.quote`，**零 REST**）。
+  - 订单对账保留在专用 `reconcileJob`，按 `reconcileSeconds` 节流（默认 2s）。
+  - `persistLive` 改为：订单状态变化立即写；无变化时最多每 5 秒写一次（`LIVE_PERSIST_INTERVAL_MS`），消除磁盘抖动。
+- 新增测试 `quote does not perform order lookups`：断言 `quote()` 期间 `getOrder` 调用次数为 0；`FakeExecutionPort` 增加 `getOrderCount` 计数。
+- 全量测试：100 suites / 489 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`dbacd9e fix: stop reconciling live orders on every websocket event`（`8ac8207..dbacd9e main -> main`）。
+- 两臂已重启：主臂 Java PID `13976`（wrapper 8584）；实验臂 Java PID `22292`（wrapper 23760）。
