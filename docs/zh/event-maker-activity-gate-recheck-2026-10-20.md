@@ -119,3 +119,14 @@ cd D:\Project\PolyHermes-markout-fix\backend
 - 带门槛 provenance 列（`min_recent_trades_30m` 等）的 1d 复跑：`event-maker-provenance-smoke-20261020-*`，数字与上表 1d 完全一致。
 - markout 复算：`event-maker-markout-recheck-1d-focus-20261020.json`、`event-maker-markout-recheck-1d-robust-20261020.json`
 - 止损研究：`event-maker-stoploss-study-278-baseline-20261020.json`、`event-maker-stoploss-study-1d-focus-20261020.json`
+
+复算脚本（已入库）：
+
+```powershell
+node .\scripts\analyze-event-maker-markout-and-stops.cjs `
+  --dataset backend/build/research/event-maker-full-v2-7d-20261019-dataset.json.gz `
+  --cycles backend/build/research/event-maker-gated-markoutfix-horizon-1d-20261020-focus-cycles.csv `
+  --output backend/build/research/event-maker-markout-recheck-1d-focus-20261020.json
+```
+
+输出包含真 60/300/1800 秒 markout、首次跌破 0.95/0.90/0.75/0.50/0.25/0.10 的秒数，以及 -1c 至 -20c 止损网格。
