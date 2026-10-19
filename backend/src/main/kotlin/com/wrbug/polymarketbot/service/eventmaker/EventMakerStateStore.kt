@@ -89,10 +89,6 @@ class EventMakerStateStore(
             val duplicateIds = markets.groupingBy { it.conditionId }.eachCount().filterValues { it > 1 }.keys
             if (duplicateIds.isNotEmpty()) invalid("duplicate_condition:${duplicateIds.joinToString(",")}")
             markets.forEach(::validateMarket)
-            val marketRealized = markets.sumOf { it.realizedPnl }
-            if (state.cumulativeRealizedPnl + 1e-6 < marketRealized) {
-                invalid("cumulative_pnl_below_markets")
-            }
         } catch (e: IllegalStateException) {
             throw e
         } catch (e: Exception) {

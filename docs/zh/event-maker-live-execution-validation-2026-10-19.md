@@ -143,10 +143,10 @@ cd D:\Project\PolyHermes\backend
 .\gradlew.bat test --console=plain
 ```
 
-当前结果（2026-10-20 05:25，累计 PnL 一致性校验后）：
+当前结果（2026-10-20 05:10，已赎回状态交易哈希校验后）：
 
 ```text
-全量：103 suites / 562 tests，0 failures，0 errors，2 skipped
+全量：103 suites / 561 tests，0 failures，0 errors，2 skipped
 定向：DailyPnlBudget / StateStore / LiveEngine / StrategyServiceSafety / StartupRecovery 通过
 ```
 
@@ -173,6 +173,6 @@ cd D:\Project\PolyHermes\backend
 - 对 discovery 不再返回的孤儿持仓，使用持久化 market 元数据进入仅结算状态；
 - Live 启动若缺少 Builder API Key，将以 `settlement_builder_api_key_missing` 拒绝；
 - state schema 为 v4，恢复时同时重放 fills 和 settlements；`settlement.shares` 表示剩余可赎回股数，`cycle.shares` 表示完整周期总买入股数，部分卖出后的 cycle PnL 必须合并两部分；
-- 全量回归：103 suites / 562 tests / 0 failures / 0 errors / 2 skipped。
+- 全量回归：103 suites / 561 tests / 0 failures / 0 errors / 2 skipped。
 
 仍未验证：真实账户的 Builder Relayer、链上赎回回执、pUSD 到账延迟和实际到账金额。该部分必须在真实小资金 Live smoke 中完成。
