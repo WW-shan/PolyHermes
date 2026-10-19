@@ -663,3 +663,11 @@
 - 新增数量不一致测试：状态库存 5.00、账户持仓 3.00 时拒绝启动。
 - 全量回归：97 suites / 475 tests / 0 failures / 0 errors / 2 skipped；eventmaker/research eventmaker 94 tests。
 - v3 Shadow 已于 09:10 因本次安全修复停止；待提交后再次重启。
+### 09:22 v4 严格等待 + Shadow 重启
+
+- 持仓数量精确对账提交并推送：`3d30ba5 fix: reconcile event maker position sizes`（`76448e5..3d30ba5`）。
+- 新后台任务：PowerShell 包装进程 PID `15340`，JavaExec PID `21804`；输出 `backend/build/research/event-maker-shadow-watch-v4-20261019/`。
+- 参数未放宽：等待最多 180 分钟、60 秒重试、选出后 Shadow 120 分钟；0.97～0.99、24h >=100,000、30m/2h 活动门槛、`minSpreadTicks=2`、成交因子 1。
+- 首次检查：attempt=1，qualified=7、activityPassed=0、selected=0；拒绝原因 `recent_trades_30m_below_min=5`、`recent_trades_2h_below_min=1`、`recent_notional_30m_below_min=1`；`logIssues=0`、`stderrBytes=0`，状态 waiting。
+- `scripts/check-event-maker-watch.ps1` 默认目录已切到 v4。
+- 运行期间禁止编译、测试或重写 classpath。

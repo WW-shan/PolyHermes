@@ -2,7 +2,7 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**Live 状态恢复/账户级对账已加固，97 suites / 475 tests 通过；已提交 596504e，v3 等待+Shadow 运行中**<br>
+> 当前状态：**Live 状态恢复/账户级对账已加固，97 suites / 475 tests 通过；已提交 596504e，v4 等待+Shadow 运行中**<br>
 > 最后更新：2026-10-19 09:01 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
@@ -331,7 +331,7 @@ cd D:\Project\PolyHermes\backend
 | BT-4 | 标签/价格桶 × 训练/测试与 cluster bootstrap | 已完成 | `docs/zh/event-maker-robustness-crosscheck-2026-10-19.md`、分析脚本 |
 | TEST-3 | 定向与全量回归 | 已完成 | eventmaker 94 tests；全量 97 suites / 475 tests / 0 failures / 0 errors / 2 skipped |
 | GIT-3 | 提交并推送本轮安全修复 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 用新代码重启干净等待 + Shadow | 运行中 | v3 PID 6296/7788，输出 `event-maker-shadow-watch-v3-20261019/` |
+| OBS-4 | 用新代码重启干净等待 + Shadow | 运行中 | v4 PID 15340/21804，输出 `event-maker-shadow-watch-v4-20261019/` |
 
 - 当前没有运行中的 Shadow/回测进程。
 - 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。

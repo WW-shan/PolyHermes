@@ -41,14 +41,15 @@
 | SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 475 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 用新代码重启严格等待 + Shadow | 运行中 | v3 PID 6296/7788；启动 09:06；不降低门槛 |
+| OBS-4 | 用新代码重启严格等待 + Shadow | 运行中 | v4 PID 15340/21804；启动 09:22；不降低门槛 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
 ## 3. 最近后台进程与状态
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| v3 等待+Shadow 任务 | 6296 / 7788 | 09:06 | 等待最多 180m；选出后 Shadow 120m | `backend/build/research/event-maker-shadow-watch-v3-20261019/` | waiting；严格参数；attempt=1 时 0 活动通过 |
+| v4 等待+Shadow 任务 | 15340 / 21804 | 09:22 | 等待最多 180m；选出后 Shadow 120m | `backend/build/research/event-maker-shadow-watch-v4-20261019/` | waiting；严格参数；attempt=1 时 0 活动通过 |
+| v3 等待+Shadow 任务 | 6296 / 7788 | 09:06 | 09:10 已停止 | `backend/build/research/event-maker-shadow-watch-v3-20261019/` | 因持仓数量精确对账修复停止 |
 | v2 等待+Shadow 任务 | 7652 / 14836 | 08:05 | 08:18 已停止 | `backend/build/research/event-maker-shadow-watch-v2-20261019/` | 12 次发现均为 0 活动通过；因安全修复停止 |
 | 旧被动入场 2h/12h | 旧会话 | 04:50 / 04:52 | 已结束 | `event-maker-shadow-passive-2c-*` | 历史记录；2h 收尾类冲突无效；12h 已停止；均 0 fill |
 
