@@ -863,3 +863,16 @@
 - 提交并推送：`ff47918 perf: apply incremental polling and duplicate-tick skip to the shadow CLI`（`d9f0891..ff47918 main -> main`）。
 - 两臂已重启：主臂 Java PID `11108`（wrapper 22544）；实验臂 Java PID `23440`（wrapper 10476）。
 - 说明：至此 Spring 与 CLI 两条 Shadow 入口的轮询/去重语义一致。
+
+### 17:0x-17:2x 日亏损预算语义修复（风控正确性）
+
+- 缺陷：`maxDailyLoss` 名为"日亏损"，但 `shouldHalt` 比较的是 `status.realizedPnl + status.unrealizedPnl`——即**整个运行周期**的累计 PnL，从未按日重置。长跑中一次早期亏损会永久锁死策略，与配置语义不符。
+- 修复：
+  - `EventMakerLiveEngine` 新增 `dailyPnlBaseline`，风险快照的 `dailyPnl` 改为扣除该基线。
+  - `EventMakerStrategyService` 新增 `currentDayKey`/`rollDailyPnlBaseline`：UTC 日切换时把基线推进到当时的已实现 PnL，并记录日志。
+  - 两条事件循环的停机检查改为 `dailyPnlSinceBaseline(engine, states)`，即"今日"盈亏。
+  - `initialRealizedPnl` 由 private 改为可读，供基线计算使用。
+- 新增测试 `daily pnl baseline scopes the loss budget to the current day`：推进基线后不得再报 `daily_loss_limit`。
+- 全量测试：100 suites / 494 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`5483d02 fix: make the daily loss budget actually daily`（`f8cf592..5483d02 main -> main`）。
+- 两臂已重启：主臂 Java PID `12368`（wrapper 23964）；实验臂 Java PID `8428`（wrapper 26264）。
