@@ -494,10 +494,18 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         ).also { it.start() }
         val jobs = mutableListOf<Job>()
         jobs += scope.launch {
+            val lastSeen = mutableMapOf<String, Long>()
             while (isActive) {
                 delay(options.pollSeconds * 1000L)
                 discovered.forEach { market ->
-                    dataClient.getRecentTrades(market).forEach { channel.trySend(ShadowEvent.Feed(LiveFeedEvent.Trade(it))) }
+                    // Only ask for prints newer than the last forwarded one; the Data
+                    // API otherwise re-serves the same 200 rows on every poll.
+                    val since = lastSeen[market.conditionId]
+                    val fresh = dataClient.getRecentTrades(market, since)
+                    if (fresh.isNotEmpty()) {
+                        lastSeen[market.conditionId] = fresh.maxOf { it.timestamp }
+                        fresh.forEach { channel.trySend(ShadowEvent.Feed(LiveFeedEvent.Trade(it))) }
+                    }
                 }
             }
         }
@@ -511,6 +519,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         var haltedReason: String? = null
         try {
             loop@ for (event in channel) {
+                var duplicateTrade = false
                 when (event) {
                     is ShadowEvent.Feed -> when (val feed = event.event) {
                         is LiveFeedEvent.BookUpdated -> applyBook(feed.book, states, discovered)
@@ -518,12 +527,18 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                             val current = books[change.tokenId] ?: MarketBook(change.tokenId, emptyList(), emptyList(), change.timestamp)
                             applyBook(current.applyPriceChange(change), states, discovered)
                         }
-                        is LiveFeedEvent.Trade -> applyTrade(feed.trade)
+                        is LiveFeedEvent.Trade -> duplicateTrade = applyTrade(feed.trade)
                         is LiveFeedEvent.Unknown -> writeEvent(mapOf("type" to "unknown", "eventType" to feed.eventType))
                     }
                     is ShadowEvent.Tick -> Unit
                 }
                 val now = System.currentTimeMillis()
+                if (duplicateTrade) {
+                    // Duplicate print: no new information, so skip the engine tick.
+                    writeDueMarkouts(now)
+                    if (now >= deadline) break@loop
+                    continue@loop
+                }
                 val result = engine.reconcile(states, 0L, now).merge(engine.quote(states, books, 0L, now))
                 recordEngineResult(result)
                 if (result.haltedReason != null) {
@@ -638,10 +653,11 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         }
     }
 
-    private fun applyTrade(trade: LiveTradePrint) {
+    /** Returns true when the print was already seen (no new information). */
+    private fun applyTrade(trade: LiveTradePrint): Boolean {
         if (seenTrades.put(trade.key, true) != null) {
             duplicateTradeEvents++
-            return
+            return true
         }
         trades++
         tradesWriter.write(listOf(trade.timestamp, trade.conditionId, trade.tokenId, trade.side, trade.price, trade.size, trade.source, trade.transactionHash ?: "").joinToString(","))
@@ -658,6 +674,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                 )
             }
         }
+        return false
     }
 
     private lateinit var shadowExecution: EventMakerShadowExecutionPort
