@@ -839,3 +839,16 @@
 - 提交并推送：`5c2b9cb fix: let the REST path wait for an eligible market instead of failing fast`（`58d5d2b..5c2b9cb main -> main`）。
 - REST 实测（Spring PID 13384，dev profile）：`start` 221ms 返回 `running=true`（异步等待，不再阻塞）；日志出现 `waiting for an eligible market (attempt=1/2)`；`stop` 39ms 返回 `running=false`，等待期间一键停止仍即时。
 - 两臂已用新代码重启：主臂 Java PID `19804`（wrapper 13916）；实验臂 Java PID `5444`（wrapper 23824）。
+
+### 16:2x-16:4x 轮询放大与重复成交修复（效率/正确性）
+
+- 缺陷 1：两个轮询任务每 `pollSeconds`（默认 3s）调用 `getRecentTrades(market)`，该接口固定 `limit=200` 且无时间下界，**每轮重发同一批历史成交**。实测 2 小时运行：2400 轮 × 200 条 ≈ 48 万条事件，而真实成交仅 1,799 条，**放大 267 倍**。
+- 缺陷 2：重复成交虽然被 `seenTrades` 去重计数，但**仍然触发一次完整 engine tick**（对账 + 报价），即重复输入仍在消耗报价路径。
+- 修复：
+  - `getRecentTrades` 新增可选 `sinceTimestampMs`，带时间下界请求（`start` 参数）。
+  - 两个轮询任务各自维护 `lastSeen`（按 conditionId 记录已转发的最新时间戳），只请求增量。
+  - 两个事件循环新增 `duplicateTrade` 标记：重复成交**跳过 engine tick**（Shadow 跳过 `runEngineTick`，Live 跳过 `runQuoteTick`）。
+- 新增测试 `incremental trade fetch sends a start bound`：断言请求携带 `start=1700000000`。
+- 全量测试：100 suites / 493 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`eb11bd6 perf: poll trades incrementally and skip ticks on duplicate prints`（`5569894..eb11bd6 main -> main`）。
+- 两臂已重启：主臂 Java PID `21596`（wrapper 21396）；实验臂 Java PID `6804`（wrapper 4776）。
