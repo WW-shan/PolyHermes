@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-19 09:01）：完整池回测最强训练期候选 ROI 约 +0.81%，cluster bootstrap 95% 区间包含 0；q50 和 50bps 费用下转负。keyset 候选发现已修复；v3 等待任务已于 09:06 用安全修复版本重启；首次发现仍无活动通过市场。Live 恢复新增账户级活跃订单/持仓对账、favorite token 校验、逐笔 fill 重放和停止终态确认；全量 97 suites / 474 tests 通过。当前仍不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md)、[稳健性交叉核验](event-maker-robustness-crosscheck-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-19 09:01）：完整池回测最强训练期候选 ROI 约 +0.81%，cluster bootstrap 95% 区间包含 0；q50 和 50bps 费用下转负。keyset 候选发现已修复；v3 等待任务已于 09:06 用安全修复版本重启；首次发现仍无活动通过市场。Live 恢复新增账户级活跃订单/持仓对账、favorite token 校验、逐笔 fill 重放和停止终态确认；全量 97 suites / 475 tests 通过。当前仍不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md)、[稳健性交叉核验](event-maker-robustness-crosscheck-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
@@ -256,7 +256,7 @@ POST /api/event-maker/stop
 - 状态文件账户与本次 `accountId` 一致；
 - 状态文件包含 `conditionId` 和 `favoriteTokenId`；
 - 账户全部活跃订单都在状态文件中有登记；
-- 账户全部正数持仓 conditionId 与状态库存集合完全一致；
+- 账户全部正数持仓的 conditionId 和数量与状态库存完全一致；
 - 同一 condition 不得出现多个正数持仓资产。
 
 推荐使用专用账户。复制交易或其他策略留下的订单/持仓会让 Event Maker 拒绝启动，这是刻意 fail-closed。Live 请求示例：
@@ -364,7 +364,7 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 
 ### 8.6 账户级状态不匹配
 
-触发条件：账户存在未登记活跃订单、未登记正数持仓、状态库存不在链上，或同一 condition 有多个正数资产。
+触发条件：账户存在未登记活跃订单、未登记正数持仓、状态库存数量与链上不一致，或同一 condition 有多个正数资产。
 
 行为：LIVE 拒绝启动。
 

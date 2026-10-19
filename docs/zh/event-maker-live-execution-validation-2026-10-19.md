@@ -19,7 +19,7 @@
 - 停止时先撤单，再读取最终订单快照；部分成交先记账，无法确认时保留 `activeOrder*`；
 - 状态文件损坏、版本不支持、账户不匹配、重复 condition、缺失 favorite token 或非法快照会拒绝启动；
 - 启动前比对账户全部活跃订单，发现未登记订单即拒绝启动；
-- 启动前比对账户正数持仓 conditionId，未登记持仓或状态库存不在链上即拒绝启动；
+- 启动前比对账户正数持仓 conditionId 和数量，未登记持仓、数量不一致或状态库存不在链上即拒绝启动；
 - 孤儿订单先撤销并确认无成交；孤儿库存、撤单失败或状态未知全部阻止重启；
 - 逐笔 fill 重放核对库存、已实现 PnL、完成回合数和 cycle PnL。
 
@@ -36,7 +36,7 @@
 | 非法订单快照 | `ClobEventMakerExecutionAdapterTest` | 通过 |
 | 撤单 404 | `ClobEventMakerExecutionAdapterTest` | 通过 |
 | 活跃订单分页、去重、重复 cursor fail-closed | `ClobEventMakerExecutionAdapterTest` | 通过 |
-| 账户持仓 conditionId 查询与多资产拒绝 | `ClobEventMakerExecutionAdapterTest` | 通过 |
+| 账户持仓 conditionId/数量查询与多资产拒绝 | `ClobEventMakerExecutionAdapterTest`、`EventMakerStrategyServiceSafetyTest` | 通过 |
 | tick / 最小订单量 / 资金 / 授权 | `EventMakerExecutionGuardsTest` | 通过 |
 | 完整买入卖出回合 | `EventMakerLiveEngineTest` | 通过 |
 | 部分成交后撤单 | `EventMakerLiveEngineTest` | 通过 |
@@ -141,8 +141,8 @@ cd D:\Project\PolyHermes\backend
 当前结果（2026-10-19 09:00）：
 
 ```text
-eventmaker/research eventmaker：93 tests，0 failures
-全量：97 suites / 474 tests，0 failures，0 errors，2 skipped
+eventmaker/research eventmaker：94 tests，0 failures
+全量：97 suites / 475 tests，0 failures，0 errors，2 skipped
 ```
 
 ## 8. 剩余风险

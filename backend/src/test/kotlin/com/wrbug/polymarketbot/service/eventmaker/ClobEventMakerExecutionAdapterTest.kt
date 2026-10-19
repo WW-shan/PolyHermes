@@ -151,10 +151,10 @@ class ClobEventMakerExecutionAdapterTest {
             )
         )
 
-        val result = adapter.listOpenPositionConditionIds(1L)
+        val result = adapter.listOpenPositions(1L)
 
         assertTrue(result.isSuccess)
-        assertEquals(setOf("condition-1"), result.getOrThrow())
+        assertEquals(mapOf("condition-1" to BigDecimal("5.0")), result.getOrThrow())
     }
 
     @Test
@@ -164,7 +164,7 @@ class ClobEventMakerExecutionAdapterTest {
             Result.success(listOf(position("condition-1", 1.0), position("condition-1", 1.0)))
         )
 
-        val result = adapter.listOpenPositionConditionIds(1L)
+        val result = adapter.listOpenPositions(1L)
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message!!.startsWith("multiple_position_assets"))
@@ -177,7 +177,7 @@ class ClobEventMakerExecutionAdapterTest {
             Result.success(listOf(position(null, 1.0)))
         )
 
-        val result = adapter.listOpenPositionConditionIds(1L)
+        val result = adapter.listOpenPositions(1L)
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull() is EventMakerUnknownOrderStateException)

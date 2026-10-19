@@ -348,8 +348,8 @@ class EventMakerLiveEngineTest {
         override suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>> =
             Result.success(orders.filterValues { it.status == "LIVE" }.keys.toSet())
 
-        override suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>> =
-            Result.success(emptySet())
+        override suspend fun listOpenPositions(accountId: Long): Result<Map<String, BigDecimal>> =
+            Result.success(emptyMap())
 
         override suspend fun place(
             accountId: Long,

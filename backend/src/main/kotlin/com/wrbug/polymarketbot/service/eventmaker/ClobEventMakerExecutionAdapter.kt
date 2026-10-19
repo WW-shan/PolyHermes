@@ -78,12 +78,12 @@ class ClobEventMakerExecutionAdapter(
         return Result.failure(IllegalStateException("active_orders_pagination_limit"))
     }
 
-    override suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>> {
+    override suspend fun listOpenPositions(accountId: Long): Result<Map<String, BigDecimal>> {
         val context = accountContext(accountId)
             ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
         val positions = blockchainService.getPositions(context.account.proxyAddress)
             .getOrElse { return Result.failure(IllegalStateException("positions_unavailable:${it.message}", it)) }
-        val conditionIds = linkedSetOf<String>()
+        val openPositions = linkedMapOf<String, BigDecimal>()
         for (position in positions) {
             val size = position.size
             if (size == null) {
@@ -96,11 +96,13 @@ class ClobEventMakerExecutionAdapter(
             if (size <= 0.0) continue
             val conditionId = position.conditionId?.takeIf { it.isNotBlank() }
                 ?: return Result.failure(EventMakerUnknownOrderStateException("position_condition_missing"))
-            if (!conditionIds.add(conditionId)) {
-                return Result.failure(EventMakerUnknownOrderStateException("multiple_position_assets:$conditionId"))
+            val normalized = conditionId.lowercase()
+            if (openPositions.containsKey(normalized)) {
+                return Result.failure(EventMakerUnknownOrderStateException("multiple_position_assets:$normalized"))
             }
+            openPositions[normalized] = BigDecimal.valueOf(size)
         }
-        return Result.success(conditionIds)
+        return Result.success(openPositions)
     }
 
     override suspend fun place(

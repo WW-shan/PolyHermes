@@ -479,25 +479,29 @@ class EventMakerStrategyService(
         accountId: Long,
         persisted: EventMakerPersistedState?
     ) {
-        val activeConditionIds = executionPort.listOpenPositionConditionIds(accountId).getOrElse {
+        val activePositions = executionPort.listOpenPositions(accountId).getOrElse {
             throw IllegalStateException("positions_unavailable:${it.message}", it)
-        }
-        val managedConditionIds = persisted?.markets
-            ?.filter {
-                val inventory = it.inventoryShares.toBigDecimalOrNull()
-                    ?: throw IllegalStateException("persisted_inventory_invalid:${it.conditionId}")
-                inventory > BigDecimal.ZERO
+        }.mapKeys { it.key.lowercase() }
+        val managedPositions = persisted?.markets
+            ?.mapNotNull { market ->
+                val inventory = market.inventoryShares.toBigDecimalOrNull()
+                    ?: throw IllegalStateException("persisted_inventory_invalid:${market.conditionId}")
+                if (inventory > BigDecimal.ZERO) market.conditionId.lowercase() to inventory else null
             }
-            ?.map { it.conditionId.lowercase() }
-            ?.toSet()
+            ?.toMap()
             .orEmpty()
-        val normalizedActiveConditionIds = activeConditionIds.map { it.lowercase() }.toSet()
-        val unmanaged = normalizedActiveConditionIds - managedConditionIds
-        val missing = managedConditionIds - normalizedActiveConditionIds
-        if (unmanaged.isNotEmpty() || missing.isNotEmpty()) {
+        val unmanaged = activePositions.keys - managedPositions.keys
+        val missing = managedPositions.keys - activePositions.keys
+        val sizeMismatch = (activePositions.keys intersect managedPositions.keys)
+            .filter { activePositions.getValue(it).compareTo(managedPositions.getValue(it)) != 0 }
+            .sorted()
+            .joinToString(",") { conditionId ->
+                "$conditionId:${activePositions.getValue(conditionId)}!=${managedPositions.getValue(conditionId)}"
+            }
+        if (unmanaged.isNotEmpty() || missing.isNotEmpty() || sizeMismatch.isNotEmpty()) {
             throw IllegalStateException(
                 "open_position_state_mismatch:unmanaged=${unmanaged.sorted().joinToString(",")}:" +
-                    "missing=${missing.sorted().joinToString(",")}"
+                    "missing=${missing.sorted().joinToString(",")}:size_mismatch=$sizeMismatch"
             )
         }
     }

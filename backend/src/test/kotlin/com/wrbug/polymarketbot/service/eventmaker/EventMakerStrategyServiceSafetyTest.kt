@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.math.BigDecimal
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -96,7 +97,7 @@ class EventMakerStrategyServiceSafetyTest {
     @Test
     fun `live mode rejects positions that are not in persisted state`() {
         val service = service()
-        executionPort.positionConditionIds = setOf("orphan-position")
+        executionPort.positionSizes = mapOf("orphan-position" to BigDecimal.ONE)
 
         val result = service.start(
             EventMakerConfig(mode = EventMakerMode.LIVE, accountId = 1L, liveTradingEnabled = true)
@@ -104,10 +105,53 @@ class EventMakerStrategyServiceSafetyTest {
 
         assertTrue(result.isFailure)
         assertEquals(
-            "open_position_state_mismatch:unmanaged=orphan-position:missing=",
+            "open_position_state_mismatch:unmanaged=orphan-position:missing=:size_mismatch=",
             result.exceptionOrNull()?.message
         )
         assertEquals(1, executionPort.validationCount)
+        assertFalse(service.currentStatus().running)
+    }
+
+    @Test
+    fun `live mode rejects position size mismatch`() {
+        val stateFile = tempDir.resolve("state.json")
+        val persistedMarket = EventMakerPersistedMarket(
+            conditionId = "condition-1",
+            phase = "LONG",
+            inventoryShares = "5.00",
+            entryPrice = "0.96",
+            entryAt = 1_000L,
+            realizedPnl = 0.0,
+            completedCycles = 0,
+            activeOrderId = null,
+            activeOrderSide = null,
+            activeOrderPrice = null,
+            activeOrderOriginalShares = null,
+            activeOrderMatchedShares = null,
+            activeOrderStatus = null,
+            currentEntryOrderId = "buy-1",
+            currentEntryShares = "5.00",
+            fills = emptyList(),
+            cycles = emptyList(),
+            favoriteTokenId = "token"
+        )
+        EventMakerStateStore(stateFile.toString()).save(
+            EventMakerPersistedState(
+                mode = EventMakerMode.LIVE.name,
+                accountId = 1L,
+                startedAt = 1_000L,
+                markets = listOf(persistedMarket)
+            )
+        )
+        val service = service(stateFile)
+        executionPort.positionSizes = mapOf("condition-1" to BigDecimal("3.00"))
+
+        val result = service.start(
+            EventMakerConfig(mode = EventMakerMode.LIVE, accountId = 1L, liveTradingEnabled = true)
+        )
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message!!.contains("size_mismatch=condition-1:3.00!=5.00"))
         assertFalse(service.currentStatus().running)
     }
 
@@ -140,7 +184,7 @@ class EventMakerStrategyServiceSafetyTest {
         var validationCount: Int = 0
             private set
         var openOrderIds: Set<String> = emptySet()
-        var positionConditionIds: Set<String> = emptySet()
+        var positionSizes: Map<String, BigDecimal> = emptyMap()
 
         override suspend fun validateAccount(accountId: Long): Result<Unit> {
             validationCount++
@@ -150,8 +194,8 @@ class EventMakerStrategyServiceSafetyTest {
         override suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>> =
             Result.success(openOrderIds)
 
-        override suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>> =
-            Result.success(positionConditionIds)
+        override suspend fun listOpenPositions(accountId: Long): Result<Map<String, BigDecimal>> =
+            Result.success(positionSizes)
 
         override suspend fun place(
             accountId: Long,

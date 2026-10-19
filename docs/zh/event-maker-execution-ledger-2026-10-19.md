@@ -38,7 +38,7 @@
 | TEST-1 | event-maker/research 定向测试和全量测试 | 已完成 | 95 suites / 445 tests / 0 failures / 2 skipped |
 | GIT-1 | 提交并推送全部已验证改动 | 已完成 | `06d168f`、`main -> main` |
 | OBS-2 | 分析 Shadow 完成结果 | 部分完成 | 10min/1min 冒烟通过；旧 2h/12h 无效或已停止 |
-| SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 474 tests；Live 验证报告 |
+| SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 475 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
 | OBS-4 | 用新代码重启严格等待 + Shadow | 运行中 | v3 PID 6296/7788；启动 09:06；不降低门槛 |
@@ -280,6 +280,6 @@ cd D:\Project\PolyHermes\backend
 - 新增 favoriteTokenId 持久化和 fill ledger 重放校验。
 - 风险预算计入未成交买单；协程作用域改为普通 Job，持久化/对账失败会终止整个 LIVE 运行。
 - 新增稳健性交叉核验脚本和报告；全部市场、训练、测试、自然月 cluster bootstrap 95% 区间均包含 0。
-- 全量测试：97 suites / 474 tests / 0 failures / 0 errors / 2 skipped。
+- 全量测试：97 suites / 475 tests / 0 failures / 0 errors / 2 skipped。
 - 已提交并推送 `596504e fix: harden event maker live state recovery`（`6bd6850..596504e main -> main`）。
 - 当前无 Shadow/Backtest 进程。下一步：重启新代码等待任务 → 分析 Shadow evidence → 处理真实 Live smoke 阻塞项。

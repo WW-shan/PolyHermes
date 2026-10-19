@@ -7,7 +7,7 @@ interface EventMakerExecutionPort {
 
     suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>>
 
-    suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>>
+    suspend fun listOpenPositions(accountId: Long): Result<Map<String, java.math.BigDecimal>>
 
     suspend fun place(
         accountId: Long,

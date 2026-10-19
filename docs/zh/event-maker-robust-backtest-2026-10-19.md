@@ -311,7 +311,7 @@ cd D:\Project\PolyHermes\backend
 .\gradlew.bat test --console=plain
 ```
 
-结果（2026-10-19 09:00 最新全量回归）：97 suites、474 tests、0 failures、0 errors、2 skipped。
+结果（2026-10-19 09:00 最新全量回归）：97 suites、475 tests、0 failures、0 errors、2 skipped。
 
 ## 13. 稳健性交叉核验（2026-10-19 08:26）
 

@@ -656,3 +656,10 @@
 - 首次检查：attempt=1，`qualifiedMarkets=6`、`activityPassedMarkets=0`、`selectedMarkets=0`，拒绝原因 `recent_trades_30m_below_min=5`、`recent_notional_30m_below_min=1`；`logIssues=0`、`stderrBytes=0`，状态 waiting。
 - `scripts/check-event-maker-watch.ps1` 默认目录已切到 v3。
 - 运行期间禁止编译、测试或任何会重写 classpath 的任务。
+### 09:15 持仓数量精确对账
+
+- 账户级持仓校验从 conditionId 集合升级为 conditionId + 持仓数量映射。
+- 同 condition 多资产继续拒绝；未登记持仓、缺失持仓和数量不一致都会以 `open_position_state_mismatch` 阻止 LIVE。
+- 新增数量不一致测试：状态库存 5.00、账户持仓 3.00 时拒绝启动。
+- 全量回归：97 suites / 475 tests / 0 failures / 0 errors / 2 skipped；eventmaker/research eventmaker 94 tests。
+- v3 Shadow 已于 09:10 因本次安全修复停止；待提交后再次重启。
