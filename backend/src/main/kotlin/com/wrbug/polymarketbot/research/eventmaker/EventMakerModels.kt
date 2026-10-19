@@ -46,7 +46,20 @@ data class EventMakerConfig(
     val requoteSeconds: Long = 300,
     val orderNotional: Double = 100.0,
     val maxCycles: Int = 1,
-    val makerFeeRate: Double = 0.0
+    val makerFeeRate: Double = 0.0,
+    /**
+     * Optional activity gate mirroring the Shadow/Live discovery filter. When set,
+     * a resting order is only placed if the trailing window on the quoted token had
+     * enough recent prints/notional on both sides. This keeps the backtest from
+     * claiming fills in markets the live selector would never quote. All zeros
+     * disable the gate (legacy behavior).
+     */
+    val minRecentTrades30m: Int = 0,
+    val minRecentNotional30m: Double = 0.0,
+    val minRecentTradesPerSide30m: Int = 0,
+    val minRecentTrades2h: Int = 0,
+    val minRecentNotional2h: Double = 0.0,
+    val minRecentTradesPerSide2h: Int = 0
 ) {
     init {
         require(entryHorizonSeconds > 0) { "entryHorizonSeconds must be positive" }
@@ -58,6 +71,9 @@ data class EventMakerConfig(
         require(orderNotional > 0.0) { "orderNotional must be positive" }
         require(maxCycles >= 1) { "maxCycles must be at least 1" }
         require(makerFeeRate >= 0.0) { "makerFeeRate must be non-negative" }
+        require(minRecentTrades30m >= 0 && minRecentTrades2h >= 0) { "activity trade counts must be non-negative" }
+        require(minRecentTradesPerSide30m >= 0 && minRecentTradesPerSide2h >= 0) { "activity per-side counts must be non-negative" }
+        require(minRecentNotional30m >= 0.0 && minRecentNotional2h >= 0.0) { "activity notional must be non-negative" }
     }
 }
 

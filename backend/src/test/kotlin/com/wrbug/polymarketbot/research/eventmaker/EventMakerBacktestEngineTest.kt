@@ -233,6 +233,47 @@ class EventMakerBacktestEngineTest {
         assertFalse(result.filled)
     }
 
+    @Test
+    fun `activity gate blocks quoting when the trailing window is too thin`() {
+        // Entry is at 9_000 (closed 10_000 minus a 1_000s horizon). The 9_100 print
+        // would normally trigger a resting buy that the 9_150 print fills, but the
+        // notional requirement is unreachable, so the gate must suppress quoting.
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0, "BUY"),
+                trade(9_100, 0, 0.980, 10.0, "BUY"),
+                trade(9_150, 0, 0.969, 300.0, "SELL"),
+                trade(9_200, 0, 0.985, 300.0, "BUY")
+            )
+        )
+        val gated = baseConfig().copy(minRecentNotional2h = 1_000_000.0)
+
+        val result = engine.simulateMarket(market, gated)
+
+        assertTrue(result.eligible)
+        assertFalse(result.filled, "gate must block quoting when the window is too thin")
+    }
+
+    @Test
+    fun `activity gate allows quoting when the trailing window is active enough`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0, "BUY"),
+                trade(9_100, 0, 0.980, 10.0, "BUY"),
+                trade(9_150, 0, 0.969, 300.0, "SELL"),
+                trade(9_200, 0, 0.985, 300.0, "BUY")
+            )
+        )
+        val gated = baseConfig().copy(minRecentTrades30m = 1, minRecentTrades2h = 1)
+
+        val result = engine.simulateMarket(market, gated)
+
+        assertTrue(result.filled, "gate must allow quoting when the window is active")
+        assertEquals(MakerExitType.SELL, result.cycles.single().exitType)
+    }
+
     private fun baseConfig(maxCycles: Int = 1) = EventMakerConfig(
         name = "test",
         entryHorizonSeconds = 1_000,

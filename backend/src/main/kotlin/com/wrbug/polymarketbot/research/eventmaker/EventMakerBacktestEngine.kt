@@ -77,6 +77,10 @@ class EventMakerBacktestEngine(
         var sellEligibleVolume = 0.0
 
         fun placeBuy(atPrice: Double, timestamp: Long) {
+            // Mirror the live selector: only quote when the trailing window on the
+            // quoted token shows enough two-sided activity. Without this the
+            // backtest fills in markets the Shadow/Live path would never select.
+            if (!passesActivityGate(config, trades, timestamp)) return
             val limit = roundDownToTick(max(0.001, atPrice - entryOffset), tick)
             buyOrder = BuyOrder(
                 limitPrice = limit,
@@ -220,6 +224,36 @@ class EventMakerBacktestEngine(
             holdBaselineDeployed = config.orderNotional,
             maxAdverseExcursion = enrichedCycles.minOfOrNull { it.maxAdverseExcursion } ?: 0.0
         )
+    }
+
+    private fun passesActivityGate(
+        config: EventMakerConfig,
+        trades: List<EventMakerTrade>,
+        timestamp: Long
+    ): Boolean {
+        val gateApplied = config.minRecentTrades30m > 0 ||
+            config.minRecentNotional30m > 0.0 ||
+            config.minRecentTradesPerSide30m > 0 ||
+            config.minRecentTrades2h > 0 ||
+            config.minRecentNotional2h > 0.0 ||
+            config.minRecentTradesPerSide2h > 0
+        if (!gateApplied) return true
+        val window30m = trades.filter { it.timestamp in (timestamp - 1_800L)..timestamp }
+        val window2h = trades.filter { it.timestamp in (timestamp - 7_200L)..timestamp }
+        val notional30m = window30m.sumOf { it.price * it.size }
+        val notional2h = window2h.sumOf { it.price * it.size }
+        val buy30m = window30m.count { it.takerIsBuy }
+        val sell30m = window30m.count { it.takerIsSell }
+        val buy2h = window2h.count { it.takerIsBuy }
+        val sell2h = window2h.count { it.takerIsSell }
+        return window30m.size >= config.minRecentTrades30m &&
+            notional30m >= config.minRecentNotional30m &&
+            buy30m >= config.minRecentTradesPerSide30m &&
+            sell30m >= config.minRecentTradesPerSide30m &&
+            window2h.size >= config.minRecentTrades2h &&
+            notional2h >= config.minRecentNotional2h &&
+            buy2h >= config.minRecentTradesPerSide2h &&
+            sell2h >= config.minRecentTradesPerSide2h
     }
 
     private fun referencePrice(market: EventMakerMarket, entryTimestamp: Long): Pair<Int, Double>? {

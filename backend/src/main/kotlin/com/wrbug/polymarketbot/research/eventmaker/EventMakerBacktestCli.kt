@@ -20,7 +20,8 @@ fun main(args: Array<String>) {
     println("Event-maker research backtest")
     println(
         "from=${options.from} to=${options.to} minVolume=${options.minVolume} " +
-            "maxMarkets=${options.maxMarkets} entryHorizonSeconds=${options.entryHorizonSeconds}"
+            "maxMarkets=${options.maxMarkets} entryHorizonSeconds=${options.entryHorizonSeconds} " +
+            "activityGate=${options.activityGate}"
     )
     if (options.proxy != null) println("proxy=${options.proxy}")
 
@@ -40,7 +41,7 @@ fun main(args: Array<String>) {
     require(markets.isNotEmpty()) { "No eligible markets returned" }
 
     val engine = EventMakerBacktestEngine()
-    val configs = buildGrid(options.entryHorizonSeconds)
+    val configs = buildGrid(options.entryHorizonSeconds, options.activityGate)
     println("configs=${configs.size}; simulating ${markets.size} markets")
     val summaries = configs.map { engine.run(markets, it).first }
     writeSummaryCsv(options.output.resolveSibling(options.output.fileName.toString() + "-summary.csv"), summaries)
@@ -103,7 +104,7 @@ fun main(args: Array<String>) {
         .forEach { printSummary("robust", it) }
 }
 
-private fun buildGrid(entryHorizonSeconds: Long): List<EventMakerConfig> {
+private fun buildGrid(entryHorizonSeconds: Long, activityGate: ActivityGate): List<EventMakerConfig> {
     val bands = listOf(
         0.95 to 0.97,
         0.97 to 0.99,
@@ -134,7 +135,13 @@ private fun buildGrid(entryHorizonSeconds: Long): List<EventMakerConfig> {
                                 requoteSeconds = requote,
                                 orderNotional = 100.0,
                                 maxCycles = maxCycles,
-                                makerFeeRate = 0.0
+                                makerFeeRate = 0.0,
+                                minRecentTrades30m = activityGate.minRecentTrades30m,
+                                minRecentNotional30m = activityGate.minRecentNotional30m,
+                                minRecentTradesPerSide30m = activityGate.minRecentTradesPerSide30m,
+                                minRecentTrades2h = activityGate.minRecentTrades2h,
+                                minRecentNotional2h = activityGate.minRecentNotional2h,
+                                minRecentTradesPerSide2h = activityGate.minRecentTradesPerSide2h
                             )
                         }
                     }
@@ -247,6 +254,15 @@ private fun csvCell(value: Any?): String {
     } else text
 }
 
+private data class ActivityGate(
+    val minRecentTrades30m: Int,
+    val minRecentNotional30m: Double,
+    val minRecentTradesPerSide30m: Int,
+    val minRecentTrades2h: Int,
+    val minRecentNotional2h: Double,
+    val minRecentTradesPerSide2h: Int
+)
+
 private data class CliOptions(
     val proxy: String?,
     val maxMarkets: Int,
@@ -255,6 +271,7 @@ private data class CliOptions(
     val to: LocalDate,
     val concurrency: Int,
     val entryHorizonSeconds: Long,
+    val activityGate: ActivityGate,
     val output: Path
 ) {
     companion object {
@@ -271,6 +288,14 @@ private data class CliOptions(
                 to = LocalDate.parse(option("to") ?: "2026-10-01"),
                 concurrency = option("concurrency")?.toIntOrNull() ?: 6,
                 entryHorizonSeconds = option("entry-horizon-seconds")?.toLongOrNull() ?: 86_400L,
+                activityGate = ActivityGate(
+                    minRecentTrades30m = option("min-recent-trades")?.toIntOrNull() ?: 0,
+                    minRecentNotional30m = option("min-recent-notional")?.toDoubleOrNull() ?: 0.0,
+                    minRecentTradesPerSide30m = option("min-recent-trades-per-side")?.toIntOrNull() ?: 0,
+                    minRecentTrades2h = option("min-recent-trades-2h")?.toIntOrNull() ?: 0,
+                    minRecentNotional2h = option("min-recent-notional-2h")?.toDoubleOrNull() ?: 0.0,
+                    minRecentTradesPerSide2h = option("min-recent-trades-per-side-2h")?.toIntOrNull() ?: 0
+                ),
                 output = Paths.get(option("output") ?: "build/research/event-maker-backtest")
             )
         }
