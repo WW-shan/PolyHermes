@@ -439,3 +439,9 @@ cd D:\Project\PolyHermes\backend
 3. 检查真实 fill、部分成交、撤单竞态、markout、activeOrders=0 和重复成交。
 4. 若 Shadow 通过，仍需用户提供账户、资金上限、明确授权、时间窗口和市场范围后才能做真实 Live smoke。
 5. 在真实 Live smoke 通过前，不把目标标记完成，不使用回测/Shadow 冒充实盘。
+### 22:55 提交与推送
+
+- 提交：`93e4ccc feat: align event maker research with live execution`。
+- 推送：`9fd75e5..93e4ccc main -> main`。
+- 内容：数据快照/原子写入、严格抓取、回测最大挂单年龄一致性、8 窗口候选回测、参数邻域、Shadow 参数、全量 530 tests 和运行文档。
+- 提交后 Shadow 继续运行，运行期间不重新编译。

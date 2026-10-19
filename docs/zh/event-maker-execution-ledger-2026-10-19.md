@@ -404,3 +404,9 @@ cd D:\Project\PolyHermes\backend
 | 日志 | `logIssues=0`、`stderrBytes=0` |
 
 运行中禁止编译和测试。轮询：`.\scripts\check-event-maker-watch.ps1 -OutputDir "backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019"`。
+### 22:55 提交与推送
+
+- 提交：`93e4ccc feat: align event maker research with live execution`。
+- 推送：`9fd75e5..93e4ccc main -> main`。
+- 内容：数据快照/原子写入、严格抓取、回测最大挂单年龄一致性、8 窗口候选回测、参数邻域、Shadow 参数、全量 530 tests 和运行文档。
+- 提交后 Shadow 继续运行，运行期间不重新编译。
