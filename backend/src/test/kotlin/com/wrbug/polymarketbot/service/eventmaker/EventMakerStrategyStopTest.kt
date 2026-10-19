@@ -111,6 +111,73 @@ class EventMakerStrategyStopTest {
         }
     }
 
+    @Test
+    fun `rest path keeps waiting instead of failing on the first empty scan`() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val scans = java.util.concurrent.atomic.AtomicInteger(0)
+        val executor = Executors.newCachedThreadPool()
+        server.executor = executor
+        server.createContext("/") { exchange ->
+            val path = exchange.requestURI.path
+            val body = when {
+                path.startsWith("/markets") -> {
+                    // First scan returns nothing quotable, second returns a candidate.
+                    val scan = scans.incrementAndGet()
+                    if (scan < 2) {
+                        """{"markets":[],"next_cursor":null}"""
+                    } else {
+                        """{"markets":[{"conditionId":"cond-1","question":"q","volume24hr":250000,${'"'}endDate${'"'}:"2099-12-31T00:00:00Z","bestBid":0.98,"bestAsk":0.985,"outcomes":["Yes","No"],"clobTokenIds":["tok-1","tok-2"],"negRisk":false,"enableOrderBook":true,"orderPriceMinTickSize":0.001}],"next_cursor":null}"""
+                    }
+                }
+                path.startsWith("/book") -> """{"bids":[{"price":"0.98","size":"100"}],"asks":[{"price":"0.985","size":"100"}]}"""
+                path.startsWith("/tick-size") -> """{"minimum_tick_size":"0.001"}"""
+                path.startsWith("/trades") -> "[]"
+                else -> """{"error":"not found"}"""
+            }
+            val bytes = body.toByteArray(Charsets.UTF_8)
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+
+        val service = service()
+        service.dataClientFactory = { proxy ->
+            LivePaperDataClient(
+                proxyUrl = proxy,
+                gammaBaseUrl = "http://127.0.0.1:${server.address.port}",
+                dataBaseUrl = "http://127.0.0.1:${server.address.port}",
+                clobBaseUrl = "http://127.0.0.1:${server.address.port}"
+            )
+        }
+        try {
+            val started = service.start(
+                EventMakerConfig(
+                    mode = EventMakerMode.SHADOW,
+                    minVolume24hr = 1_000.0,
+                    minPrice = 0.97,
+                    maxPrice = 0.99,
+                    minRemainingMinutes = 1,
+                    waitForMarketMinutes = 1,
+                    discoveryRetrySeconds = 1,
+                    minSpreadTicks = 1
+                )
+            )
+            assertTrue(started.isSuccess, "start should wait rather than fail: ${started.exceptionOrNull()?.message}")
+            // The second scan selects a market, so the run must leave the waiting state.
+            val deadline = System.currentTimeMillis() + 20_000L
+            while (System.currentTimeMillis() < deadline && service.currentStatus().markets.isEmpty()) {
+                Thread.sleep(100)
+            }
+            assertTrue(scans.get() >= 2, "discovery should have retried")
+            assertTrue(service.currentStatus().markets.isNotEmpty(), "run should have adopted the discovered market")
+        } finally {
+            service.stop()
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
     private fun service(proxyUrl: String = "") = EventMakerStrategyService(
         proxyUrl = proxyUrl,
         riskPolicy = EventMakerRiskPolicy(),

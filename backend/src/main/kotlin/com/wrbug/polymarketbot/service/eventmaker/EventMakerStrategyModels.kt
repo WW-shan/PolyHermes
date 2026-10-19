@@ -25,6 +25,12 @@ data class EventMakerConfig(
      * entry horizon. Null keeps the previous unbounded behavior.
      */
     val maxRemainingMinutes: Int? = null,
+    /**
+     * How long discovery may keep retrying while no market passes every filter.
+     * 0 keeps the old fail-fast behavior.
+     */
+    val waitForMarketMinutes: Int = 0,
+    val discoveryRetrySeconds: Long = 60,
     val allowNegRisk: Boolean = true,
     val minPrice: Double = 0.90,
     val maxPrice: Double = 0.99,
@@ -58,6 +64,8 @@ data class EventMakerConfig(
         require(minRecentTradesPerSide2h >= 0)
         require(minRemainingMinutes >= 1)
         require(maxRemainingMinutes == null || maxRemainingMinutes > minRemainingMinutes)
+        require(waitForMarketMinutes >= 0)
+        require(discoveryRetrySeconds > 0)
         require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
         require(improveTicks >= 0)
         require(entryOffsetCents >= 0.0)

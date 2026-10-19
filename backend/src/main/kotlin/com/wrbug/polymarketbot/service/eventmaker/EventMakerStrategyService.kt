@@ -469,10 +469,39 @@ class EventMakerStrategyService(
         }
     }
 
+    /**
+     * Discovers quotable markets, retrying until one appears or the wait budget is
+     * spent. The CLI path has always waited (a strict filter can legitimately see no
+     * candidate for hours); without this the REST path died on the first empty scan.
+     */
     private suspend fun prepareMarkets(
         config: EventMakerConfig,
         client: LivePaperDataClient
     ): PreparedMarkets {
+        val deadline = System.currentTimeMillis() + config.waitForMarketMinutes * 60_000L
+        var attempt = 0
+        while (true) {
+            attempt++
+            val prepared = runCatching { discoverAndSelect(config, client) }.getOrNull()
+            if (prepared != null) {
+                if (attempt > 1) logger.info("Event maker market discovery succeeded on attempt $attempt")
+                return prepared
+            }
+            if (config.waitForMarketMinutes <= 0 || System.currentTimeMillis() >= deadline) {
+                throw IllegalStateException("no_eligible_markets")
+            }
+            logger.info(
+                "Event maker waiting for an eligible market (attempt=$attempt, " +
+                    "remainingMs=${(deadline - System.currentTimeMillis()).coerceAtLeast(0L)})"
+            )
+            delay(config.discoveryRetrySeconds * 1000L)
+        }
+    }
+
+    private suspend fun discoverAndSelect(
+        config: EventMakerConfig,
+        client: LivePaperDataClient
+    ): PreparedMarkets? {
         val candidates = client.discoverMarkets(
             maxMarkets = (config.maxMarkets * 3).coerceAtLeast(config.maxMarkets),
             minVolume24hr = config.minVolume24hr,
@@ -488,7 +517,7 @@ class EventMakerStrategyService(
             minPrice = config.minPrice,
             maxPrice = config.maxPrice
         )
-        if (candidates.isEmpty()) throw IllegalStateException("no_eligible_markets")
+        if (candidates.isEmpty()) return null
         val books = mutableMapOf<String, MarketBook>()
         candidates.flatMap { it.tokenIds }.forEach { tokenId ->
             client.getBook(tokenId)?.let { books[tokenId] = it }
@@ -506,7 +535,7 @@ class EventMakerStrategyService(
             exitImproveTicks = config.exitImproveTicks,
             exitSpreadCents = config.exitSpreadCents
         )
-        if (selected.isEmpty()) throw IllegalStateException("no_eligible_markets_with_min_spread")
+        if (selected.isEmpty()) return null
         return PreparedMarkets(selected, books)
     }
 
