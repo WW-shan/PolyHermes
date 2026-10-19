@@ -852,3 +852,14 @@
 - 全量测试：100 suites / 493 tests / 0 failures / 0 errors / 2 skipped。
 - 提交并推送：`eb11bd6 perf: poll trades incrementally and skip ticks on duplicate prints`（`5569894..eb11bd6 main -> main`）。
 - 两臂已重启：主臂 Java PID `21596`（wrapper 21396）；实验臂 Java PID `6804`（wrapper 4776）。
+
+### 16:4x-17:0x CLI 路径轮询放大修复（补齐上一轮遗漏）
+
+- 缺口：上一轮（`eb11bd6`）只修了 Spring 路径的轮询放大与重复 tick，**CLI 路径（两臂实际运行的入口）仍每 3 秒重发全部 200 条历史成交**，且重复成交仍触发完整 engine tick。
+- 修复（`EventMakerShadowCli`）：
+  - 轮询任务维护 `lastSeen`（按 conditionId），只请求增量（`getRecentTrades(market, since)`）。
+  - `applyTrade` 改为返回是否重复；重复成交**跳过 engine tick**（仍会 `writeDueMarkouts` 并检查 deadline，不丢 markout 与超时语义）。
+- 全量测试：100 suites / 493 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`ff47918 perf: apply incremental polling and duplicate-tick skip to the shadow CLI`（`d9f0891..ff47918 main -> main`）。
+- 两臂已重启：主臂 Java PID `11108`（wrapper 22544）；实验臂 Java PID `23440`（wrapper 10476）。
+- 说明：至此 Spring 与 CLI 两条 Shadow 入口的轮询/去重语义一致。
