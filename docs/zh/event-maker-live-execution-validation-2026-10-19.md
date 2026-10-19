@@ -143,10 +143,10 @@ cd D:\Project\PolyHermes\backend
 .\gradlew.bat test --console=plain
 ```
 
-当前结果（2026-10-20 02:05，结算/赎回闭环补强后）：
+当前结果（2026-10-20 03:45，结算/赎回闭环及部分卖出后结算修复后）：
 
 ```text
-全量：103 suites / 555 tests，0 failures，0 errors，2 skipped
+全量：103 suites / 556 tests，0 failures，0 errors，2 skipped
 定向：DailyPnlBudget / StateStore / LiveEngine / StrategyServiceSafety / StartupRecovery 通过
 ```
 
@@ -160,6 +160,7 @@ cd D:\Project\PolyHermes\backend
 6. 结算/赎回的 engine、adapter、状态重放和启动恢复已通过 mock 级验证；真实 Builder Relayer、链上回执和到账仍未验证。真实 maker fee、rebate、流动性奖励同样待 smoke。
 7. `maxDailyLoss` 已按 UTC 日持久化锚点：同日重启不重置，跨日重锚；schema v4 会拒绝 v2/v3 旧状态，仍需真实 smoke 验证升级和对账流程。
 8. 实际小资金 smoke 需要用户提供账户并明确授权。
+
 ## 9. 结算与赎回闭环补充（2026-10-20）
 
 本轮补齐了买入后市场直接结算、没有 SELL 的路径：
@@ -171,7 +172,7 @@ cd D:\Project\PolyHermes\backend
 - 重启时会恢复 pending settlement、确认链上持仓、重试赎回；
 - 对 discovery 不再返回的孤儿持仓，使用持久化 market 元数据进入仅结算状态；
 - Live 启动若缺少 Builder API Key，将以 `settlement_builder_api_key_missing` 拒绝；
-- state schema 为 v4，恢复时同时重放 fills 和 settlements；
-- 全量回归：103 suites / 555 tests / 0 failures / 0 errors / 2 skipped。
+- state schema 为 v4，恢复时同时重放 fills 和 settlements；`settlement.shares` 表示剩余可赎回股数，`cycle.shares` 表示完整周期总买入股数，部分卖出后的 cycle PnL 必须合并两部分；
+- 全量回归：103 suites / 556 tests / 0 failures / 0 errors / 2 skipped。
 
 仍未验证：真实账户的 Builder Relayer、链上赎回回执、pUSD 到账延迟和实际到账金额。该部分必须在真实小资金 Live smoke 中完成。

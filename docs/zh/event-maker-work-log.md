@@ -1254,3 +1254,12 @@
 - `audit-event-maker-shadow.ps1` 已自动调用该脚本；模型应成交但 state 无成交时审计失败。
 - v6 复算结果：6 笔订单只有 `shadow-5` 出现可穿越 SELL 215.00 股；queue 20.03 后剩 194.97，q20 需要 514.80，故模型与实际均为 0 fill。
 - 报告：`backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/fill-analysis.json`。
+### 03:20-03:45 结算账本审计与部分卖出后结算修复
+
+- 核对审计脚本时发现两个问题：`warnings` 被重复初始化，导致 fill-analysis 告警可能丢失；PowerShell 回放只按 SELL 成交闭环，未识别新增的 SETTLE cycle。
+- 审计脚本已补上 settlement 回放：校验 settlement 身份、outcome/favorite/negativeRisk、结算股数、结算 PnL、settlement 与 cycle 的对应关系，以及部分卖出后 `已卖出 + 剩余可赎回 = 总买入`。
+- Kotlin 修复：旧 `recordSettlement` 在部分卖出后只记录剩余仓位的 PnL 和股数；现在 `settlement.shares` 保持为链上可赎回剩余股数，`cycle.shares` 为总买入股数，`cycle.pnl` 为部分卖出已实现 PnL 加剩余结算 PnL，`realizedPnl` 只增加结算部分。
+- 新增 `EventMakerLiveStateTest` 回归：买入 10、部分卖出 4、剩余 6 到期结算；settlement PnL=0.24、cycle PnL=0.28、cycle shares=10，并验证重启恢复。
+- 审计临时 fixture 正反例通过：正常场景 `passed=true`；篡改 settlement PnL 或 cycle shares 后退出码为 1；fixture 已清理。
+- 隔离 worktree 全量回归：103 suites / 556 tests / 0 failures / 0 errors / 2 skipped。
+- v6 Shadow 继续运行；截至 03:38 仍为 FLAT、6 次挂单、0 fill、0 cycle、0 inventory，`logIssues=0`、`stderrBytes=0`。v6 使用启动时构建产物，本轮 Kotlin 修改未替换运行中的产物。

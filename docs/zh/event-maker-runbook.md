@@ -550,9 +550,12 @@ schema v3 新增日亏损锚点；schema v4 新增 settlement 账本与赎回状
 5. 若链上已无对应持仓，写入 `ALREADY_ABSENT`，不重复赎回；
 6. 重启时自动恢复 pending settlement；discovery 不再返回的孤儿持仓使用持久化 market 元数据进入仅结算模式。
 
+部分卖出后结算的账本语义：`settlement.shares` 只表示链上可赎回的剩余股数；`cycle.shares` 表示完整周期总买入股数；`cycle.pnl` 必须同时包含之前部分卖出的已实现 PnL 和剩余仓位的结算 PnL。审计或恢复发现三者不守恒时必须 fail-closed。
+
 Live 启动新增 Builder API Key 前置检查。未配置时直接拒绝，不允许先建仓。
 
 当前 schema 为 v4。v2/v3/未知版本会被明确拒绝；上线前必须核对 `settlements`、`cycles`、`fills` 和账户实际持仓。
+
 ## 12. Shadow 成交缺口复核
 
 Shadow 结束后除了 `audit-event-maker-shadow.ps1`，可单独复核订单为什么成交或未成交：
@@ -570,4 +573,4 @@ Shadow 结束后除了 `audit-event-maker-shadow.ps1`，可单独复核订单为
 - 模型是否应成交 `modelFill`；
 - state 中的实际成交股数。
 
-`audit-event-maker-shadow.ps1` 已自动执行该复核。若模型应成交但 state 无成交，审计失败；若模型和实际均未成交，则 0 fill 是可解释结果，不得据此放宽门槛。
+`audit-event-maker-shadow.ps1` 已自动执行该复核，并重放 `SETTLE` cycle；若模型应成交但 state 无成交，或 settlement/cycle 股数与 PnL 不守恒，审计失败。若模型和实际均未成交，则 0 fill 是可解释结果，不得据此放宽门槛。

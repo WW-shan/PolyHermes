@@ -63,78 +63,203 @@ if ($modelFillOrders -gt $actualFilledOrders) {
 } elseif ($modelFillOrders -ne $actualFilledOrders) {
     $warnings.Add("fillModelCountMismatch:modelFillOrders=$modelFillOrders actualFilledOrders=$actualFilledOrders")
 }
-$warnings = [System.Collections.Generic.List[string]]::new()
 $stateRealizedPnl = 0.0
 $stateCompletedCycles = 0
+$stateSettlements = 0
 foreach ($market in $stateMarkets) {
+    $conditionId = [string]$market.conditionId
     $replayInventory = [decimal]0
     $replayEntryPrice = [decimal]0
+    $replayEntryAt = [long]0
+    $replayCurrentEntryOrderId = $null
+    $replayCurrentEntryShares = [decimal]0
+    $replayCurrentCycleSoldShares = [decimal]0
     $replayRealized = 0.0
     $replayCompletedCycles = 0
     $partialCyclePnl = 0.0
-    $currentEntryShares = [decimal]0
-    $currentCycleSoldShares = [decimal]0
-    foreach ($fill in @($market.fills)) {
-        if ($null -eq $fill) { continue }
+    $lastTimestamp = [long]::MinValue
+    foreach ($fill in @($market.fills | Where-Object { $null -ne $_ })) {
+        $fillMarketId = [string]$fill.marketId
+        if (-not [string]::IsNullOrWhiteSpace($fillMarketId) -and $fillMarketId -ne $conditionId) {
+            $failures.Add("fillMarketMismatch:${conditionId}:$fillMarketId")
+        }
         $side = [string]$fill.side
         $price = [decimal]::Parse([string]$fill.price, [Globalization.CultureInfo]::InvariantCulture)
         $shares = [decimal]::Parse([string]$fill.shares, [Globalization.CultureInfo]::InvariantCulture)
+        $fillTimestamp = [long]$fill.timestamp
         if ($shares -le 0) {
-            $failures.Add("invalidFillShares:$($market.conditionId):$shares")
+            $failures.Add("invalidFillShares:${conditionId}:$shares")
             continue
         }
+        if ($price -le 0 -or $price -ge 1) {
+            $failures.Add("invalidFillPrice:${conditionId}:$price")
+            continue
+        }
+        if ($fillTimestamp -lt $lastTimestamp) {
+            $failures.Add("fillTimestampOutOfOrder:${conditionId}:$fillTimestamp<$lastTimestamp")
+            continue
+        }
+        $lastTimestamp = $fillTimestamp
         if ($side -eq 'BUY') {
             if ($replayInventory -le 0) {
                 $replayEntryPrice = $price
-                $currentEntryShares = $shares
-                $currentCycleSoldShares = [decimal]0
+                $replayEntryAt = $fillTimestamp
+                $replayCurrentEntryOrderId = [string]$fill.orderId
+                $replayCurrentEntryShares = $shares
+                $replayCurrentCycleSoldShares = [decimal]0
                 $partialCyclePnl = 0.0
             } else {
-                $currentEntryShares += $shares
+                if ($replayCurrentEntryOrderId -ne [string]$fill.orderId -or $replayEntryPrice -ne $price) {
+                    $failures.Add("buyFillChainInvalid:${conditionId}:$($fill.orderId)")
+                    continue
+                }
+                $replayCurrentEntryShares += $shares
             }
             $replayInventory += $shares
         } elseif ($side -eq 'SELL') {
             if ($replayInventory -le 0 -or $shares -gt $replayInventory) {
-                $failures.Add("sellExceedsInventory:$($market.conditionId):$shares>$replayInventory")
+                $failures.Add("sellExceedsInventory:${conditionId}:$shares>$replayInventory")
+                continue
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$replayCurrentEntryOrderId)) {
+                $failures.Add("sellMissingEntryOrder:${conditionId}:$($fill.orderId)")
                 continue
             }
             $pnl = ([double]($price - $replayEntryPrice)) * ([double]$shares)
             $replayRealized += $pnl
             $partialCyclePnl += $pnl
-            $currentCycleSoldShares += $shares
+            $replayCurrentCycleSoldShares += $shares
             $replayInventory -= $shares
             if ($replayInventory -le 0) {
-                if ($currentCycleSoldShares -ne $currentEntryShares) {
-                    $failures.Add("cycleSharesReplayMismatch:$($market.conditionId):$currentCycleSoldShares!=$currentEntryShares")
+                if ($replayCurrentCycleSoldShares -ne $replayCurrentEntryShares) {
+                    $failures.Add("cycleSharesReplayMismatch:${conditionId}:$replayCurrentCycleSoldShares!=$replayCurrentEntryShares")
                 }
                 $replayInventory = [decimal]0
                 $replayEntryPrice = [decimal]0
-                $replayCompletedCycles++
+                $replayEntryAt = [long]0
+                $replayCurrentEntryOrderId = $null
+                $replayCurrentEntryShares = [decimal]0
+                $replayCurrentCycleSoldShares = [decimal]0
                 $partialCyclePnl = 0.0
-                $currentEntryShares = [decimal]0
-                $currentCycleSoldShares = [decimal]0
+                $replayCompletedCycles++
             }
         } else {
-            $failures.Add("unknownFillSide:$($market.conditionId):$side")
+            $failures.Add("unknownFillSide:${conditionId}:$side")
         }
+    }
+
+    $settlements = @($market.settlements | Where-Object { $null -ne $_ })
+    $settlementByCycleExit = @{}
+    $settlementCycleExpectations = @{}
+    foreach ($settlement in $settlements) {
+        $stateSettlements++
+        $settlementMarketId = [string]$settlement.marketId
+        $settlementFavoriteTokenId = [string]$settlement.favoriteTokenId
+        $settlementEntryOrderId = [string]$settlement.entryOrderId
+        $cycleExitOrderId = [string]$settlement.cycleExitOrderId
+        $settledAt = [long]$settlement.settledAt
+        $settlementEntryAt = [long]$settlement.entryAt
+        $settlementShares = [decimal]::Parse([string]$settlement.shares, [Globalization.CultureInfo]::InvariantCulture)
+        $settlementEntryPrice = [decimal]::Parse([string]$settlement.entryPrice, [Globalization.CultureInfo]::InvariantCulture)
+        $settlementExitPrice = [decimal]::Parse([string]$settlement.exitPrice, [Globalization.CultureInfo]::InvariantCulture)
+        if ($settlementMarketId -ne $conditionId -or $settlementEntryOrderId.Length -eq 0 -or $cycleExitOrderId.Length -eq 0) {
+            $failures.Add("settlementRecordInvalid:$conditionId")
+            continue
+        }
+        $marketFavoriteTokenId = [string]$market.favoriteTokenId
+        if (-not [string]::IsNullOrWhiteSpace($marketFavoriteTokenId) -and $settlementFavoriteTokenId -ne $marketFavoriteTokenId) {
+            $failures.Add("settlementFavoriteTokenMismatch:${conditionId}:$settlementFavoriteTokenId")
+        }
+        if ($null -ne $market.favoriteIndex -and [int]$settlement.outcomeIndex -ne [int]$market.favoriteIndex) {
+            $failures.Add("settlementOutcomeMismatch:${conditionId}:$($settlement.outcomeIndex)")
+        }
+        if ($null -ne $market.negativeRisk -and [bool]$settlement.negativeRisk -ne [bool]$market.negativeRisk) {
+            $failures.Add("settlementNegativeRiskMismatch:${conditionId}:$($settlement.negativeRisk)")
+        }
+        if ($settlementExitPrice -ne 0 -and $settlementExitPrice -ne 1) {
+            $failures.Add("settlementExitPriceInvalid:${conditionId}:$settlementExitPrice")
+        }
+        if ($settledAt -lt $lastTimestamp) {
+            $failures.Add("settlementTimestampOutOfOrder:${conditionId}:$settledAt<$lastTimestamp")
+        }
+        $lastTimestamp = [math]::Max($lastTimestamp, $settledAt)
+        if ($settlementByCycleExit.ContainsKey($cycleExitOrderId)) {
+            $failures.Add("duplicateSettlementExit:${conditionId}:$cycleExitOrderId")
+            continue
+        }
+        $settlementByCycleExit[$cycleExitOrderId] = $settlement
+        if ($replayInventory -le 0 -or
+            $replayCurrentEntryOrderId -ne $settlementEntryOrderId -or
+            $replayEntryPrice -ne $settlementEntryPrice -or
+            $replayEntryAt -ne $settlementEntryAt -or
+            $settlementShares -ne $replayInventory) {
+            $failures.Add("settlementLedgerMismatch:${conditionId}:$settlementEntryOrderId")
+            continue
+        }
+        if ($replayCurrentEntryShares -le 0 -or
+            ($replayCurrentCycleSoldShares + $settlementShares) -ne $replayCurrentEntryShares) {
+            $failures.Add("settlementCycleShareMismatch:${conditionId}:$settlementEntryOrderId")
+            continue
+        }
+        $settlementPnl = ([double]($settlementExitPrice - $replayEntryPrice)) * ([double]$settlementShares)
+        if ([math]::Abs([double]$settlement.pnl - $settlementPnl) -gt 1e-7) {
+            $failures.Add("settlementPnlMismatch:${conditionId}:$settlementEntryOrderId")
+        }
+        $cyclePnl = $partialCyclePnl + $settlementPnl
+        $settlementCycleExpectations[$cycleExitOrderId] = [pscustomobject]@{
+            shares = $replayCurrentEntryShares
+            pnl = $cyclePnl
+        }
+        $replayRealized += $settlementPnl
+        $replayInventory = [decimal]0
+        $replayEntryPrice = [decimal]0
+        $replayEntryAt = [long]0
+        $replayCurrentEntryOrderId = $null
+        $replayCurrentEntryShares = [decimal]0
+        $replayCurrentCycleSoldShares = [decimal]0
+        $partialCyclePnl = 0.0
+        $replayCompletedCycles++
+    }
+
+    $settlementCycleCount = 0
+    foreach ($cycle in @($market.cycles | Where-Object { $null -ne $_ })) {
+        if ([string]$cycle.exitType -eq 'SETTLE') {
+            $settlementCycleCount++
+            $cycleExitOrderId = [string]$cycle.exitOrderId
+            if (-not $settlementByCycleExit.ContainsKey($cycleExitOrderId)) {
+                $failures.Add("settlementCycleMissingRecord:${conditionId}:$cycleExitOrderId")
+            } elseif (-not $settlementCycleExpectations.ContainsKey($cycleExitOrderId)) {
+                $failures.Add("settlementCycleExpectationMissing:${conditionId}:$cycleExitOrderId")
+            } else {
+                $expectedCycle = $settlementCycleExpectations[$cycleExitOrderId]
+                $cycleShares = [decimal]::Parse([string]$cycle.shares, [Globalization.CultureInfo]::InvariantCulture)
+                if ($cycleShares -ne $expectedCycle.shares -or
+                    [math]::Abs([double]$cycle.pnl - [double]$expectedCycle.pnl) -gt 1e-7) {
+                    $failures.Add("settlementCycleMismatch:${conditionId}:$cycleExitOrderId")
+                }
+            }
+        }
+    }
+    if ($settlementCycleCount -ne $settlements.Count) {
+        $failures.Add("settlementCycleCountMismatch:${conditionId}:$settlementCycleCount!=$($settlements.Count)")
     }
     $stateInventory = [decimal]::Parse([string]$market.inventoryShares, [Globalization.CultureInfo]::InvariantCulture)
     $stateRealized = [double]$market.realizedPnl
     if ($replayInventory -ne $stateInventory) {
-        $failures.Add("inventoryReplayMismatch:$($market.conditionId):$replayInventory!=$stateInventory")
+        $failures.Add("inventoryReplayMismatch:${conditionId}:$replayInventory!=$stateInventory")
     }
     if ([math]::Abs($replayRealized - $stateRealized) -gt 1e-6) {
-        $failures.Add("realizedReplayMismatch:$($market.conditionId):$replayRealized!=$stateRealized")
+        $failures.Add("realizedReplayMismatch:${conditionId}:$replayRealized!=$stateRealized")
     }
     if ($replayCompletedCycles -ne [int]$market.completedCycles) {
-        $failures.Add("cycleCountReplayMismatch:$($market.conditionId):$replayCompletedCycles!=$($market.completedCycles)")
+        $failures.Add("cycleCountReplayMismatch:${conditionId}:$replayCompletedCycles!=$($market.completedCycles)")
     }
     $cyclePnl = 0.0
-    foreach ($cycle in @($market.cycles)) {
-        if ($null -ne $cycle) { $cyclePnl += [double]$cycle.pnl }
+    foreach ($cycle in @($market.cycles | Where-Object { $null -ne $_ })) {
+        $cyclePnl += [double]$cycle.pnl
     }
     if ([math]::Abs(($cyclePnl + $partialCyclePnl) - $replayRealized) -gt 1e-6) {
-        $failures.Add("cyclePnlReplayMismatch:$($market.conditionId):$cyclePnl+$partialCyclePnl!=$replayRealized")
+        $failures.Add("cyclePnlReplayMismatch:${conditionId}:$cyclePnl+$partialCyclePnl!=$replayRealized")
     }
     $stateRealizedPnl += $stateRealized
     $stateCompletedCycles += [int]$market.completedCycles
@@ -228,6 +353,7 @@ $audit = [ordered]@{
     cancels = $summary.cancels
     fills = $summary.fills
     stateFills = $stateFills
+    settlements = $stateSettlements
     expectedNonFatalErrors = $expectedNonFatalErrors
     completedCycles = $summary.completedCycles
     stateCycles = $stateCycles

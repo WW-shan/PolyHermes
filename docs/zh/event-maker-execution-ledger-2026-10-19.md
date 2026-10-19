@@ -540,3 +540,15 @@ cd D:\Project\PolyHermes\backend
 - v6 `fill-analysis.json`：6 orders、1 crossing order、0 model-fill orders、0 actual-fill orders。
 - `shadow-5`：crossing 215.00，queue 20.03，eligible 194.97，required 514.80。
 - 模型应成交而 state 未成交时，审计将直接失败。
+### 03:45 部分卖出后结算账本修复
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| SETTLE-9 | 部分卖出后结算不丢失已实现 PnL | 已完成 | `EventMakerLiveStateTest`：settlement=0.24、cycle=0.28、cycle shares=10 |
+| SETTLE-10 | 结算股数与赎回身份一致 | 已完成 | `settlement.shares`=剩余可赎回 6；`cycle.shares`=总买入 10 |
+| AUDIT-7 | 审计回放支持 SETTLE 与部分卖出 | 已完成 | 临时 fixture 正例 passed，篡改 PnL/shares 反例 exit 1 |
+| TEST-11 | 隔离 worktree 全量回归 | 已完成 | 103 suites / 556 tests / 0 failures / 0 errors / 2 skipped |
+
+- 旧实现的风险：部分卖出后结算只记录剩余仓位 PnL，cycle PnL 和股数会低估；本轮在 live state 与恢复重放两侧同时修复。
+- `audit-event-maker-shadow.ps1` 同时保留 fill-analysis 告警，并新增 settlement/cycle 一致性校验。
+- 仍未验证：真实账户的 Builder Relayer、链上赎回回执、pUSD 到账延迟和实际到账金额。

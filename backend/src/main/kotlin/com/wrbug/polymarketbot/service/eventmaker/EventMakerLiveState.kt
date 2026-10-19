@@ -203,7 +203,14 @@ class EventMakerLiveState(
         val entryOrderId = currentEntryOrderId
             ?: throw IllegalStateException("settlement_entry_order_missing:${market.conditionId}")
         val settledShares = inventoryShares
-        val pnl = exitPrice.subtract(entryPrice).multiply(settledShares).toDouble()
+        if (currentCycleSoldShares.add(settledShares).compareTo(currentEntryShares) != 0) {
+            throw IllegalStateException(
+                "settlement_cycle_share_mismatch:${market.conditionId}:" +
+                    "$currentCycleSoldShares+$settledShares!=$currentEntryShares"
+            )
+        }
+        val settlementPnl = exitPrice.subtract(entryPrice).multiply(settledShares).toDouble()
+        val cyclePnl = currentCycleRealizedPnl + settlementPnl
         val cycleExitOrderId = "settlement:${market.conditionId}:$now"
         val settlement = EventMakerSettlementRecord(
             marketId = market.conditionId,
@@ -215,12 +222,12 @@ class EventMakerLiveState(
             entryPrice = entryPrice,
             exitPrice = exitPrice,
             shares = settledShares,
-            pnl = pnl,
+            pnl = settlementPnl,
             outcomeIndex = outcomeIndex,
             negativeRisk = negativeRisk,
             redemptionStatus = EventMakerRedemptionStatus.PENDING
         )
-        realizedPnl += pnl
+        realizedPnl += settlementPnl
         completedCycles++
         cycles += EventMakerCycleRecord(
             marketId = market.conditionId,
@@ -230,8 +237,8 @@ class EventMakerLiveState(
             exitAt = now,
             entryPrice = entryPrice,
             exitPrice = exitPrice,
-            shares = settledShares,
-            pnl = pnl,
+            shares = currentEntryShares,
+            pnl = cyclePnl,
             holdingSeconds = (now - entryAt).coerceAtLeast(0L),
             exitType = "SETTLE"
         )
@@ -517,10 +524,17 @@ class EventMakerLiveState(
             ) {
                 throw IllegalStateException("settlement_ledger_mismatch:${market.conditionId}:${settlement.entryOrderId}")
             }
-            val pnl = settlement.exitPrice.subtract(replayEntryPrice).multiply(settlement.shares).toDouble()
-            if (!closeEnough(settlement.pnl, pnl)) {
+            if (replayCurrentEntryShares <= BigDecimal.ZERO ||
+                replayCurrentCycleSoldShares.add(settlement.shares).compareTo(replayCurrentEntryShares) != 0
+            ) {
+                throw IllegalStateException("settlement_cycle_share_mismatch:${market.conditionId}:${settlement.entryOrderId}")
+            }
+            val settlementPnl = settlement.exitPrice.subtract(replayEntryPrice)
+                .multiply(settlement.shares).toDouble()
+            if (!closeEnough(settlement.pnl, settlementPnl)) {
                 throw IllegalStateException("settlement_pnl_mismatch:${market.conditionId}:${settlement.entryOrderId}")
             }
+            val cyclePnl = replayCurrentCyclePnl + settlementPnl
             replayCycles += EventMakerCycleRecord(
                 marketId = market.conditionId,
                 entryOrderId = settlement.entryOrderId,
@@ -529,12 +543,12 @@ class EventMakerLiveState(
                 exitAt = settlement.settledAt,
                 entryPrice = replayEntryPrice,
                 exitPrice = settlement.exitPrice,
-                shares = settlement.shares,
-                pnl = pnl,
+                shares = replayCurrentEntryShares,
+                pnl = cyclePnl,
                 holdingSeconds = (settlement.settledAt - replayEntryAt).coerceAtLeast(0L),
                 exitType = "SETTLE"
             )
-            replayRealized += pnl
+            replayRealized += settlementPnl
             replayCompletedCycles++
             lastTimestamp = settlement.settledAt
             replayInventory = BigDecimal.ZERO

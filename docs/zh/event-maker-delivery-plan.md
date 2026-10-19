@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 555 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已六次挂单并六次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
-> 最后更新：2026-10-20 02:05 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 556 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已六次挂单并六次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 最后更新：2026-10-20 03:45 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -38,7 +38,7 @@
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | 全量 103 suites / 555 tests 通过；新增日锚点、时钟回拨、无买盘估值、结算账本和状态 schema 回归 |
+| 策略核心单元测试 | 已完成 | 全量 103 suites / 556 tests 通过；新增日锚点、时钟回拨、无买盘估值、结算账本和状态 schema 回归 |
 | Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
 | Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
@@ -47,7 +47,7 @@
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
 | 新干净长测 | v2 等待 12 轮无活动通过市场，已因安全修复停止；提交后重启 | `event-maker-shadow-watch-v2-20261019/`；不降低价格带 |
-| 全量测试 | 103 suites / 555 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| 全量测试 | 103 suites / 556 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
 | 一键停止 | stop 先中断在途 OkHttp 调用再撤单；REST 实测 20ms 返回 | `EventMakerStrategyStopTest`、`69649e5` |
 | REST 代理回退 | 未显式配置时回退数据库系统代理；显式配置优先 | `EventMakerStrategyStopTest`、`69649e5` |
 | Live 端到端测试 | 引擎级 mock/恢复/账户级对账已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
@@ -549,6 +549,7 @@ cd D:\Project\PolyHermes\backend
 | LIVE-A16 | 赎回前持久化与崩溃恢复 | 已完成 | pending settlement 先落盘；启动时重试/确认已赎回 |
 | LIVE-A17 | Builder API Key 启动前置检查 | 已完成 | 未配置时 `settlement_builder_api_key_missing` |
 | LIVE-A18 | discovery 不再返回的持仓恢复 | 已完成 | 持久化 market 元数据，重建仅结算市场 |
+| LIVE-A19 | 部分卖出后结算的 PnL 与周期股数 | 已完成 | cycle 记总买入股数；settlement 记剩余可赎回股数；恢复重放一致 |
 | TEST-10 | 全量回归 | 已完成 | 103 suites / 555 tests / 0 failures / 0 errors / 2 skipped |
 
 - v6 Shadow 已三次挂单、三次 requote 撤单；`shadow-3` 于 01:26 撤销，当前 FLAT、0 fill，仍不满足真实成交验收。
@@ -572,3 +573,13 @@ cd D:\Project\PolyHermes\backend
 - 队列消耗 20.03 后剩 194.97 股；q20 需要 25.74 × 20 = 514.80 股，因此仍未成交。
 - 其余五笔订单没有可穿越 SELL 成交。
 - 结论：0 fill 与正式保守成交模型一致；不得降低 `shadowFillVolumeFactor`、放宽价格带或追价来伪造成交。
+
+### 10.24 2026-10-20 03:45 部分卖出后结算记账修复
+
+- 审计发现：买入后先部分卖出、剩余仓位再到期结算时，旧实现只把剩余仓位的结算 PnL 和股数写入 cycle，漏掉之前部分卖出的已实现 PnL，也会把 cycle.shares 记成剩余股数。
+- 修复后：`settlement.shares` 仍是链上可赎回的剩余股数；`cycle.shares` 是完整周期的总买入股数；`cycle.pnl` = 部分卖出已实现 PnL + 剩余仓位结算 PnL；`realizedPnl` 只累加尚未计入的结算 PnL，避免重复记账。
+- 状态恢复与审计回放使用同一语义，并校验 `已卖出股数 + settlement.shares == 总买入股数`。
+- `audit-event-maker-shadow.ps1` 已支持 SETTLE cycle，校验 settlement 身份、outcome、negativeRisk、结算 PnL 和 cycle 期望值；同时修复了 fill-analysis 告警被重复初始化覆盖的问题。
+- 临时正反例已验证：正常部分卖出后结算通过；篡改 settlement PnL 或 cycle 股数会被拒绝；临时 fixture 已删除。
+- 隔离 worktree 全量回归：103 suites / 556 tests / 0 failures / 0 errors / 2 skipped。
+- v6 Shadow 在 03:38 仍正常等待，6 次挂单、0 fill、0 cycle、0 inventory；没有放宽任何正式门槛。真实 Builder Relayer、链上赎回和到账仍未验证。

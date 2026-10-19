@@ -242,6 +242,42 @@ class EventMakerLiveStateTest {
     }
 
     @Test
+    fun `partial sell then settlement combines both pnl components`() {
+        val buy = order("buy-1", EventMakerSide.BUY, "0.96", "10.00", "10.00", "FILLED")
+        state.onOrderPlaced(buy)
+        state.reconcile(buy, 1_000)
+
+        val partialSell = order("sell-1", EventMakerSide.SELL, "0.97", "10.00", "4.00", "LIVE")
+        state.onOrderPlaced(partialSell)
+        state.reconcile(partialSell, 2_000)
+        state.onOrderCanceled()
+
+        val settlement = state.recordSettlement(
+            exitPrice = BigDecimal.ONE,
+            now = 3_000,
+            outcomeIndex = 0,
+            negativeRisk = false
+        )
+
+        assertEquals(0, BigDecimal("6.00").compareTo(settlement.shares))
+        assertEquals(0.24, settlement.pnl, 1e-9)
+        assertEquals(1, state.completedCycles)
+        assertEquals(0.28, state.realizedPnl, 1e-9)
+        assertEquals(0, BigDecimal("10.00").compareTo(state.cycles.single().shares))
+        assertEquals(0.28, state.cycles.single().pnl, 1e-9)
+        assertEquals("SETTLE", state.cycles.single().exitType)
+
+        val restored = EventMakerLiveState(market(), EventMakerConfig())
+        restored.restore(state.toPersisted())
+
+        assertEquals(1, restored.completedCycles)
+        assertEquals(0.28, restored.realizedPnl, 1e-9)
+        assertEquals(0, BigDecimal("10.00").compareTo(restored.cycles.single().shares))
+        assertEquals(0.28, restored.cycles.single().pnl, 1e-9)
+        assertEquals(0, BigDecimal("6.00").compareTo(restored.settlements.single().shares))
+    }
+
+    @Test
     fun `expired market cannot open another buy`() {
         val expired = EventMakerLiveState(
             market().copy(endTimestamp = 1L),
