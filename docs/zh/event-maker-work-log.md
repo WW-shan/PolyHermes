@@ -1157,3 +1157,10 @@
 - 系统时间回拨时不重置日亏损锚点，保留持久化未来日直到时间追上，并补单测。
 - 全量测试：103 suites / 538 tests / 0 failures / 0 errors / 2 skipped。
 - v3 Shadow 在 23:55 主动停止；运行期间严格门槛下 5 轮均 activityPassed=0、selected=0，未产生 Shadow 订单或真实订单。
+### 00:04 v4 Shadow 启动
+
+- 修复提交：`127dff3 fix: close event maker halt and mark-to-market gaps`，已推送 `0b232f7..127dff3`。
+- v4 输出：`backend/build/research/event-maker-safe-candidate-shadow-main-v4-20261020/`。
+- wrapper PID `21352`，Java PID `17312`，启动 `2026-10-20 00:03:45 +08:00`。
+- 首两轮 qualified=1、activityPassed=0、selected=0；原因 `sell_trades_30m_below_min=1` / `recent_trades_30m_below_min=1`。
+- 当前 waiting，日志 0 异常，stderr 为空；严格门槛不变。
