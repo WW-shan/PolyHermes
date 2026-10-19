@@ -226,14 +226,17 @@ cd D:\Project\PolyHermes\backend
 4. 计划文件同步更新 checkbox；不能只改日志而不改验收矩阵。
 5. 不允许用“应该可以”“看起来正常”替代测试输出或运行证据。
 
-### 9.2 当前检查点（2026-10-19 07:29 +08:00）
+### 9.2 当前检查点（2026-10-19 12:05 +08:00）
 
 - 当前分支：`main`。
-- 最新已推送提交：`7b0bf7b feat: use keyset pagination for market discovery`。
+- 最新已推送提交：`e4314c2 docs: record shadow evidence-integrity fix and restart`。
+- 本轮新增修复：`69649e5`（stop 中断在途网络调用 + REST 系统代理回退）、`b2846a8`（trades.csv 逐笔 flush + state.json 周期落盘）。
+- 本轮新增证据：MySQL 8.2 容器 + Flyway 50 迁移；REST SHADOW 全链路（start/status/stop，stop 20ms）；LIVE 三条负向路径全部 fail-closed；一档实验臂首次选中真实市场并挂出 Shadow 买单。
+- 当前两臂：主臂 Java PID `21704`（spread=2，等待）；实验臂 Java PID `14376`（spread=1，等待活动门槛回升）。
 - 当前工作区：主体代码与文档已推送；最新发现修复和证据已写入仓库。
 - 已完成：策略模型、报价规划、风险策略、统一 Shadow/Live 引擎、Live 执行适配器、REST 接口、持久化恢复、账户与资金校验、执行守卫、逐笔/逐回合审计。
 - 已完成：编译修复、持久化测试、Live mock 集成测试、统一 Shadow 与 planner、执行守卫、逐笔/逐回合审计、运行手册。
-- 已验证：全量 96 suites / 450 tests / 0 failures / 2 skipped；完整池 4,187 市场 / 864 配置回测成功。
+- 已验证：全量 98 suites / 478 tests / 0 failures / 0 errors / 2 skipped；完整池 4,187 市场 / 864 配置回测成功。
 - 已失效：旧被动 2h 在收尾时因同 classpath 重编译触发 `NoSuchMethodError`；旧 12h 已停止。
 - 已完成：官方 keyset 分页、价格预筛和逐候选活动诊断；真实扫描 6 个候选、1 个活动通过，但价差仅 1 tick。
 - 未完成：真实小资金 Live smoke。原因是没有可用账户、资金和明确实盘授权；不得用 mock 结果冒充真实实盘验证。
