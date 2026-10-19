@@ -599,6 +599,15 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             StandardOpenOption.TRUNCATE_EXISTING,
             StandardOpenOption.WRITE
         )
+        writeState(states)
+        summary
+    }
+
+    /**
+     * Persist the shadow state atomically-ish on every snapshot tick so a crash
+     * still leaves auditable state, not just the final in-memory view.
+     */
+    private fun writeState(states: List<EventMakerLiveState>) {
         Files.writeString(
             options.outputDir.resolve("state.json"),
             prettyGson.toJson(mapOf("markets" to states.map { it.toPersisted() })),
@@ -607,7 +616,6 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             StandardOpenOption.TRUNCATE_EXISTING,
             StandardOpenOption.WRITE
         )
-        summary
     }
 
     private fun applyBook(book: MarketBook, states: List<EventMakerLiveState>, markets: List<LivePaperMarket>) {
@@ -626,6 +634,9 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         trades++
         tradesWriter.write(listOf(trade.timestamp, trade.conditionId, trade.tokenId, trade.side, trade.price, trade.size, trade.source, trade.transactionHash ?: "").joinToString(","))
         tradesWriter.newLine()
+        // Flush per trade: a long unattended run must leave a complete,
+        // line-aligned trade log even if the process is killed mid-run.
+        tradesWriter.flush()
         shadowExecution.onTrade(trade).forEach { fill ->
             MARKOUT_HORIZONS_SECONDS.forEach { horizonSeconds ->
                 pendingMarkouts += PendingMarkout(
@@ -742,6 +753,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             snapshotsWriter.newLine()
         }
         snapshotsWriter.flush()
+        writeState(states)
     }
 
     private fun writeMarketList(markets: List<LivePaperMarket>) {
