@@ -21,6 +21,7 @@ class LivePaperDataClientDiscoveryTest {
     private lateinit var executor: java.util.concurrent.ExecutorService
     private lateinit var baseUrl: String
     private lateinit var marketsResponder: (String?, String?, Int) -> FixturePage
+    private var tradesResponder: () -> List<Map<String, Any?>> = { emptyList() }
 
     @BeforeEach
     fun setUp() {
@@ -179,6 +180,116 @@ class LivePaperDataClientDiscoveryTest {
             client.close()
         }
     }
+    @Test
+    fun `activity gate only counts prints on the favorite token`() = runBlocking {
+        val client = client()
+        try {
+            val nowSeconds = System.currentTimeMillis() / 1000
+            marketsResponder = { tag, _, _ ->
+                if (tag == "2") {
+                    FixturePage(listOf(market("favorite-scope", 0.98, 0.985, 250_000.0)), null)
+                } else {
+                    FixturePage(emptyList(), null)
+                }
+            }
+            // All recent prints are on the NON-favorite outcome. They must not satisfy
+            // the activity gate, because the strategy only quotes the favorite token.
+            tradesResponder = {
+                (1..10).map { index ->
+                    mapOf(
+                        "timestamp" to nowSeconds - index,
+                        "outcomeIndex" to 1,
+                        "price" to 0.02,
+                        "size" to 100.0,
+                        "side" to "BUY",
+                        "transactionHash" to "tx-nonfav-$index"
+                    )
+                }
+            }
+
+            val result = client.discoverMarketsDetailed(
+                maxMarkets = 1,
+                minVolume24hr = 1_000.0,
+                minPrice = 0.97,
+                maxPrice = 0.99,
+                minRecentTrades30m = 3,
+                minRecentTradesPerSide30m = 1,
+                maxPagesPerTag = 1,
+                pageLimit = 100
+            )
+
+            assertTrue(result.markets.isEmpty(), "non-favorite prints must not pass the gate")
+            val diagnostic = result.activityDiagnostics.single()
+            assertEquals(0, diagnostic.recentTrades30m)
+            assertEquals(0, diagnostic.buyTrades30m)
+            assertEquals(0, diagnostic.sellTrades30m)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `activity gate counts favorite token prints`() = runBlocking {
+        val client = client()
+        try {
+            val nowSeconds = System.currentTimeMillis() / 1000
+            marketsResponder = { tag, _, _ ->
+                if (tag == "2") {
+                    FixturePage(listOf(market("favorite-pass", 0.98, 0.985, 250_000.0)), null)
+                } else {
+                    FixturePage(emptyList(), null)
+                }
+            }
+            tradesResponder = {
+                listOf(
+                    mapOf(
+                        "timestamp" to nowSeconds - 10,
+                        "outcomeIndex" to 0,
+                        "price" to 0.98,
+                        "size" to 100.0,
+                        "side" to "BUY",
+                        "transactionHash" to "tx-fav-buy"
+                    ),
+                    mapOf(
+                        "timestamp" to nowSeconds - 20,
+                        "outcomeIndex" to 0,
+                        "price" to 0.979,
+                        "size" to 100.0,
+                        "side" to "SELL",
+                        "transactionHash" to "tx-fav-sell"
+                    ),
+                    mapOf(
+                        "timestamp" to nowSeconds - 30,
+                        "outcomeIndex" to 0,
+                        "price" to 0.981,
+                        "size" to 100.0,
+                        "side" to "BUY",
+                        "transactionHash" to "tx-fav-buy-2"
+                    )
+                )
+            }
+
+            val result = client.discoverMarketsDetailed(
+                maxMarkets = 1,
+                minVolume24hr = 1_000.0,
+                minPrice = 0.97,
+                maxPrice = 0.99,
+                minRecentTrades30m = 3,
+                minRecentTradesPerSide30m = 1,
+                maxPagesPerTag = 1,
+                pageLimit = 100
+            )
+
+            assertEquals(listOf("favorite-pass"), result.markets.map { it.conditionId })
+            val diagnostic = result.activityDiagnostics.single()
+            assertEquals(3, diagnostic.recentTrades30m)
+            assertEquals(2, diagnostic.buyTrades30m)
+            assertEquals(1, diagnostic.sellTrades30m)
+        } finally {
+            client.close()
+        }
+    }
+
     private fun client(): LivePaperDataClient = LivePaperDataClient(
         gammaBaseUrl = baseUrl,
         dataBaseUrl = baseUrl,
@@ -188,7 +299,7 @@ class LivePaperDataClientDiscoveryTest {
     private fun handle(exchange: HttpExchange) {
         when (exchange.requestURI.path) {
             "/markets", "/markets/keyset" -> handleMarkets(exchange)
-            "/trades" -> respond(exchange, 200, emptyList<Any>())
+            "/trades" -> respond(exchange, 200, tradesResponder())
             else -> respond(exchange, 404, mapOf("error" to "not found"))
         }
     }

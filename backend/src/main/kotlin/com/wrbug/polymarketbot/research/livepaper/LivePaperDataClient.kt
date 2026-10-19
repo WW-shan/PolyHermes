@@ -250,7 +250,15 @@ class LivePaperDataClient(
         val activityDiagnostics = mutableListOf<MarketActivityDiagnostic>()
         val activityPassed = if (activityFilterApplied) {
             candidates.mapNotNull { market ->
-                val allRecent = runCatching { getRecentTrades(market) }.getOrDefault(emptyList())
+                // Only the favorite token is quoted, so only its prints can fill our
+                // orders: a maker BUY needs taker SELL flow on that token, and the
+                // exit maker SELL needs taker BUY flow on the same token. Counting
+                // the other outcome's prints would credit liquidity we can never
+                // trade against.
+                val favoriteTokenId = market.favoriteTokenId
+                val allRecent = runCatching { getRecentTrades(market) }
+                    .getOrDefault(emptyList())
+                    .filter { it.tokenId == favoriteTokenId }
                 val recent30m = allRecent.filter { it.timestamp >= now - 30 * 60 * 1000L }
                 val recent2h = allRecent.filter { it.timestamp >= now - 120 * 60 * 1000L }
                 val recentNotional30m = recent30m.sumOf { it.price * it.size }
