@@ -253,9 +253,19 @@ class EventMakerStrategyService(
         wsClient = ws
         ws.start()
         val pollJob = runScope?.launch {
+            val lastSeen = mutableMapOf<String, Long>()
             while (isActive) {
                 delay(config.pollSeconds * 1000L)
-                discovered.forEach { market -> client.getRecentTrades(market).forEach { channel.trySend(LiveFeedEvent.Trade(it)) } }
+                discovered.forEach { market ->
+                    // Only ask for prints newer than the last one we forwarded; the
+                    // Data API otherwise re-serves the same 200 rows every poll.
+                    val since = lastSeen[market.conditionId]
+                    val fresh = client.getRecentTrades(market, since)
+                    if (fresh.isNotEmpty()) {
+                        lastSeen[market.conditionId] = fresh.maxOf { it.timestamp }
+                        fresh.forEach { channel.trySend(LiveFeedEvent.Trade(it)) }
+                    }
+                }
             }
         }
         status = status.copy(markets = discovered.map { it.question })
@@ -263,7 +273,7 @@ class EventMakerStrategyService(
             for (event in channel) {
                 if (runId != generation.get()) break
                 var shouldStop = false
-                var stateChanged = false
+                var duplicateTrade = false
                 stateMutex.withLock {
                     when (event) {
                         is LiveFeedEvent.BookUpdated -> {
@@ -287,12 +297,18 @@ class EventMakerStrategyService(
                             if (seenTrades.put(trade.key, true) == null) {
                                 trades++
                                 shadowExecutionPort.onTrade(trade)
+                            } else {
+                                // Duplicate print: nothing changed, so skip the engine
+                                // tick instead of re-quoting on stale input.
+                                duplicateTrade = true
                             }
                         }
                         is LiveFeedEvent.Unknown -> logger.debug("Event maker shadow unknown WS event: ${event.eventType}")
                     }
-                    val result = runEngineTick(engine, states, books, 0L)
-                    shouldStop = applyEngineResult(result) || engine.haltedReason != null
+                    if (!duplicateTrade) {
+                        val result = runEngineTick(engine, states, books, 0L)
+                        shouldStop = applyEngineResult(result) || engine.haltedReason != null
+                    }
                 }
                 updateStatus(states, books, trades, bookUpdates)
                 if (shouldStop) break
@@ -366,9 +382,17 @@ class EventMakerStrategyService(
         wsClient = ws
         ws.start()
         val pollJob = runScope?.launch {
+            val lastSeen = mutableMapOf<String, Long>()
             while (isActive) {
                 delay(config.pollSeconds * 1000L)
-                discovered.forEach { market -> client.getRecentTrades(market).forEach { channel.trySend(LiveFeedEvent.Trade(it)) } }
+                discovered.forEach { market ->
+                    val since = lastSeen[market.conditionId]
+                    val fresh = client.getRecentTrades(market, since)
+                    if (fresh.isNotEmpty()) {
+                        lastSeen[market.conditionId] = fresh.maxOf { it.timestamp }
+                        fresh.forEach { channel.trySend(LiveFeedEvent.Trade(it)) }
+                    }
+                }
             }
         }
         var lastPersistAt = System.currentTimeMillis()
@@ -399,6 +423,7 @@ class EventMakerStrategyService(
                 if (runId != generation.get()) break
                 var shouldStop = false
                 var stateChanged = false
+                var duplicateTrade = false
                 stateMutex.withLock {
                     when (event) {
                         is LiveFeedEvent.BookUpdated -> {
@@ -419,18 +444,24 @@ class EventMakerStrategyService(
                         }
                         is LiveFeedEvent.Trade -> {
                             val trade = event.trade
-                            if (seenTrades.put(trade.key, true) == null) trades++
+                            if (seenTrades.put(trade.key, true) == null) {
+                                trades++
+                            } else {
+                                duplicateTrade = true
+                            }
                         }
                         is LiveFeedEvent.Unknown -> logger.debug("Event maker live unknown WS event: ${event.eventType}")
                     }
                     // Book/trade events only drive quoting. Order reconciliation is a
                     // REST call per active order, so it stays on the dedicated
                     // reconcileJob cadence instead of firing on every WS event.
-                    val result = runQuoteTick(engine, states, books, accountId)
-                    shouldStop = applyEngineResult(result) || engine.haltedReason != null
-                    stateChanged = result.placed.isNotEmpty() ||
-                        result.canceled.isNotEmpty() ||
-                        result.reconciled.isNotEmpty()
+                    if (!duplicateTrade) {
+                        val result = runQuoteTick(engine, states, books, accountId)
+                        shouldStop = applyEngineResult(result) || engine.haltedReason != null
+                        stateChanged = result.placed.isNotEmpty() ||
+                            result.canceled.isNotEmpty() ||
+                            result.reconciled.isNotEmpty()
+                    }
                 }
                 updateStatus(states, books, trades, bookUpdates)
                 val now = System.currentTimeMillis()

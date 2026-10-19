@@ -380,13 +380,24 @@ class LivePaperDataClient(
         }.getOrNull()
     }
 
-    suspend fun getRecentTrades(market: LivePaperMarket): List<LiveTradePrint> = withContext(Dispatchers.IO) {
-        val url = dataBaseUrl.toHttpUrl().newBuilder()
+    /**
+     * Recent public prints for a market. When [sinceTimestampMs] is given the request
+     * is bounded to that window, so a periodic poll can fetch only what it has not
+     * already seen instead of re-downloading the same 200 prints every few seconds.
+     */
+    suspend fun getRecentTrades(
+        market: LivePaperMarket,
+        sinceTimestampMs: Long? = null
+    ): List<LiveTradePrint> = withContext(Dispatchers.IO) {
+        val builder = dataBaseUrl.toHttpUrl().newBuilder()
             .addPathSegment("trades")
             .addQueryParameter("market", market.conditionId)
             .addQueryParameter("limit", "200")
             .addQueryParameter("offset", "0")
-            .build()
+        if (sinceTimestampMs != null) {
+            builder.addQueryParameter("start", (sinceTimestampMs / 1000L).toString())
+        }
+        val url = builder.build()
         runCatching {
             val rows = gson.fromJson(executeGet(url), Array<TradeJson>::class.java)?.toList() ?: emptyList()
             rows.mapNotNull { row ->

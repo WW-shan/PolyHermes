@@ -181,6 +181,33 @@ class LivePaperDataClientDiscoveryTest {
         }
     }
     @Test
+    fun `incremental trade fetch sends a start bound`() = runBlocking {
+        val client = client()
+        try {
+            val market = LivePaperMarket(
+                conditionId = "cond-incremental",
+                question = "q",
+                tag = "Politics",
+                volume24hr = 250_000.0,
+                endTimestamp = 4_000_000_000L,
+                tickSize = 0.001,
+                outcomes = listOf("Yes", "No"),
+                tokenIds = listOf("tok-yes", "tok-no"),
+                favoriteIndex = 0
+            )
+            client.getRecentTrades(market, sinceTimestampMs = 1_700_000_000_000L)
+
+            val tradeRequest = requests.last { it.contains("/trades") }
+            assertTrue(
+                tradeRequest.contains("start=1700000000"),
+                "poll must bound the window instead of re-fetching history: $tradeRequest"
+            )
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `activity gate only counts prints on the favorite token`() = runBlocking {
         val client = client()
         try {
