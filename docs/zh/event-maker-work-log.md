@@ -709,3 +709,12 @@
 - 提交并推送：`69649e5 fix: make event maker stop abort in-flight network calls and honor system proxy`（`1191da0..69649e5 main -> main`）。
 - REST 复验：带 `--event-maker.proxy-url=http://127.0.0.1:10808` 重启 Spring 后，discovery 正常（qualified=6、activityPassed=1），`stop` 实测 20ms 返回。
 - 两臂已用新代码重启：主臂 Java PID `26412`（spread=2，等待中，拒绝原因 `spread_below_min=1`）；实验臂 Java PID `17596`（spread=1，已选中 1 个市场进入 Shadow，WS_OPEN）。
+
+### 11:2x 证据完整性修复：逐笔 flush + 周期 state.json
+
+- 缺陷：`trades.csv` 只在 8KB 缓冲写满时落盘，实测文件比实际交易滞后数小时，且缓冲边界会产生半行（实验臂文件末尾 `1792359617000,0x1`）；`state.json` 只在运行结束时写，崩溃即丢失全部状态证据。
+- 修复：`EventMakerShadowCli.applyTrade` 每笔成交后 `tradesWriter.flush()`；`writeSnapshots` 每个快照周期调用新的 `writeState()`，运行结束仍写最终状态。
+- 全量测试：98 suites / 478 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`b2846a8 fix: flush shadow trade log per trade and persist state on snapshot ticks`（`9c09780..b2846a8 main -> main`）。
+- 两臂已用新代码重启：主臂 Java PID `21704`（wrapper 20276）；实验臂 Java PID `14376`（wrapper 26188）。
+- 说明：15 分钟 flush 冒烟因活动门槛真实波动超时（9 轮无活动通过），未产生 fill；不通过放宽门槛制造成交。
