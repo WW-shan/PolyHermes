@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-19 09:01）：完整池回测最强训练期候选 ROI 约 +0.81%，cluster bootstrap 95% 区间包含 0；q50 和 50bps 费用下转负。keyset 候选发现已修复；v4 等待任务已于 09:22 用持仓数量精确对账版本重启；首次发现仍无活动通过市场。Live 恢复新增账户级活跃订单/持仓对账、favorite token 校验、逐笔 fill 重放和停止终态确认；全量 97 suites / 475 tests 通过。当前仍不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md)、[稳健性交叉核验](event-maker-robustness-crosscheck-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-19 10:40）：完整池回测最强训练期候选 ROI 约 +0.81%，cluster bootstrap 95% 区间包含 0；q50 和 50bps 费用下转负。keyset 候选发现已修复；一档价差实验臂已首次选中真实市场并挂出 Shadow 买单，等待成交。Live 恢复新增账户级活跃订单/持仓对账、favorite token 校验、逐笔 fill 重放和停止终态确认；`stop` 现在会先中断在途 OkHttp 调用再撤单（REST 实测 20ms 返回），未显式配置时回退数据库系统代理；全量 98 suites / 478 tests 通过。当前仍不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md)、[稳健性交叉核验](event-maker-robustness-crosscheck-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
@@ -19,8 +19,9 @@
 - JDK 17。
 - 在 `D:\Project\PolyHermes\backend` 下执行 Gradle 命令。
 - 独立 Shadow 不需要 MySQL、不需要 Docker。
-- Spring REST 服务仍需要项目原有的 MySQL 和配置。
+- Spring REST 服务仍需要项目原有的 MySQL 和配置（本机可用 Docker 起 `mysql:8.2`，库 `polyhermes`，端口 3306）。
 - 如果 Java 直连 Polymarket 超时，可使用本机 HTTP 代理，例如 `http://127.0.0.1:10808`。
+- Spring 路径未显式配置 `event-maker.proxy-url` 时，会回退到数据库里已启用的 HTTP 系统代理；显式配置优先。
 
 ## 3. 运行测试
 
@@ -231,6 +232,7 @@ POST /api/event-maker/stop
 
 停止路径会：
 
+- 先关闭 WebSocket 与数据客户端并取消在途 OkHttp 调用（避免卡在 60 秒超时里）；
 - 停止新报价；
 - 尝试撤销所有已知活跃订单；
 - 仅在撤单成功后清除订单状态；
