@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 560 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已八次挂单并八次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
-> 最后更新：2026-10-20 04:45 +08:00<br>
+> 最后更新：2026-10-20 04:55 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -615,3 +615,9 @@ cd D:\Project\PolyHermes\backend
 - 现在缺字段时回退为保守默认 `1.0`，只用于读取历史证据；正式 Shadow 仍由 `watch-process.json` 提供 q20 factor。
 - 对 `backend/build/research` 下全部旧 Shadow 目录做了一轮回归：最终干净产物通过；早期中断目录因 `activeOrders` 非零仍按预期失败。
 - v6 在 04:44 仍正常运行，FLAT、0 fill、0 cycle、0 inventory，`logIssues=0`、`stderrBytes=0`。
+### 10.29 2026-10-20 04:55 Shadow 逐单成交股数校验
+
+- 审计原先只比较“模型应成交订单数”和“实际有成交订单数”；整单成交模型与部分成交可能数量相等而漏检。
+- 现在逐单校验：模型整单成交时，实际成交股数必须等于订单原始股数；实际超过模型或超出订单股数直接失败；模型未成交但实际有成交记为告警。
+- 用合成 fixture 验证：模型 full、实际 0 时审计失败并输出 `fillModelShareMismatch`；临时 fixture 已清理。
+- v6 仍以正式 q20 运行，当前 0 fill；该改动只增强审计，不改变策略门槛。

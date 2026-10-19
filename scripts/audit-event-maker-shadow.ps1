@@ -63,6 +63,18 @@ if ($modelFillOrders -gt $actualFilledOrders) {
 } elseif ($modelFillOrders -ne $actualFilledOrders) {
     $warnings.Add("fillModelCountMismatch:modelFillOrders=$modelFillOrders actualFilledOrders=$actualFilledOrders")
 }
+foreach ($fillOrder in @($fillAnalysis.orders)) {
+    $fillOrderId = [string]$fillOrder.orderId
+    $expectedFillShares = [decimal]$fillOrder.shares
+    $actualFillShares = [decimal]$fillOrder.actualFillShares
+    if ($actualFillShares -lt 0 -or $actualFillShares -gt $expectedFillShares) {
+        $failures.Add("actualFillSharesInvalid:${fillOrderId}:$actualFillShares/$expectedFillShares")
+    } elseif ([bool]$fillOrder.modelFill -and $actualFillShares -ne $expectedFillShares) {
+        $failures.Add("fillModelShareMismatch:${fillOrderId}:model=full actual=$actualFillShares expected=$expectedFillShares")
+    } elseif (-not [bool]$fillOrder.modelFill -and $actualFillShares -gt 0) {
+        $warnings.Add("fillModelUnderestimated:${fillOrderId}:actual=$actualFillShares")
+    }
+}
 $stateRealizedPnl = 0.0
 $stateCompletedCycles = 0
 $stateSettlements = 0

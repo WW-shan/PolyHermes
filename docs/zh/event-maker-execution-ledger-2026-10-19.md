@@ -583,3 +583,11 @@ cd D:\Project\PolyHermes\backend
 
 - 赎回交易哈希单独不再视为成功；回执必须能对应到本地 settlement 的市场、outcome 和股数。
 - 仍未验证真实 Builder Relayer、链上回执、pUSD 到账延迟和实际到账金额。
+### 04:55 Shadow 逐单成交股数校验
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| AUDIT-8 | 模型整单成交与实际部分成交可区分 | 已完成 | 合成 fixture 输出 `fillModelShareMismatch` 且退出 1 |
+| AUDIT-9 | 实际成交股数越界 fail-closed | 已完成 | 逐单 `actualFillShares` 范围校验 |
+
+- 审计增强不改变 Shadow/Live 策略参数；v6 仍按正式 q20 运行。
