@@ -48,7 +48,8 @@
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| v4 等待+Shadow 任务 | 15340 / 21804 | 09:22 | 等待最多 180m；选出后 Shadow 120m | `backend/build/research/event-maker-shadow-watch-v4-20261019/` | waiting；严格参数；attempt=1 时 0 活动通过 |
+| v5 等待+Shadow 主臂 | 25560 | 09:32 | 等待最多 720m；选出后 Shadow 720m | `backend/build/research/event-maker-shadow-watch-v5-20261019/` | waiting；严格参数；窗口按 time-to-fill 分布延长 |
+| 一档价差实验臂 | 15356 | 09:32 | 同上 | `backend/build/research/event-maker-shadow-experiment-spread1-v2-20261019/` | waiting；唯一变量 `minSpreadTicks=1`；不混入正式验证 |
 | v3 等待+Shadow 任务 | 6296 / 7788 | 09:06 | 09:10 已停止 | `backend/build/research/event-maker-shadow-watch-v3-20261019/` | 因持仓数量精确对账修复停止 |
 | v2 等待+Shadow 任务 | 7652 / 14836 | 08:05 | 08:18 已停止 | `backend/build/research/event-maker-shadow-watch-v2-20261019/` | 12 次发现均为 0 活动通过；因安全修复停止 |
 | 旧被动入场 2h/12h | 旧会话 | 04:50 / 04:52 | 已结束 | `event-maker-shadow-passive-2c-*` | 历史记录；2h 收尾类冲突无效；12h 已停止；均 0 fill |

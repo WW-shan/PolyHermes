@@ -331,8 +331,8 @@ cd D:\Project\PolyHermes\backend
 | BT-4 | 标签/价格桶 × 训练/测试与 cluster bootstrap | 已完成 | `docs/zh/event-maker-robustness-crosscheck-2026-10-19.md`、分析脚本 |
 | TEST-3 | 定向与全量回归 | 已完成 | eventmaker 94 tests；全量 97 suites / 475 tests / 0 failures / 0 errors / 2 skipped |
 | GIT-3 | 提交并推送本轮安全修复 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 用新代码重启干净等待 + Shadow | 运行中 | v4 PID 15340/21804，输出 `event-maker-shadow-watch-v4-20261019/` |
-| EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID 26508，`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-20261019/` |
+| OBS-4 | 12h 等待 + 12h Shadow 主臂 | 运行中 | v5 Java PID 25560，输出 `event-maker-shadow-watch-v5-20261019/` |
+| EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID 15356，`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
 - 当前没有运行中的 Shadow/回测进程。
 - 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。

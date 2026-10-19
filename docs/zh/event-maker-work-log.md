@@ -680,3 +680,12 @@
 - 实验臂首轮：qualified=7、activityPassed=0、selected=0，拒绝原因与主臂一致；说明当前空窗是活动门槛，不是价差门槛。
 - 规则：实验臂结果单独存档，不混入正式验证，不用于宣称策略可实盘；两臂共享只读公共数据，均不签名、不下单。
 - 运行期间仍然禁止编译、测试或任何重写 classpath 的任务。
+### 09:32 长窗口重启：12 小时等待 + 12 小时 Shadow
+
+- 原因：回测显示 time-to-fill 中位数 3.27 小时、P90 14.40 小时；旧 2 小时窗口在结构上几乎不可能产生足够 cycle，无法满足“至少 20 个真实盘口 cycle”的上线门槛。
+- 动作：停止 v4 主臂与一档实验臂（PID 15340/21804/26508），用同一份已编译类重启两臂，等待窗口 180 → 720 分钟，Shadow 窗口 120 → 720 分钟；其余参数完全不变。
+- 主臂：Java PID `25560`，`minSpreadTicks=2`，输出 `event-maker-shadow-watch-v5-20261019/`。
+- 实验臂：Java PID `15356`，`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/`。
+- 两臂首轮均为 qualified=7、activityPassed=0、selected=0；拒绝原因 `recent_trades_30m_below_min=5`、`recent_trades_2h_below_min=1`、`recent_notional_30m_below_min=1`；stderr 为空。
+- `scripts/check-event-maker-watch.ps1` 默认目录已切到 v5。
+- 说明：延长的是观察窗口，不是放宽策略门槛；价格带、活动门槛、价差、成交因子、post-only 约束全部未变。
