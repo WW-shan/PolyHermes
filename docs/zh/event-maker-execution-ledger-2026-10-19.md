@@ -299,3 +299,15 @@ cd D:\Project\PolyHermes\backend
 | 实验臂 | Java PID `17596`（wrapper 19668），spread=1，输出 `event-maker-shadow-experiment-spread1-v2-20261019/`，已选中 1 个市场、WS_OPEN、挂出 Shadow 买单 25.74 @0.971 |
 
 恢复规则：先看 `watch-process.json` 与 `stdout.log`；实验臂若产生 fill/cycle，运行 `.\scripts\audit-event-maker-shadow.ps1 -OutputDir <目录>`。运行期间禁止编译/测试。
+
+### 10:45-10:55 REST 路径 LIVE 负向验证（fail-closed）
+
+| 用例 | 请求 | 实际结果 |
+|---|---|---|
+| LIVE 未显式开启 | `mode=LIVE, accountId=999` | `live_trading_disabled`，未启动 |
+| LIVE 缺账户 | `mode=LIVE, liveTradingEnabled=true` | `live_account_required`，未启动 |
+| LIVE 账户不存在/无凭证 | `mode=LIVE, liveTradingEnabled=true, accountId=999` | `account_not_found_or_credentials_missing`，未启动 |
+
+- 三次请求后 `status.running=false`，未产生任何订单。
+- SHADOW 通过 REST 全链路验证：discovery 走代理成功（qualified=6、activityPassed=1）、start/status/stop 正常、stop 20ms 返回。
+- 真实 Live smoke 仍等待用户提供：可用 `accountId`、资金上限、明确下单授权、时间窗口、市场范围。
