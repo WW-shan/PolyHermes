@@ -249,3 +249,9 @@ cd D:\Project\PolyHermes\backend
 
 - `spread` 回测字段是目标卖出价差，不是实时 `minSpreadTicks`。
 - 当前保留 `minSpreadTicks=2`；一档市场仅作为未来独立实验臂，不用于本轮正式 fill 证据。
+### 08:10 长等待停止与 attempt 审计增强
+
+- 停止 PID 3764/10628/24888；停止前 15 轮均无活动通过候选，无 fill、无真实订单。
+- 新增 `activityRejectionReasons` 到每轮 attempt 记录；真实 0 分钟冒烟显示 `recent_trades_30m_below_min=6`。
+- 全量测试 96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 下一步：提交后重启后台等待任务。

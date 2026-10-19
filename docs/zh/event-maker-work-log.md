@@ -574,3 +574,12 @@
 - 实时选择器的 `minSpreadTicks=2` 是后来加入的防御性门槛，目的是避免无 `entryOffsetCents` 时排在买一深处；它不是回测已验证的参数。
 - 当前一档价差市场在 `entryOffsetCents=0.5` 下理论上买单会下移到买一下方、队列为 0，但这还没有经过严格 Shadow 验证。
 - 决策：仍保持 `minSpreadTicks=2` 和当前活动门槛，不用一档市场或降低门槛制造 fill；把“一档价差 + 0.5 美分偏移”列为未来独立实验臂，必须单独记录结果，不能混入本次正式验证。
+### 08:10 停止无成交长等待并增强 attempt 审计
+
+- 已安全停止上一轮后台任务 PID 3764/10628/24888；停止前完成 15 轮发现，全部为 qualified=6、activityPassed=0、selected=0，无 fill、无真实订单。
+- 原因：旧 `discovery-attempts.jsonl` 只有数量，没有逐轮活动拒绝原因，长时间运行会丢失审计信息。
+- 修复：`DiscoveryAttemptLog` 增加 `activityRejectionReasons`，每轮记录如 `recent_trades_30m_below_min=6` 的聚合原因。
+- 0 分钟真实冒烟：已写出 `activityRejections={recent_trades_30m_below_min=6}`，并正确生成 `market-watch-timeout.json`。
+- 证据：`backend/build/research/event-maker-shadow-wait-reason-smoke-20261019/`。
+- 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
+- 下一步：提交增强后的版本，重新启动后台等待；等待期间只轮询和写文档，不编译。

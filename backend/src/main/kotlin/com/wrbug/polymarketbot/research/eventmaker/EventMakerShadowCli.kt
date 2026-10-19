@@ -115,6 +115,7 @@ private data class DiscoveryAttemptLog(
     val qualifiedMarkets: Int,
     val activityPassedMarkets: Int,
     val selectedMarkets: Int,
+    val activityRejectionReasons: Map<String, Int>,
     val selectionReasons: Map<String, Int>,
     val stoppedReason: String
 )
@@ -376,6 +377,10 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     exitSpreadCents = options.exitSpreadCents
                 )
             }
+            val activityRejectionReasons = discovery.activityDiagnostics
+                .mapNotNull { it.rejectionReason }
+                .groupingBy { it }
+                .eachCount()
             val selectionReasons = evaluations.groupingBy { it.reason }.eachCount()
             discoveryAttemptsWriter.write(
                 gson.toJson(
@@ -385,6 +390,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                         qualifiedMarkets = discovery.qualifiedMarkets.size,
                         activityPassedMarkets = discovery.activityPassedMarkets.size,
                         selectedMarkets = discovered.size,
+                        activityRejectionReasons = activityRejectionReasons,
                         selectionReasons = selectionReasons,
                         stoppedReason = discovery.stats.stoppedReason
                     )
@@ -395,7 +401,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             println(
                 "marketDiscoveryAttempt attempt=$discoveryAttempt qualified=${discovery.qualifiedMarkets.size} " +
                     "activityPassed=${discovery.activityPassedMarkets.size} selected=${discovered.size} " +
-                    "reasons=$selectionReasons stopped=${discovery.stats.stoppedReason}"
+                    "activityRejections=$activityRejectionReasons reasons=$selectionReasons " +
+                    "stopped=${discovery.stats.stoppedReason}"
             )
             if (discovered.isNotEmpty()) break
             val now = System.currentTimeMillis()
