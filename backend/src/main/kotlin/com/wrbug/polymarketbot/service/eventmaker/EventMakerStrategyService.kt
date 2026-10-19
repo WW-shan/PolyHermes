@@ -4,10 +4,12 @@ import com.wrbug.polymarketbot.research.livepaper.LiveFeedEvent
 import com.wrbug.polymarketbot.research.livepaper.LivePaperDataClient
 import com.wrbug.polymarketbot.research.livepaper.LivePaperWsClient
 import com.wrbug.polymarketbot.research.livepaper.MarketBook
+import com.wrbug.polymarketbot.util.ProxyConfigProvider
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -15,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
@@ -32,6 +35,12 @@ class EventMakerStrategyService(
     private val shadowExecutionPort: EventMakerShadowExecutionPort,
     private val stateStore: EventMakerStateStore
 ) {
+    /**
+     * Test seam: the run job owns its data client, so tests inject a factory to
+     * point the client at a local fixture server.
+     */
+    internal var dataClientFactory: (String?) -> LivePaperDataClient = { LivePaperDataClient(it) }
+
     private val logger = LoggerFactory.getLogger(EventMakerStrategyService::class.java)
     private val lock = Any()
     private val generation = AtomicLong(0)
@@ -101,7 +110,8 @@ class EventMakerStrategyService(
         val runId = generation.incrementAndGet()
         val scope = CoroutineScope(Job() + Dispatchers.IO)
         val channel = Channel<LiveFeedEvent>(Channel.UNLIMITED)
-        val client = LivePaperDataClient(proxyUrl.takeIf { it.isNotBlank() })
+        val runProxy = effectiveProxyUrl()
+        val client = dataClientFactory(runProxy)
         runScope = scope
         dataClient = client
         feedChannel = channel
@@ -126,8 +136,8 @@ class EventMakerStrategyService(
         runJob = scope.launch {
             try {
                 when (config.mode) {
-                    EventMakerMode.SHADOW -> runShadow(config, client, channel, runId)
-                    EventMakerMode.LIVE -> runLive(config, client, channel, runId)
+                    EventMakerMode.SHADOW -> runShadow(config, client, channel, runId, runProxy)
+                    EventMakerMode.LIVE -> runLive(config, client, channel, runId, runProxy)
                 }
             } catch (e: Exception) {
                 if (runId == generation.get()) {
@@ -146,10 +156,25 @@ class EventMakerStrategyService(
     fun stop(): EventMakerStatus = synchronized(lock) {
         stopping = true
         generation.incrementAndGet()
-        runBlocking { stateMutex.withLock { } }
+        // Abort in-flight blocking HTTP calls first. Otherwise a discovery or
+        // trade poll that is stuck in a 60-second OkHttp call keeps the run job
+        // alive and delays the cancel-all that one-click stop promises.
+        wsClient?.close()
+        dataClient?.close()
+        // Cancel every child (feed loop, trade poll, live reconcile tick) so a
+        // blocked network call is interrupted, then wait for the run job to
+        // finish its NonCancellable cancel-all/persist cleanup.
+        runScope?.cancel()
         val job = runJob
         runBlocking { job?.cancelAndJoin() }
         runJob = null
+        // A run job cancelled between preparing markets and entering its own
+        // try/finally can still have installed a WS client; close it now.
+        wsClient?.close()
+        wsClient = null
+        dataClient?.close()
+        dataClient = null
+        runBlocking { stateMutex.withLock { } }
 
         val engine = currentEngine
         val states = currentLiveStates
@@ -173,10 +198,6 @@ class EventMakerStrategyService(
         currentEngine = null
         currentLiveStates = emptyList()
         liveAccountId = null
-        wsClient?.close()
-        wsClient = null
-        dataClient?.close()
-        dataClient = null
         feedChannel?.close()
         feedChannel = null
         runScope?.cancel()
@@ -192,11 +213,25 @@ class EventMakerStrategyService(
 
     fun currentStatus(): EventMakerStatus = status
 
+    /**
+     * Explicit `event-maker.proxy-url` wins; otherwise fall back to the system
+     * proxy saved in the database so the REST path behaves like the CLI path.
+     */
+    private fun effectiveProxyUrl(): String? {
+        proxyUrl.takeIf { it.isNotBlank() }?.let { return it }
+        val config = ProxyConfigProvider.getProxyConfig() ?: return null
+        if (!config.enabled || config.type != "HTTP") return null
+        val host = config.host?.takeIf { it.isNotBlank() } ?: return null
+        val port = config.port ?: return null
+        return "http://$host:$port"
+    }
+
     private suspend fun runShadow(
         config: EventMakerConfig,
         client: LivePaperDataClient,
         channel: Channel<LiveFeedEvent>,
-        runId: Long
+        runId: Long,
+        proxy: String?
     ) {
         val prepared = prepareMarkets(config, client)
         val discovered = prepared.markets
@@ -210,7 +245,7 @@ class EventMakerStrategyService(
         var trades = 0L
         var bookUpdates = 0L
         val ws = LivePaperWsClient(
-            proxyUrl = proxyUrl.takeIf { it.isNotBlank() },
+            proxyUrl = proxy,
             tokenToCondition = discovered.flatMap { m -> m.tokenIds.map { it to m.conditionId } }.toMap(),
             onEvent = { channel.trySend(it) },
             onStatus = { logger.info("Event maker shadow WS: $it") }
@@ -267,9 +302,11 @@ class EventMakerStrategyService(
             }
         } finally {
             pollJob?.cancel()
-            ws.close()
-            client.close()
-            if (runId == generation.get()) status = status.copy(running = false, stoppedAt = System.currentTimeMillis())
+            withContext(NonCancellable) {
+                ws.close()
+                client.close()
+                if (runId == generation.get()) status = status.copy(running = false, stoppedAt = System.currentTimeMillis())
+            }
         }
     }
 
@@ -277,7 +314,8 @@ class EventMakerStrategyService(
         config: EventMakerConfig,
         client: LivePaperDataClient,
         channel: Channel<LiveFeedEvent>,
-        runId: Long
+        runId: Long,
+        proxy: String?
     ) {
         val accountId = config.accountId ?: throw IllegalStateException("live_account_required")
         val persisted = stateStore.load()
@@ -319,7 +357,7 @@ class EventMakerStrategyService(
         var trades = 0L
         var bookUpdates = 0L
         val ws = LivePaperWsClient(
-            proxyUrl = proxyUrl.takeIf { it.isNotBlank() },
+            proxyUrl = proxy,
             tokenToCondition = discovered.flatMap { m -> m.tokenIds.map { it to m.conditionId } }.toMap(),
             onEvent = { channel.trySend(it) },
             onStatus = { logger.info("Event maker live WS: $it") }
@@ -395,20 +433,24 @@ class EventMakerStrategyService(
         } finally {
             pollJob?.cancel()
             reconcileJob?.cancel()
-            try {
-                stateMutex.withLock {
-                    val cleanup = engine.cancelAll(states, accountId)
-                    applyEngineResult(cleanup)
-                    updateStatus(states, books, trades, bookUpdates)
-                    persistLive(status.startedAt, accountId, states)
+            // Cleanup must survive cancellation: a cancelled run still has to
+            // cancel every live order and persist the reconciled state.
+            withContext(NonCancellable) {
+                try {
+                    stateMutex.withLock {
+                        val cleanup = engine.cancelAll(states, accountId)
+                        applyEngineResult(cleanup)
+                        updateStatus(states, books, trades, bookUpdates)
+                        persistLive(status.startedAt, accountId, states)
+                    }
+                } catch (e: Exception) {
+                    logger.error("Failed to cancel and persist live event-maker state during shutdown", e)
+                    status = status.copy(lastError = "shutdown_state_persist_failed:${e.message}")
+                } finally {
+                    ws.close()
+                    client.close()
+                    if (runId == generation.get()) status = status.copy(running = false, stoppedAt = System.currentTimeMillis())
                 }
-            } catch (e: Exception) {
-                logger.error("Failed to cancel and persist live event-maker state during shutdown", e)
-                status = status.copy(lastError = "shutdown_state_persist_failed:${e.message}")
-            } finally {
-                ws.close()
-                client.close()
-                if (runId == generation.get()) status = status.copy(running = false, stoppedAt = System.currentTimeMillis())
             }
         }
     }

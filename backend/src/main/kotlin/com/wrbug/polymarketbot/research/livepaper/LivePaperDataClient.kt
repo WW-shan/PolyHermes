@@ -6,6 +6,7 @@ import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -85,6 +86,8 @@ class LivePaperDataClient(
     private val clobBaseUrl: String = "https://clob.polymarket.com"
 ) {
     private val gson = Gson()
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val inFlightCalls: MutableSet<Call> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -460,26 +463,43 @@ class LivePaperDataClient(
     }
 
     private fun executeGet(url: HttpUrl): String {
+        if (closed.get()) throw IllegalStateException("live_paper_data_client_closed")
         var lastError: Exception? = null
         repeat(4) { attempt ->
+            if (closed.get()) throw IllegalStateException("live_paper_data_client_closed", lastError)
             try {
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", "PolyHermes-LivePaper/1.0")
                     .build()
-                http.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) return response.body?.string() ?: ""
-                    lastError = IllegalStateException("HTTP ${response.code} for $url")
+                val call = http.newCall(request)
+                inFlightCalls += call
+                try {
+                    call.execute().use { response ->
+                        if (response.isSuccessful) return response.body?.string() ?: ""
+                        lastError = IllegalStateException("HTTP ${response.code} for $url")
+                    }
+                } finally {
+                    inFlightCalls -= call
                 }
             } catch (e: Exception) {
                 lastError = e
             }
+            if (closed.get()) throw IllegalStateException("live_paper_data_client_closed", lastError)
             if (attempt < 3) Thread.sleep(400L * (attempt + 1))
         }
         throw lastError ?: IllegalStateException("request failed: $url")
     }
 
+    /**
+     * Aborts in-flight blocking calls and makes the client unusable.
+     * This lets stop() return promptly instead of waiting for a 60-second
+     * discovery call to time out. Safe to call more than once.
+     */
     fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        inFlightCalls.forEach { call -> runCatching { call.cancel() } }
+        inFlightCalls.clear()
         http.dispatcher.executorService.shutdownNow()
         http.connectionPool.evictAll()
     }
