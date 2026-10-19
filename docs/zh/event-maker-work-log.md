@@ -740,3 +740,21 @@
 - 全量测试：100 suites / 483 tests / 0 failures / 0 errors / 2 skipped。
 - 提交并推送：`a3a3b47 fix: flush due markouts at shadow shutdown and report dropped markouts`（`13daf9c..a3a3b47 main -> main`）。
 - 两臂已用含该修复的代码重启：主臂 Java PID `17176`（wrapper 22444）；实验臂 Java PID `25992`（wrapper 7188）。重启前两臂各 2 轮、无 fill、无错误。
+
+### 13:0x-13:5x 结算窗口保真度修复与 7 天窗口回测
+
+- 缺陷：回测固定"结算前 24 小时"交易窗口，而 Shadow 只有 `minRemainingMinutes=120` 下限、无上限。把发现窗口对齐到 24 小时后，严格条件下合格市场数为 **0**（当前 ≥100k 活跃市场最近也要 95 小时结算）——24 小时窗口在真实盘口里结构上无法产生样本。
+- 动作 1：`LivePaperDataClient` 新增 `maxRemainingMinutes` 上限参数；`EventMakerConfig`/DTO/CLI/Gradle task 全链路打通；`EventMakerShadowCli` 新增 `--max-remaining-minutes`。
+- 动作 2：`EventMakerBacktestCli` 的 `entryHorizonSeconds` 参数化（`--entry-horizon-seconds` / `-PresearchEntryHorizonSeconds`），并修正此前只改抓取窗口、未改网格配置窗口的 bug。
+- 动作 3：用 7 天窗口重跑完整池（4,189 市场 / 864 配置），结果与 24 小时窗口对比：
+  - 训练期正收益配置 113 → **338**；其中测试期非正 41（36.3%）→ **0（0%）**。
+  - 选中配置 `p0.985-0.995_off1.0_spread2.0_q10.0_c1_r300`：训练 ROI 1.951%、测试 ROI 1.963%、36 回合、0 结算亏损。
+  - 50bps 双边费用后仍 +1.00%（24h 窗口为负）。
+  - Cluster bootstrap 全部/训练/测试/自然月 95% 区间均不含 0。
+- **尾部风险审计（关键，不能只看 ROI）**：`breakEvenLossRate=1.918%`，即 36 回合中出现 1 次结算归零即抹平全部利润；实际观测 0 次，但按 rule-of-three，n=36 时亏损率 95% 上界约 8.33%，**远高于盈亏平衡线**。0 次亏损是"没看到"，不是"已证明不会发生"。
+- 价格带风险画像：0.985-0.995 的 246 个正收益配置全部零结算亏损；0.97-0.99 的 92 个全部带结算亏损。属风险画像差异，不是收益差异。
+- 结论：7 天窗口在方向上优于 24 小时窗口，**但仍不足以支持真实资金**；Shadow 窗口放宽到 7 天有回测依据，价格带/活动门槛/价差/队列/成交因子/post-only 约束全部未变。
+- 报告：`docs/zh/event-maker-horizon-7d-backtest-2026-10-19.md`。
+- 全量测试：100 suites / 484 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`e5af609`（发现窗口上限）、`8b4303e`（回测窗口参数化 + 7 天研究）。
+- 两臂已用 `--max-remaining-minutes 10080` 重启：主臂 Java PID `25008`（wrapper 15040）；实验臂 Java PID `17756`（wrapper 17580）。首轮 qualified=1（此前 24h 上限下为 0）。
