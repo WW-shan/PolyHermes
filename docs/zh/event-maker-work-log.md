@@ -788,3 +788,14 @@
 - 当前 Shadow 配置 `p0.97-0.99_off0.5_spread2.0_q1.0_c3_r300`（side-aware 7d）：97 成交、107 回合、5 次结算其中 1 次亏损、训练 +0.23%、测试 +1.98%、回撤 100、`breakEvenLossRate=1.95%`。
 - 提交并推送：`6557968 fix: make backtest fill model taker-side aware to match live engine`。
 - 说明：两臂在修复期间已停止（主臂 60 轮无活动通过），修复后需用新代码重启。
+
+### 15:0x-15:2x 活动门槛 favorite 作用域修复
+
+- 缺陷：活动门槛（30m/2h 成交笔数、成交额、买卖各边）在 `getRecentTrades(market)` 上统计，而该方法返回**两个 outcome** 的成交。策略只挂 favorite token，因此非 favorite 的成交被错误计入可交易流动性。
+- 实证：以当前唯一合格市场为例，2 小时窗口内 SELL 成交**全部在非 favorite outcome** 上（oi=1），favorite（oi=0）只有 BUY。门槛却把非 favorite 的 SELL 当成 favorite 的卖方流动性。
+- 修复：活动统计前先按 `favoriteTokenId` 过滤，只统计真正可撮合的那一侧 token。
+- 新增测试：`activity gate only counts prints on the favorite token`（非 favorite 的 10 笔成交不能通过门槛）、`activity gate counts favorite token prints`（favorite 上 3 笔含双边可通过）。
+- 全量测试：100 suites / 488 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`194baf0 fix: scope activity gate to the quoted favorite token`（`2f718ae..194baf0 main -> main`）。
+- 两臂已重启：主臂 Java PID `2424`（wrapper 16648）；实验臂 Java PID `21272`（wrapper 24584）。
+- 行为变化观察：首轮拒绝原因由 `recent_trades_30m_below_min` 变为 `recent_notional_30m_below_min`，说明门槛已按 favorite token 重新评估（此前被非 favorite 成交抬高）。
