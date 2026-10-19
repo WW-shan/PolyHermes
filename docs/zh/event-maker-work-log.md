@@ -899,6 +899,7 @@
 验证记录：
 
 - 全量：`100 suites / 513 tests / 0 failures / 0 errors / 2 skipped`。
+- 代码提交：`05277a3 fix: harden live CLOB execution and order recovery`；文档提交：`37474ec docs: record live CLOB execution audit`；已推送 `1c9664c..37474ec main -> main`。
 - Spring 冒烟：PID `10360`，`/api/system/health=200`；REST `SHADOW start → status → stop` 全链路通过。
 - 冒烟市场：`US x Iran ceasefire continues through October 22?`；日志出现 `BUY 0.95 shares=1.05` 的 Shadow 报价；`stop` 实测 `95ms`，无错误。
 - 两臂已用本轮代码重启：主臂 Java PID `25924`（wrapper `20468`，spread=2）；实验臂 Java PID `25556`（wrapper `22844`，spread=1）。均处于严格条件等待，输出目录已更新 `watch-process.json`。

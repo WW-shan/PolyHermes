@@ -363,6 +363,7 @@ cd D:\Project\PolyHermes\backend
 | LIVE-A12 | 持久化状态大小写 | 已完成 | 统一状态校验；单测 |
 
 - 全量：`100 suites / 513 tests / 0 failures / 0 errors / 2 skipped`。
+- 提交：`05277a3`（代码）、`37474ec`（文档），已推送。
 - Spring REST 冒烟：PID `10360`，`/api/system/health=200`；SHADOW `start → status → stop` 通过；`stop=95ms`。
 - 当前两臂：主臂 Java PID `25924`（wrapper `20468`，spread=2）；实验臂 Java PID `25556`（wrapper `22844`，spread=1）。两臂均用新代码等待严格条件市场，输出目录保持不变。
 - 运行期间仍禁止编译/测试；轮询使用 `.\scripts\check-event-maker-watch.ps1`。
