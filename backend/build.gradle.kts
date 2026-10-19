@@ -109,6 +109,10 @@ tasks.register<JavaExec>("eventMakerBacktest") {
     argsList += listOf("--from", providers.gradleProperty("researchFrom").orNull ?: "2024-01-01")
     argsList += listOf("--to", providers.gradleProperty("researchTo").orNull ?: "2026-10-01")
     argsList += listOf("--concurrency", providers.gradleProperty("researchConcurrency").orNull ?: "6")
+    argsList += listOf(
+        "--entry-horizon-seconds",
+        providers.gradleProperty("researchEntryHorizonSeconds").orNull ?: "86400"
+    )
     argsList += listOf("--output", providers.gradleProperty("researchOutput").orNull ?: "build/research/event-maker-backtest")
     args(argsList)
 }

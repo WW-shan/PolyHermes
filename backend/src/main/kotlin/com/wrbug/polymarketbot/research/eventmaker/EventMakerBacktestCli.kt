@@ -18,7 +18,10 @@ import java.util.Locale
 fun main(args: Array<String>) {
     val options = CliOptions.parse(args)
     println("Event-maker research backtest")
-    println("from=${options.from} to=${options.to} minVolume=${options.minVolume} maxMarkets=${options.maxMarkets}")
+    println(
+        "from=${options.from} to=${options.to} minVolume=${options.minVolume} " +
+            "maxMarkets=${options.maxMarkets} entryHorizonSeconds=${options.entryHorizonSeconds}"
+    )
     if (options.proxy != null) println("proxy=${options.proxy}")
 
     val markets = runBlocking {
@@ -31,13 +34,13 @@ fun main(args: Array<String>) {
             toDate = options.to,
             minVolume = options.minVolume,
             maxMarkets = options.maxMarkets,
-            entryHorizonSeconds = 86_400L
+            entryHorizonSeconds = options.entryHorizonSeconds
         )
     }
     require(markets.isNotEmpty()) { "No eligible markets returned" }
 
     val engine = EventMakerBacktestEngine()
-    val configs = buildGrid()
+    val configs = buildGrid(options.entryHorizonSeconds)
     println("configs=${configs.size}; simulating ${markets.size} markets")
     val summaries = configs.map { engine.run(markets, it).first }
     writeSummaryCsv(options.output.resolveSibling(options.output.fileName.toString() + "-summary.csv"), summaries)
@@ -100,7 +103,7 @@ fun main(args: Array<String>) {
         .forEach { printSummary("robust", it) }
 }
 
-private fun buildGrid(): List<EventMakerConfig> {
+private fun buildGrid(entryHorizonSeconds: Long): List<EventMakerConfig> {
     val bands = listOf(
         0.95 to 0.97,
         0.97 to 0.99,
@@ -122,6 +125,7 @@ private fun buildGrid(): List<EventMakerConfig> {
                                 "_r$requote"
                             result += EventMakerConfig(
                                 name = name,
+                                entryHorizonSeconds = entryHorizonSeconds,
                                 minPrice = minPrice,
                                 maxPrice = maxPrice,
                                 entryOffsetCents = offset,
@@ -250,6 +254,7 @@ private data class CliOptions(
     val from: LocalDate,
     val to: LocalDate,
     val concurrency: Int,
+    val entryHorizonSeconds: Long,
     val output: Path
 ) {
     companion object {
@@ -265,6 +270,7 @@ private data class CliOptions(
                 from = LocalDate.parse(option("from") ?: "2024-01-01"),
                 to = LocalDate.parse(option("to") ?: "2026-10-01"),
                 concurrency = option("concurrency")?.toIntOrNull() ?: 6,
+                entryHorizonSeconds = option("entry-horizon-seconds")?.toLongOrNull() ?: 86_400L,
                 output = Paths.get(option("output") ?: "build/research/event-maker-backtest")
             )
         }
