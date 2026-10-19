@@ -410,3 +410,4 @@ cd D:\Project\PolyHermes\backend
 - 推送：`9fd75e5..93e4ccc main -> main`。
 - 内容：数据快照/原子写入、严格抓取、回测最大挂单年龄一致性、8 窗口候选回测、参数邻域、Shadow 参数、全量 530 tests 和运行文档。
 - 提交后 Shadow 继续运行，运行期间不重新编译。
+- 提交后清理：Spring 冒烟 PID 24064 已停止；MySQL 容器 polyhermes-mysql 已停止但未删除，保留数据卷；当前只保留 Shadow wrapper 5600 / Java 8300。

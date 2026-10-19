@@ -1112,3 +1112,4 @@
 - 推送：`9fd75e5..93e4ccc main -> main`。
 - 内容：数据快照/原子写入、严格抓取、回测最大挂单年龄一致性、8 窗口候选回测、参数邻域、Shadow 参数、全量 530 tests 和运行文档。
 - 提交后 Shadow 继续运行，运行期间不重新编译。
+- 提交后清理：停止 Spring 冒烟实例 PID 24064；停止 Docker 容器 polyhermes-mysql（保留容器和数据，可随时 docker start）。当前仅保留正式 Shadow。
