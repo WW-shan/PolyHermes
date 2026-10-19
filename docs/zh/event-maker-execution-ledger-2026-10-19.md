@@ -29,7 +29,7 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | v6 已三次挂单、三次 requote 撤单；当前 FLAT；0 fill |
+| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | v6 已六次挂单、六次 requote 撤单；当前 FLAT；0 fill |
 | DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 已完成 | keyset 分页、价格带预筛、候选诊断、5 个测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
@@ -42,7 +42,7 @@
 | SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 475 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 正式候选 Shadow 长测 | v6 运行中 | shadow-1 0.972/25.72；shadow-2 0.971/25.74；shadow-3 0.972/25.72；0 fill |
+| OBS-4 | 正式候选 Shadow 长测 | v6 运行中 | shadow-1..shadow-6 共 6 次挂单/6 次 requote 撤单；最后 shadow-6 0.970/25.77 q485.03，0 fill |
 | RISK-DAY-1 | 日亏损锚点跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；103 suites / 538 tests 通过 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
@@ -50,7 +50,7 @@
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| 正式候选 Shadow v6 | 1252 / 22320 | 00:53 | 运行至约 12:53 | `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` | 三次挂单/三次 requote 撤单；当前 FLAT、0 fill；日志无异常 |
+| 正式候选 Shadow v6 | 1252 / 22320 | 00:53 | 运行至约 12:53 | `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` | 六次挂单/六次 requote 撤单；当前 FLAT、0 fill；日志无异常 |
 | 实验臂 spread1 v5 | 11300 / 23668 | 00:34 | 00:50 主动中止 | `backend/build/research/event-maker-shadow-experiment-spread1-v5-20261020/` | shadow-1 BUY 0.972 / 25.72，5s 后 adverse_flow 撤销；0 fill |
 | 正式候选 Shadow v5 | 3076 / 23220 | 00:21 | 00:50 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v5-20261020/` | 第17轮 selected=1；bid0.970/ask0.975；flow guard 阻止；0 挂单 |
 | 正式候选 Shadow v4 | 21352 / 17312 | 00:03 | 00:20 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v4-20261020/` | 11 轮 0 选中；清理边界修复后停止 |
@@ -518,3 +518,13 @@ cd D:\Project\PolyHermes\backend
 - `shadow-3` BUY 0.972 / 25.72 因 requote 撤销。
 - 当前 FLAT、activeOrders=0、0 fill、0 cycle、0 inventory。
 - 三次挂单、三次 requote 撤单；未放宽任何正式门槛，继续等待真实成交。
+### 03:05 v6 扩展执行证据
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| SHADOW-E9 | 多轮 requote 后持续重挂 | 已完成 | 02:21–02:35 `shadow-4/5/6` 依次挂单并撤销 |
+| SHADOW-E10 | 高队列限制不被放宽 | 已完成 | `shadow-6` queue 485.03；02:56 撤销；0 fill |
+| SHADOW-E11 | 真实 Shadow fill | 未完成 | 累计 6 次挂单、6 次撤单，仍 0 fill |
+
+- 当前 FLAT、activeOrders=0、fills=0、cycles=0、inventory=0。
+- `logIssues=0`、`stderrBytes=0`。

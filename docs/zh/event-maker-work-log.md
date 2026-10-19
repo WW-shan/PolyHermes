@@ -1234,3 +1234,10 @@
 - `shadow-3` BUY 0.972 / 25.72 于 01:26 因 requote 撤销。
 - v6 当前 FLAT，activeOrders=0、0 fill、0 cycle、0 inventory；`logIssues=0`、`stderrBytes=0`。
 - 三次挂单、三次 requote 撤单均为严格门槛下的正常执行链路，不构成成交验收。
+### 03:05 v6 继续重挂，仍无成交
+
+- 02:21 `shadow-4` BUY 0.970 / 25.77，queue 25.0；02:30 requote 撤销。
+- 02:30 `shadow-5` BUY 0.971 / 25.74，queue 20.03；02:35 requote 撤销。
+- 02:35 `shadow-6` BUY 0.970 / 25.77，queue 485.03；02:56 requote 撤销。
+- 累计 6 次挂单、6 次 requote 撤单；当前 FLAT、0 fill、0 cycle、0 inventory。
+- 未放宽正式门槛；`shadow-6` 接近队列上限仍未成交，说明不能用放宽队列替代真实 evidence。
