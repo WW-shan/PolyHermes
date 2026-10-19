@@ -31,6 +31,7 @@ class EventMakerLiveState(
         private set
     val fills: MutableList<EventMakerFillRecord> = mutableListOf()
     val cycles: MutableList<EventMakerCycleRecord> = mutableListOf()
+    val settlements: MutableList<EventMakerSettlementRecord> = mutableListOf()
     private var currentEntryOrderId: String? = null
     private var currentEntryShares: BigDecimal = BigDecimal.ZERO
     private var currentCycleSoldShares: BigDecimal = BigDecimal.ZERO
@@ -42,13 +43,17 @@ class EventMakerLiveState(
     }
 
     fun planBuy(planner: EventMakerQuotePlanner, now: Long): EventMakerQuoteIntent? {
-        if (phase != EventMakerPhase.FLAT || activeOrder != null || completedCycles >= config.maxCyclesPerMarket) return null
+        if (settlements.isNotEmpty() || isExpired(now) || phase != EventMakerPhase.FLAT || activeOrder != null ||
+            completedCycles >= config.maxCyclesPerMarket
+        ) return null
         val book = lastBook ?: return null
         return planner.planBuy(config, book, BigDecimal.valueOf(market.tickSize), now)
     }
 
     fun planSell(planner: EventMakerQuotePlanner, now: Long): EventMakerQuoteIntent? {
-        if (phase != EventMakerPhase.LONG || activeOrder != null || inventoryShares <= BigDecimal.ZERO) return null
+        if (isExpired(now) || phase != EventMakerPhase.LONG || activeOrder != null ||
+            inventoryShares <= BigDecimal.ZERO
+        ) return null
         val book = lastBook ?: return null
         return planner.planSell(
             config = config,
@@ -171,6 +176,98 @@ class EventMakerLiveState(
         reconciledShares = BigDecimal.ZERO
     }
 
+    fun isExpired(now: Long): Boolean = now / 1000L >= market.endTimestamp
+
+    fun pendingRedemption(): EventMakerSettlementRecord? =
+        settlements.lastOrNull { it.redemptionStatus == EventMakerRedemptionStatus.PENDING }
+
+    /**
+     * Books the market payout exactly once. The on-chain redemption is deliberately
+     * separate: callers persist this record before attempting any outside transfer.
+     */
+    fun recordSettlement(
+        exitPrice: BigDecimal,
+        now: Long,
+        outcomeIndex: Int,
+        negativeRisk: Boolean
+    ): EventMakerSettlementRecord {
+        if (activeOrder != null || phase != EventMakerPhase.LONG || inventoryShares <= BigDecimal.ZERO) {
+            throw IllegalStateException("settlement_without_inventory:${market.conditionId}")
+        }
+        if (exitPrice.compareTo(BigDecimal.ZERO) != 0 && exitPrice.compareTo(BigDecimal.ONE) != 0) {
+            throw IllegalStateException("settlement_payoff_invalid:${market.conditionId}:$exitPrice")
+        }
+        if (outcomeIndex !in market.tokenIds.indices || outcomeIndex != market.favoriteIndex) {
+            throw IllegalStateException("settlement_outcome_mismatch:${market.conditionId}:$outcomeIndex")
+        }
+        val entryOrderId = currentEntryOrderId
+            ?: throw IllegalStateException("settlement_entry_order_missing:${market.conditionId}")
+        val settledShares = inventoryShares
+        val pnl = exitPrice.subtract(entryPrice).multiply(settledShares).toDouble()
+        val cycleExitOrderId = "settlement:${market.conditionId}:$now"
+        val settlement = EventMakerSettlementRecord(
+            marketId = market.conditionId,
+            favoriteTokenId = market.favoriteTokenId,
+            entryOrderId = entryOrderId,
+            cycleExitOrderId = cycleExitOrderId,
+            settledAt = now,
+            entryAt = entryAt,
+            entryPrice = entryPrice,
+            exitPrice = exitPrice,
+            shares = settledShares,
+            pnl = pnl,
+            outcomeIndex = outcomeIndex,
+            negativeRisk = negativeRisk,
+            redemptionStatus = EventMakerRedemptionStatus.PENDING
+        )
+        realizedPnl += pnl
+        completedCycles++
+        cycles += EventMakerCycleRecord(
+            marketId = market.conditionId,
+            entryOrderId = entryOrderId,
+            exitOrderId = cycleExitOrderId,
+            entryAt = entryAt,
+            exitAt = now,
+            entryPrice = entryPrice,
+            exitPrice = exitPrice,
+            shares = settledShares,
+            pnl = pnl,
+            holdingSeconds = (now - entryAt).coerceAtLeast(0L),
+            exitType = "SETTLE"
+        )
+        settlements += settlement
+        inventoryShares = BigDecimal.ZERO
+        entryPrice = BigDecimal.ZERO
+        entryAt = 0L
+        currentEntryOrderId = null
+        currentEntryShares = BigDecimal.ZERO
+        currentCycleSoldShares = BigDecimal.ZERO
+        currentCycleRealizedPnl = 0.0
+        phase = EventMakerPhase.FLAT
+        return settlement
+    }
+
+    fun markRedemption(
+        cycleExitOrderId: String,
+        status: EventMakerRedemptionStatus,
+        transactionHash: String?,
+        now: Long
+    ): EventMakerSettlementRecord? {
+        if (status == EventMakerRedemptionStatus.PENDING) {
+            throw IllegalArgumentException("redemption_status_must_be_terminal")
+        }
+        val index = settlements.indexOfFirst { it.cycleExitOrderId == cycleExitOrderId }
+        if (index < 0) throw IllegalStateException("settlement_record_missing:$cycleExitOrderId")
+        val current = settlements[index]
+        if (current.redemptionStatus != EventMakerRedemptionStatus.PENDING) return current
+        val updated = current.copy(
+            redemptionStatus = status,
+            transactionHash = transactionHash?.takeIf { it.isNotBlank() },
+            redemptionUpdatedAt = now
+        )
+        settlements[index] = updated
+        return updated
+    }
     fun toPersisted(): EventMakerPersistedMarket = EventMakerPersistedMarket(
         conditionId = market.conditionId,
         phase = phase.name,
@@ -191,7 +288,12 @@ class EventMakerLiveState(
         currentEntryShares = currentEntryShares.toPlainString(),
         fills = fills.toList(),
         cycles = cycles.toList(),
-        favoriteTokenId = market.favoriteTokenId
+        favoriteTokenId = market.favoriteTokenId,
+        settlements = settlements.toList(),
+        favoriteIndex = market.favoriteIndex,
+        negativeRisk = market.negRisk,
+        endTimestamp = market.endTimestamp,
+        tickSize = market.tickSize
     )
 
     fun restore(persisted: EventMakerPersistedMarket) {
@@ -213,7 +315,8 @@ class EventMakerLiveState(
         val persistedRealized = persisted.realizedPnl.takeIf { it.isFinite() }
             ?: throw IllegalStateException("persisted_realized_pnl_invalid:${market.conditionId}")
         val persistedFills = persisted.fills.orEmpty()
-        val replay = replayLedger(persistedFills)
+        val persistedSettlements = persisted.settlements.orEmpty()
+        val replay = replayLedger(persistedFills, persistedSettlements)
         if (replay.inventoryShares.compareTo(persistedInventory) != 0) {
             throw IllegalStateException(
                 "persisted_inventory_mismatch:${market.conditionId}:${replay.inventoryShares}!=$persistedInventory"
@@ -236,6 +339,12 @@ class EventMakerLiveState(
             )
         }
         persistedCycles.zip(replay.cycles).forEach { (saved, replayed) -> validateCycle(market.conditionId, saved, replayed) }
+        val expectedSettlements = replay.cycles.count { it.exitType == "SETTLE" }
+        if (persistedSettlements.size != expectedSettlements) {
+            throw IllegalStateException(
+                "persisted_settlement_records_mismatch:${market.conditionId}:${persistedSettlements.size}!=$expectedSettlements"
+            )
+        }
         if (persistedInventory > BigDecimal.ZERO) {
             if (persistedEntryPrice.compareTo(replay.entryPrice) != 0) {
                 throw IllegalStateException(
@@ -272,6 +381,8 @@ class EventMakerLiveState(
         fills.addAll(persistedFills)
         cycles.clear()
         cycles.addAll(replay.cycles)
+        settlements.clear()
+        settlements.addAll(persistedSettlements)
 
         activeOrder = restoreActiveOrder(persisted)
         reconciledShares = activeOrder?.matchedShares ?: BigDecimal.ZERO
@@ -299,7 +410,10 @@ class EventMakerLiveState(
         return BigDecimal.valueOf(bid).subtract(entryPrice).multiply(inventoryShares).toDouble()
     }
 
-    private fun replayLedger(sourceFills: List<EventMakerFillRecord>): ReplayLedger {
+    private fun replayLedger(
+        sourceFills: List<EventMakerFillRecord>,
+        sourceSettlements: List<EventMakerSettlementRecord>
+    ): ReplayLedger {
         var replayInventory = BigDecimal.ZERO
         var replayEntryPrice = BigDecimal.ZERO
         var replayEntryAt = 0L
@@ -379,6 +493,59 @@ class EventMakerLiveState(
                 }
             }
         }
+        sourceSettlements.forEach { settlement ->
+            if (settlement.marketId != market.conditionId ||
+                settlement.favoriteTokenId != market.favoriteTokenId ||
+                settlement.entryOrderId.isBlank() || settlement.cycleExitOrderId.isBlank() ||
+                settlement.shares <= BigDecimal.ZERO || settlement.entryAt <= 0L || settlement.settledAt < lastTimestamp
+            ) {
+                throw IllegalStateException("settlement_record_invalid:${market.conditionId}")
+            }
+            if (settlement.exitPrice.compareTo(BigDecimal.ZERO) != 0 &&
+                settlement.exitPrice.compareTo(BigDecimal.ONE) != 0
+            ) {
+                throw IllegalStateException("settlement_exit_price_invalid:${market.conditionId}")
+            }
+            if (settlement.outcomeIndex != market.favoriteIndex) {
+                throw IllegalStateException("settlement_market_mismatch:${market.conditionId}")
+            }
+            if (replayInventory <= BigDecimal.ZERO ||
+                replayCurrentEntryOrderId != settlement.entryOrderId ||
+                replayEntryPrice.compareTo(settlement.entryPrice) != 0 ||
+                settlement.entryAt != replayEntryAt ||
+                settlement.shares.compareTo(replayInventory) != 0
+            ) {
+                throw IllegalStateException("settlement_ledger_mismatch:${market.conditionId}:${settlement.entryOrderId}")
+            }
+            val pnl = settlement.exitPrice.subtract(replayEntryPrice).multiply(settlement.shares).toDouble()
+            if (!closeEnough(settlement.pnl, pnl)) {
+                throw IllegalStateException("settlement_pnl_mismatch:${market.conditionId}:${settlement.entryOrderId}")
+            }
+            replayCycles += EventMakerCycleRecord(
+                marketId = market.conditionId,
+                entryOrderId = settlement.entryOrderId,
+                exitOrderId = settlement.cycleExitOrderId,
+                entryAt = replayEntryAt,
+                exitAt = settlement.settledAt,
+                entryPrice = replayEntryPrice,
+                exitPrice = settlement.exitPrice,
+                shares = settlement.shares,
+                pnl = pnl,
+                holdingSeconds = (settlement.settledAt - replayEntryAt).coerceAtLeast(0L),
+                exitType = "SETTLE"
+            )
+            replayRealized += pnl
+            replayCompletedCycles++
+            lastTimestamp = settlement.settledAt
+            replayInventory = BigDecimal.ZERO
+            replayEntryPrice = BigDecimal.ZERO
+            replayEntryAt = 0L
+            replayCurrentEntryOrderId = null
+            replayCurrentEntryShares = BigDecimal.ZERO
+            replayCurrentCycleSoldShares = BigDecimal.ZERO
+            replayCurrentCyclePnl = 0.0
+        }
+
         return ReplayLedger(
             inventoryShares = replayInventory,
             entryPrice = replayEntryPrice,
@@ -435,7 +602,8 @@ class EventMakerLiveState(
             saved.exitPrice.compareTo(replayed.exitPrice) != 0 ||
             saved.shares.compareTo(replayed.shares) != 0 ||
             !closeEnough(saved.pnl, replayed.pnl) ||
-            saved.holdingSeconds != replayed.holdingSeconds
+            saved.holdingSeconds != replayed.holdingSeconds ||
+            saved.exitType != replayed.exitType
         if (mismatch) throw IllegalStateException("persisted_cycle_mismatch:$conditionId:${saved.entryOrderId}")
     }
 

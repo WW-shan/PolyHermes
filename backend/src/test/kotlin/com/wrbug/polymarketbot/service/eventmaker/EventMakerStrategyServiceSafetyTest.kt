@@ -4,6 +4,7 @@ import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.math.BigDecimal
@@ -159,6 +160,57 @@ class EventMakerStrategyServiceSafetyTest {
         assertFalse(service.currentStatus().running)
     }
 
+    @Test
+    fun `pending redemption position is allowed before startup recovery`() = runTest {
+        val settlement = EventMakerSettlementRecord(
+            marketId = "condition-1",
+            favoriteTokenId = "token",
+            entryOrderId = "buy-1",
+            cycleExitOrderId = "settlement:condition-1:2000",
+            settledAt = 2_000L,
+            entryAt = 1_000L,
+            entryPrice = BigDecimal("0.96"),
+            exitPrice = BigDecimal.ONE,
+            shares = BigDecimal("5.00"),
+            pnl = 0.2,
+            outcomeIndex = 0,
+            negativeRisk = false,
+            redemptionStatus = EventMakerRedemptionStatus.PENDING
+        )
+        val persisted = EventMakerPersistedState(
+            mode = EventMakerMode.LIVE.name,
+            accountId = 1L,
+            startedAt = 1_000L,
+            dailyPnlDay = 20_000L,
+            dailyPnlBaseline = 0.0,
+            markets = listOf(
+                EventMakerPersistedMarket(
+                    conditionId = "condition-1",
+                    phase = "FLAT",
+                    inventoryShares = "0",
+                    entryPrice = "0",
+                    entryAt = 0L,
+                    realizedPnl = 0.2,
+                    completedCycles = 1,
+                    activeOrderId = null,
+                    activeOrderSide = null,
+                    activeOrderPrice = null,
+                    activeOrderOriginalShares = null,
+                    activeOrderMatchedShares = null,
+                    activeOrderStatus = null,
+                    currentEntryOrderId = null,
+                    currentEntryShares = "0",
+                    fills = emptyList(),
+                    cycles = emptyList(),
+                    favoriteTokenId = "token",
+                    settlements = listOf(settlement)
+                )
+            )
+        )
+        executionPort.positionSizes = mapOf("condition-1" to BigDecimal("5.00"))
+
+        service().ensureNoUnmanagedPositions(1L, persisted)
+    }
     @Test
     fun `realized pnl baseline carries prior profit without double counting restored markets`() {
         val service = service()

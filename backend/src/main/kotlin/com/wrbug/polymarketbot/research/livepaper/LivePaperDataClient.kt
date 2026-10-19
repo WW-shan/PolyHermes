@@ -471,7 +471,8 @@ class LivePaperDataClient(
             tickSize = raw.orderPriceMinTickSize?.takeIf { it > 0.0 } ?: 0.001,
             outcomes = outcomes,
             tokenIds = tokens,
-            favoriteIndex = favoriteIndex
+            favoriteIndex = favoriteIndex,
+            negRisk = raw.negRisk ?: raw.negRiskOther ?: false
         )
     }
 
@@ -564,6 +565,7 @@ class LivePaperDataClient(
         val outcomes: JsonElement?,
         val clobTokenIds: JsonElement?,
         val negRisk: Boolean?,
+        val negRiskOther: Boolean?,
         val enableOrderBook: Boolean?,
         val orderPriceMinTickSize: Double?
     )

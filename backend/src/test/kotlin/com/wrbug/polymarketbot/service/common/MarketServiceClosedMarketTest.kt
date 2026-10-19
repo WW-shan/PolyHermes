@@ -43,6 +43,7 @@ private class FakeGammaApi : PolymarketGammaApi by Mockito.mock(PolymarketGammaA
                 question = "BTC Up or Down 5m",
                 closed = true,
                 endDate = "2026-09-20T12:05:00Z",
+                outcomePrices = """["1","0"]""",
                 feesEnabled = true,
                 negRisk = true,
                 feeSchedule = GammaFeeScheduleResponse(rate = BigDecimal("0.07"))
@@ -114,6 +115,22 @@ class MarketServiceClosedMarketTest {
         assertEquals(true, result.getOrNull())
     }
 
+    @Test
+    fun `market resolution exposes terminal binary winner`() = runBlocking {
+        val result = service.getMarketResolution(CLOSED_ID).getOrThrow()
+
+        assertEquals(true, result.closed)
+        assertEquals(0, result.resolvedOutcomeIndex)
+        assertEquals(listOf(BigDecimal.ONE, BigDecimal.ZERO), result.outcomePrices)
+    }
+
+    @Test
+    fun `open market is not treated as resolved`() = runBlocking {
+        val result = service.getMarketResolution(OPEN_ID).getOrThrow()
+
+        assertEquals(false, result.closed)
+        assertNull(result.resolvedOutcomeIndex)
+    }
     @Test
     fun `unknown fee rate is reported as null`() {
         store["0xnofee"] = Market(id = 2L, marketId = "0xnofee", title = "x", takerFeeRate = null)

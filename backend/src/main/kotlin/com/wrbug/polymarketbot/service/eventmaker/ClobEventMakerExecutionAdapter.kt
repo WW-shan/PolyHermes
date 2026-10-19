@@ -2,13 +2,17 @@ package com.wrbug.polymarketbot.service.eventmaker
 
 import com.wrbug.polymarketbot.api.CancelOrderPayload
 import com.wrbug.polymarketbot.api.PolymarketClobApi
+import com.wrbug.polymarketbot.dto.AccountRedeemPositionItem
+import com.wrbug.polymarketbot.dto.PositionRedeemRequest
 import com.wrbug.polymarketbot.entity.Account
 import com.wrbug.polymarketbot.repository.AccountRepository
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import com.wrbug.polymarketbot.service.accounts.AccountService
 import com.wrbug.polymarketbot.service.common.BlockchainService
+import com.wrbug.polymarketbot.service.common.MarketService
 import com.wrbug.polymarketbot.service.common.PolymarketClobService
 import com.wrbug.polymarketbot.service.copytrading.orders.OrderSigningService
+import com.wrbug.polymarketbot.service.system.RelayClientService
 import com.wrbug.polymarketbot.util.CryptoUtils
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import org.slf4j.LoggerFactory
@@ -29,7 +33,9 @@ class ClobEventMakerExecutionAdapter(
     private val retrofitFactory: RetrofitFactory,
     private val orderSigningService: OrderSigningService,
     private val clobService: PolymarketClobService,
-    private val blockchainService: BlockchainService
+    private val blockchainService: BlockchainService,
+    private val marketService: MarketService,
+    private val relayClientService: RelayClientService
 ) : EventMakerExecutionPort {
 
     private val logger = LoggerFactory.getLogger(ClobEventMakerExecutionAdapter::class.java)
@@ -39,6 +45,9 @@ class ClobEventMakerExecutionAdapter(
             ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
         if (context.account.proxyAddress.isBlank()) {
             return Result.failure(IllegalStateException("proxy_wallet_missing"))
+        }
+        if (!relayClientService.isBuilderApiKeyConfigured()) {
+            return Result.failure(IllegalStateException("settlement_builder_api_key_missing"))
         }
         return blockchainService.checkProxyDeployed(context.account.proxyAddress).fold(
             onSuccess = { deployed ->
@@ -106,6 +115,130 @@ class ClobEventMakerExecutionAdapter(
         return Result.success(openPositions)
     }
 
+    override suspend fun getSettlementSnapshot(
+        accountId: Long,
+        market: LivePaperMarket
+    ): Result<EventMakerSettlementSnapshot> {
+        val context = accountContext(accountId)
+            ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
+        val resolution = marketService.getMarketResolution(market.conditionId).getOrElse {
+            return Result.failure(IllegalStateException("settlement_resolution_unavailable:${it.message}", it))
+        }
+        if (resolution.resolvedOutcomeIndex == null) {
+            return Result.success(EventMakerSettlementSnapshot(null, null))
+        }
+        val position = settlementPosition(
+            context = context,
+            conditionId = market.conditionId,
+            tokenId = market.favoriteTokenId,
+            expectedOutcomeIndex = market.favoriteIndex,
+            expectedNegRisk = null
+        ).getOrElse { return Result.failure(it) }
+        return Result.success(
+            EventMakerSettlementSnapshot(
+                resolutionOutcomeIndex = resolution.resolvedOutcomeIndex,
+                position = position.takeIf { it.shares > BigDecimal.ZERO }
+            )
+        )
+    }
+
+    override suspend fun getSettlementPosition(
+        accountId: Long,
+        settlement: EventMakerSettlementRecord
+    ): Result<EventMakerSettlementPosition> {
+        val context = accountContext(accountId)
+            ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
+        return settlementPosition(
+            context = context,
+            conditionId = settlement.marketId,
+            tokenId = settlement.favoriteTokenId,
+            expectedOutcomeIndex = settlement.outcomeIndex,
+            expectedNegRisk = settlement.negativeRisk
+        )
+    }
+
+    override suspend fun redeemSettlement(
+        accountId: Long,
+        settlement: EventMakerSettlementRecord
+    ): Result<String> {
+        accountContext(accountId)
+            ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
+        val request = PositionRedeemRequest(
+            positions = listOf(
+                AccountRedeemPositionItem(
+                    accountId = accountId,
+                    marketId = settlement.marketId,
+                    outcomeIndex = settlement.outcomeIndex
+                )
+            )
+        )
+        return accountService.redeemPositions(request).fold(
+            onSuccess = { response ->
+                val transaction = response.transactions.singleOrNull { it.accountId == accountId }
+                    ?: return Result.failure(IllegalStateException("settlement_redemption_transaction_missing"))
+                if (transaction.transactionHash.isBlank()) {
+                    return Result.failure(IllegalStateException("settlement_redemption_hash_missing"))
+                }
+                Result.success(transaction.transactionHash)
+            },
+            onFailure = { Result.failure(IllegalStateException("settlement_redemption_failed:${it.message}", it)) }
+        )
+    }
+
+    private suspend fun settlementPosition(
+        context: AccountContext,
+        conditionId: String,
+        tokenId: String,
+        expectedOutcomeIndex: Int,
+        expectedNegRisk: Boolean?
+    ): Result<EventMakerSettlementPosition> {
+        val positions = blockchainService.getPositions(context.account.proxyAddress)
+            .getOrElse { return Result.failure(IllegalStateException("positions_unavailable:${it.message}", it)) }
+        val matching = positions.filter { position ->
+            position.conditionId.equals(conditionId, ignoreCase = true) &&
+                ((position.size ?: 0.0) > 0.0 || (position.currentValue ?: 0.0) > 0.0)
+        }
+        if (matching.size > 1) {
+            return Result.failure(EventMakerUnknownOrderStateException("multiple_position_assets:$conditionId"))
+        }
+        if (matching.any { it.size == null }) {
+            return Result.failure(EventMakerUnknownOrderStateException("position_size_missing"))
+        }
+        val position = matching.singleOrNull()
+            ?: return Result.success(
+                EventMakerSettlementPosition(
+                    tokenId = tokenId,
+                    shares = BigDecimal.ZERO,
+                    redeemable = false,
+                    outcomeIndex = expectedOutcomeIndex,
+                    negativeRisk = expectedNegRisk ?: false
+                )
+            )
+        if (!position.asset.equals(tokenId, ignoreCase = true)) {
+            return Result.failure(EventMakerUnknownOrderStateException("settlement_token_mismatch:$conditionId"))
+        }
+        val size = position.size
+            ?: return Result.failure(EventMakerUnknownOrderStateException("position_size_missing"))
+        if (size < 0.0) return Result.failure(EventMakerUnknownOrderStateException("position_size_negative"))
+        val outcomeIndex = position.outcomeIndex
+            ?: return Result.failure(EventMakerUnknownOrderStateException("settlement_outcome_missing"))
+        val negativeRisk = position.negativeRisk
+            ?: return Result.failure(EventMakerUnknownOrderStateException("settlement_neg_risk_missing"))
+        if (outcomeIndex != expectedOutcomeIndex || (expectedNegRisk != null && negativeRisk != expectedNegRisk)) {
+            return Result.failure(EventMakerUnknownOrderStateException("settlement_position_market_mismatch:$conditionId"))
+        }
+        val redeemable = position.redeemable
+            ?: return Result.failure(EventMakerUnknownOrderStateException("settlement_redeemable_missing"))
+        return Result.success(
+            EventMakerSettlementPosition(
+                tokenId = tokenId,
+                shares = BigDecimal.valueOf(size),
+                redeemable = redeemable,
+                outcomeIndex = outcomeIndex,
+                negativeRisk = negativeRisk
+            )
+        )
+    }
     override suspend fun place(
         accountId: Long,
         market: LivePaperMarket,

@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import retrofit2.Response
+import java.math.BigDecimal
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
@@ -394,8 +395,42 @@ class MarketService(
     suspend fun getNegRiskByConditionId(conditionId: String): Boolean? {
         return fetchNegRiskByConditionId(conditionId).getOrNull()
     }
+
+    /**
+     * Returns a terminal 0/1 binary resolution when Gamma exposes it. A closed
+     * market without terminal prices is deliberately reported as unresolved.
+     */
+    suspend fun getMarketResolution(conditionId: String): Result<MarketResolutionSnapshot> {
+        if (conditionId.isBlank()) return Result.failure(IllegalArgumentException("conditionId 为空"))
+        return try {
+            val market = queryMarketsByConditionIds(listOf(conditionId))[conditionId]
+                ?: return Result.failure(IllegalStateException("Gamma 未找到市场: conditionId=$conditionId"))
+            val prices = market.outcomePrices.parseStringArray().mapNotNull { it.toBigDecimalOrNull() }
+            val closed = market.closed == true
+            val resolvedOutcomeIndex = prices.takeIf { it.size == 2 && closed }?.let { values ->
+                val ones = values.indices.filter { values[it].compareTo(BigDecimal.ONE) == 0 }
+                val zeros = values.indices.filter { values[it].compareTo(BigDecimal.ZERO) == 0 }
+                ones.singleOrNull().takeIf { ones.size == 1 && zeros.size == 1 }
+            }
+            Result.success(
+                MarketResolutionSnapshot(
+                    closed = closed,
+                    outcomePrices = prices,
+                    resolvedOutcomeIndex = resolvedOutcomeIndex
+                )
+            )
+        } catch (e: Exception) {
+            logger.warn("查询市场结算结果失败: conditionId=$conditionId, error=${e.message}")
+            Result.failure(e)
+        }
+    }
 }
 
+data class MarketResolutionSnapshot(
+    val closed: Boolean,
+    val outcomePrices: List<BigDecimal>,
+    val resolvedOutcomeIndex: Int?
+)
 /**
  * 按 tokenId 查询 Gamma 得到的市场信息（用于补全 trade.market / outcomeIndex）
  */

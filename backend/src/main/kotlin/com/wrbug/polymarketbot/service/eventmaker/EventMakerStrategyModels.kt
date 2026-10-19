@@ -139,7 +139,7 @@ data class EventMakerLiveOrder(
 )
 
 data class EventMakerPersistedState(
-    val version: Int = 3,
+    val version: Int = 4,
     val mode: String,
     val accountId: Long?,
     val startedAt: Long?,
@@ -171,7 +171,13 @@ data class EventMakerPersistedMarket(
     val currentEntryShares: String? = null,
     val fills: List<EventMakerFillRecord>? = null,
     val cycles: List<EventMakerCycleRecord>? = null,
-    val favoriteTokenId: String? = null
+    val favoriteTokenId: String? = null,
+    val settlements: List<EventMakerSettlementRecord>? = null,
+    /** Minimal immutable market metadata used to recover an orphaned settlement after restart. */
+    val favoriteIndex: Int? = null,
+    val negativeRisk: Boolean? = null,
+    val endTimestamp: Long? = null,
+    val tickSize: Double? = null
 )
 
 data class EventMakerStatus(
@@ -211,5 +217,51 @@ data class EventMakerCycleRecord(
     val exitPrice: BigDecimal,
     val shares: BigDecimal,
     val pnl: Double,
-    val holdingSeconds: Long
+    val holdingSeconds: Long,
+    /** SELL for a maker exit, SETTLE for a resolved-market payout. */
+    val exitType: String = "SELL"
 )
+
+enum class EventMakerRedemptionStatus {
+    PENDING,
+    REDEEMED,
+    ALREADY_ABSENT
+}
+
+/**
+ * An immutable settlement ledger entry. The payout is booked before redemption
+ * so a crash can never make an on-chain position disappear without a local
+ * record of its determined value.
+ */
+data class EventMakerSettlementRecord(
+    val marketId: String,
+    val favoriteTokenId: String,
+    val entryOrderId: String,
+    val cycleExitOrderId: String,
+    val settledAt: Long,
+    val entryAt: Long,
+    val entryPrice: BigDecimal,
+    val exitPrice: BigDecimal,
+    val shares: BigDecimal,
+    val pnl: Double,
+    val outcomeIndex: Int,
+    val negativeRisk: Boolean,
+    val redemptionStatus: EventMakerRedemptionStatus,
+    val transactionHash: String? = null,
+    val redemptionUpdatedAt: Long = settledAt
+)
+
+data class EventMakerSettlementPosition(
+    val tokenId: String,
+    val shares: BigDecimal,
+    val redeemable: Boolean,
+    val outcomeIndex: Int? = null,
+    val negativeRisk: Boolean? = null
+)
+
+data class EventMakerSettlementSnapshot(
+    val resolutionOutcomeIndex: Int?,
+    val position: EventMakerSettlementPosition?
+) {
+    val resolved: Boolean get() = resolutionOutcomeIndex != null
+}

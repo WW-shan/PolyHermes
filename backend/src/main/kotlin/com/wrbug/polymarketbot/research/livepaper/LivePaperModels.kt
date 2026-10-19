@@ -13,7 +13,8 @@ data class LivePaperMarket(
     val tickSize: Double,
     val outcomes: List<String>,
     val tokenIds: List<String>,
-    val favoriteIndex: Int
+    val favoriteIndex: Int,
+    val negRisk: Boolean = false
 ) {
     val favoriteTokenId: String get() = tokenIds[favoriteIndex]
 }

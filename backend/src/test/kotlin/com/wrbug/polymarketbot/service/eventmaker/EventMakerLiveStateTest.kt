@@ -4,7 +4,10 @@ import com.wrbug.polymarketbot.research.livepaper.BookLevel
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import com.wrbug.polymarketbot.research.livepaper.MarketBook
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
@@ -198,6 +201,59 @@ class EventMakerLiveStateTest {
         assertEquals(3.5, state.pendingBuyNotional(), 1e-9)
     }
 
+    @Test
+    fun `settlement books a terminal payoff and survives restore`() {
+        val buy = order("buy-1", EventMakerSide.BUY, "0.96", "10.00", "10.00", "FILLED")
+        state.onOrderPlaced(buy)
+        state.reconcile(buy, 1_000)
+
+        val settlement = state.recordSettlement(
+            exitPrice = BigDecimal.ONE,
+            now = 2_000,
+            outcomeIndex = 0,
+            negativeRisk = false
+        )
+        val redeemed = state.markRedemption(
+            cycleExitOrderId = settlement.cycleExitOrderId,
+            status = EventMakerRedemptionStatus.REDEEMED,
+            transactionHash = "0xtx",
+            now = 2_100
+        )
+
+        assertEquals(BigDecimal.ZERO, state.inventoryShares)
+        assertEquals(1, state.completedCycles)
+        assertEquals(0.4, state.realizedPnl, 1e-9)
+        assertEquals("SETTLE", state.cycles.single().exitType)
+        assertEquals(BigDecimal.ONE, state.cycles.single().exitPrice)
+        assertNotNull(redeemed)
+        assertEquals(EventMakerRedemptionStatus.REDEEMED, state.settlements.single().redemptionStatus)
+        state.onBook(MarketBook("token", listOf(BookLevel(0.96, 100.0)), listOf(BookLevel(0.97, 100.0)), 2_200))
+        assertNull(state.planBuy(EventMakerQuotePlanner(), 2_200L))
+
+        val restored = EventMakerLiveState(market(), EventMakerConfig())
+        restored.restore(state.toPersisted())
+
+        assertEquals(BigDecimal.ZERO, restored.inventoryShares)
+        assertEquals(1, restored.completedCycles)
+        assertEquals(0.4, restored.realizedPnl, 1e-9)
+        assertEquals("SETTLE", restored.cycles.single().exitType)
+        assertEquals(EventMakerRedemptionStatus.REDEEMED, restored.settlements.single().redemptionStatus)
+        assertEquals("0xtx", restored.settlements.single().transactionHash)
+    }
+
+    @Test
+    fun `expired market cannot open another buy`() {
+        val expired = EventMakerLiveState(
+            market().copy(endTimestamp = 1L),
+            EventMakerConfig()
+        )
+        expired.onBook(MarketBook("token", listOf(BookLevel(0.96, 100.0)), listOf(BookLevel(0.97, 100.0)), 2_000))
+
+        val intent = expired.planBuy(EventMakerQuotePlanner(), 2_000L)
+
+        assertNull(intent)
+        assertTrue(expired.isExpired(2_000L))
+    }
     private fun order(
         id: String,
         side: EventMakerSide,

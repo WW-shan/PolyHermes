@@ -13,18 +13,24 @@ import com.wrbug.polymarketbot.api.PolymarketClobApi
 import com.wrbug.polymarketbot.api.PositionResponse
 import com.wrbug.polymarketbot.api.SignedOrderObject
 import com.wrbug.polymarketbot.api.TickSizeResponse
+import com.wrbug.polymarketbot.dto.AccountRedeemTransaction
+import com.wrbug.polymarketbot.dto.PositionRedeemRequest
+import com.wrbug.polymarketbot.dto.PositionRedeemResponse
 import com.wrbug.polymarketbot.entity.Account
 import com.wrbug.polymarketbot.repository.AccountRepository
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import com.wrbug.polymarketbot.service.accounts.AccountService
 import com.wrbug.polymarketbot.service.common.BlockchainService
+import com.wrbug.polymarketbot.service.common.MarketService
 import com.wrbug.polymarketbot.service.common.PolymarketClobService
 import com.wrbug.polymarketbot.service.copytrading.orders.OrderSigningService
+import com.wrbug.polymarketbot.service.system.RelayClientService
 import com.wrbug.polymarketbot.util.CryptoUtils
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import kotlinx.coroutines.test.runTest
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
@@ -43,6 +49,8 @@ class ClobEventMakerExecutionAdapterTest {
     private val signing: OrderSigningService = Mockito.mock(OrderSigningService::class.java)
     private val clobService: PolymarketClobService = Mockito.mock(PolymarketClobService::class.java)
     private val blockchainService: BlockchainService = Mockito.mock(BlockchainService::class.java)
+    private val marketService: MarketService = Mockito.mock(MarketService::class.java)
+    private val relayClientService: RelayClientService = Mockito.mock(RelayClientService::class.java)
     private val api: PolymarketClobApi = Mockito.mock(PolymarketClobApi::class.java)
     private val adapter = ClobEventMakerExecutionAdapter(
         accountRepository,
@@ -51,8 +59,22 @@ class ClobEventMakerExecutionAdapterTest {
         retrofitFactory,
         signing,
         clobService,
-        blockchainService
+        blockchainService,
+        marketService,
+        relayClientService
     )
+
+    @Test
+    fun `validate account fails closed when auto redemption has no builder key`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(blockchainService.checkProxyDeployed("0xproxy")).thenReturn(Result.success(true))
+        Mockito.`when`(relayClientService.isBuilderApiKeyConfigured()).thenReturn(false)
+
+        val result = adapter.validateAccount(1L)
+
+        assertTrue(result.isFailure)
+        assertEquals("settlement_builder_api_key_missing", result.exceptionOrNull()?.message)
+    }
 
     @Test
     fun `signing failure is returned as a preflight failure instead of escaping`() = runTest {
@@ -371,6 +393,90 @@ class ClobEventMakerExecutionAdapterTest {
     }
 
     @Test
+    fun `settlement snapshot uses terminal gamma outcome and exact token position`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(marketService.getMarketResolution("condition")).thenReturn(
+            Result.success(
+                com.wrbug.polymarketbot.service.common.MarketResolutionSnapshot(
+                    closed = true,
+                    outcomePrices = listOf(BigDecimal.ONE, BigDecimal.ZERO),
+                    resolvedOutcomeIndex = 0
+                )
+            )
+        )
+        Mockito.`when`(blockchainService.getPositions("0xproxy")).thenReturn(
+            Result.success(
+                listOf(
+                    PositionResponse(
+                        proxyWallet = "0xproxy",
+                        asset = "token",
+                        conditionId = "condition",
+                        size = 10.0,
+                        redeemable = true,
+                        outcomeIndex = 0,
+                        negativeRisk = false,
+                        currentValue = 10.0
+                    )
+                )
+            )
+        )
+
+        val snapshot = adapter.getSettlementSnapshot(1L, market()).getOrThrow()
+
+        assertEquals(0, snapshot.resolutionOutcomeIndex)
+        assertEquals(BigDecimal.valueOf(10.0), snapshot.position?.shares)
+        assertEquals(true, snapshot.position?.redeemable)
+    }
+
+    @Test
+    fun `unresolved market does not read account positions`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(marketService.getMarketResolution("condition")).thenReturn(
+            Result.success(
+                com.wrbug.polymarketbot.service.common.MarketResolutionSnapshot(
+                    closed = false,
+                    outcomePrices = listOf(BigDecimal("0.5"), BigDecimal("0.5")),
+                    resolvedOutcomeIndex = null
+                )
+            )
+        )
+
+        val snapshot = adapter.getSettlementSnapshot(1L, market()).getOrThrow()
+
+        assertNull(snapshot.resolutionOutcomeIndex)
+        assertNull(snapshot.position)
+        Mockito.verifyNoInteractions(blockchainService)
+    }
+
+    @Test
+    fun `settlement redemption returns confirmed transaction hash`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(accountService.redeemPositions(Mockito.any(PositionRedeemRequest::class.java) ?: PositionRedeemRequest(emptyList()))).thenReturn(
+            Result.success(
+                PositionRedeemResponse(
+                    transactions = listOf(
+                        AccountRedeemTransaction(
+                            accountId = 1L,
+                            accountName = "account",
+                            transactionHash = "0xtx",
+                            positions = emptyList()
+                        )
+                    ),
+                    totalRedeemedValue = "10",
+                    createdAt = 2_000L
+                )
+            )
+        )
+
+        val hash = adapter.redeemSettlement(1L, settlementRecord()).getOrThrow()
+
+        assertEquals("0xtx", hash)
+        val captor = ArgumentCaptor.forClass(PositionRedeemRequest::class.java)
+        Mockito.verify(accountService).redeemPositions(captorCaptureRedeem(captor))
+        assertEquals("condition", captor.value.positions.single().marketId)
+        assertEquals(0, captor.value.positions.single().outcomeIndex)
+    }
+    @Test
     fun `live adapter is the primary execution port bean`() {
         assertTrue(
             ClobEventMakerExecutionAdapter::class.java.isAnnotationPresent(
@@ -383,6 +489,10 @@ class ClobEventMakerExecutionAdapterTest {
         return NewOrderRequest(order = signedOrder(), owner = "", orderType = "GTC")
     }
 
+    private fun captorCaptureRedeem(captor: ArgumentCaptor<PositionRedeemRequest>): PositionRedeemRequest {
+        captor.capture()
+        return PositionRedeemRequest(emptyList())
+    }
     private fun captorCapture(captor: ArgumentCaptor<NewOrderRequest>): NewOrderRequest {
         captor.capture()
         return NewOrderRequest(order = signedOrder(), owner = "", orderType = "GTC")
@@ -447,6 +557,21 @@ class ClobEventMakerExecutionAdapterTest {
         favoriteIndex = 0
     )
 
+    private fun settlementRecord() = EventMakerSettlementRecord(
+        marketId = "condition",
+        favoriteTokenId = "token",
+        entryOrderId = "buy-1",
+        cycleExitOrderId = "settlement:condition:2000",
+        settledAt = 2_000L,
+        entryAt = 1_000L,
+        entryPrice = BigDecimal("0.96"),
+        exitPrice = BigDecimal.ONE,
+        shares = BigDecimal("10.00"),
+        pnl = 0.4,
+        outcomeIndex = 0,
+        negativeRisk = false,
+        redemptionStatus = EventMakerRedemptionStatus.PENDING
+    )
     private fun signedOrder() = SignedOrderObject(
         salt = 1L,
         maker = "0xproxy",

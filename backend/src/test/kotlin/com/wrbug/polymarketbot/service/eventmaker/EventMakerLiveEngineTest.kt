@@ -496,6 +496,98 @@ class EventMakerLiveEngineTest {
         assertEquals(0, port.getOrderCount)
     }
 
+    @Test
+    fun `resolved market books settlement then confirms redemption`() = runTest {
+        val start = 1_800_000_000_000L
+        val liveMarket = market()
+        val state = EventMakerLiveState(liveMarket, config)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, start))
+
+        val buy = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, start).placed.single().order
+        port.fill(buy.orderId, buy.originalShares)
+        engine.reconcile(listOf(state), 7L, start + 1)
+        assertEquals(EventMakerPhase.LONG, state.phase)
+
+        port.settlementSnapshot = EventMakerSettlementSnapshot(
+            resolutionOutcomeIndex = 0,
+            position = EventMakerSettlementPosition(
+                tokenId = liveMarket.favoriteTokenId,
+                shares = state.inventoryShares,
+                redeemable = true,
+                outcomeIndex = 0,
+                negativeRisk = false
+            )
+        )
+        val settlementResult = engine.settleResolved(listOf(state), 7L, start + 2_000L)
+
+        assertEquals(1, settlementResult.settlements.size)
+        assertEquals(BigDecimal.ZERO, state.inventoryShares)
+        assertEquals(1, state.completedCycles)
+        assertEquals("SETTLE", state.cycles.single().exitType)
+        assertNotNull(state.pendingRedemption())
+
+        port.settlementPosition = EventMakerSettlementPosition(
+            tokenId = liveMarket.favoriteTokenId,
+            shares = buy.originalShares,
+            redeemable = true,
+            outcomeIndex = 0,
+            negativeRisk = false
+        )
+        val redemptionResult = engine.redeemPendingRedemptions(listOf(state), 7L, start + 2_100L)
+
+        assertEquals(1, port.redeemSettlementCount)
+        assertEquals(1, redemptionResult.redemptions.size)
+        assertEquals(EventMakerRedemptionStatus.REDEEMED, state.settlements.single().redemptionStatus)
+        assertEquals("0xtx", state.settlements.single().transactionHash)
+        assertNull(state.pendingRedemption())
+    }
+
+    @Test
+    fun `resolved market with already absent position books payout without redemption`() = runTest {
+        val start = 1_800_000_000_000L
+        val state = EventMakerLiveState(market(), config)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, start))
+        val buy = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, start).placed.single().order
+        port.fill(buy.orderId, buy.originalShares)
+        engine.reconcile(listOf(state), 7L, start + 1)
+
+        port.settlementSnapshot = EventMakerSettlementSnapshot(
+            resolutionOutcomeIndex = 0,
+            position = null
+        )
+        val settlement = engine.settleResolved(listOf(state), 7L, start + 2_000L).settlements.single()
+        port.settlementPosition = EventMakerSettlementPosition(
+            tokenId = "token",
+            shares = BigDecimal.ZERO,
+            redeemable = false,
+            outcomeIndex = 0,
+            negativeRisk = false
+        )
+        engine.redeemPendingRedemptions(listOf(state), 7L, start + 2_100L)
+
+        assertEquals(BigDecimal.ONE, settlement.exitPrice)
+        assertEquals(EventMakerRedemptionStatus.ALREADY_ABSENT, state.settlements.single().redemptionStatus)
+        assertEquals(0, port.redeemSettlementCount)
+    }
+
+    @Test
+    fun `expired market cancels a resting order before settlement`() = runTest {
+        val start = 1_800_000_000_000L
+        val state = EventMakerLiveState(market(endTimestamp = start / 1000L + 1), config)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, start))
+        engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, start)
+
+        val result = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, start + 2_000L)
+
+        assertEquals("market_expired", result.canceled.single().reason)
+        assertNull(state.activeOrder)
+    }
     private fun book(bid: Double, ask: Double, now: Long) = MarketBook(
         tokenId = "token",
         bids = listOf(BookLevel(bid, 100.0)),
@@ -503,12 +595,12 @@ class EventMakerLiveEngineTest {
         updatedAt = now
     )
 
-    private fun market() = LivePaperMarket(
+    private fun market(endTimestamp: Long = Long.MAX_VALUE) = LivePaperMarket(
         conditionId = "condition",
         question = "question",
         tag = "Politics",
         volume24hr = 100_000.0,
-        endTimestamp = Long.MAX_VALUE,
+        endTimestamp = endTimestamp,
         tickSize = 0.01,
         outcomes = listOf("Yes", "No"),
         tokenIds = listOf("token", "other"),
@@ -523,6 +615,10 @@ class EventMakerLiveEngineTest {
         var cancelFailure: Throwable? = null
         var mismatchPlacement: Boolean = false
         var placeStatus: String = "LIVE"
+        var settlementSnapshot: EventMakerSettlementSnapshot? = null
+        var settlementPosition: EventMakerSettlementPosition? = null
+        var redeemSettlementCount: Int = 0
+            private set
         var fillOnCancelShares: BigDecimal? = null
         var cancelCount: Int = 0
             private set
@@ -539,6 +635,27 @@ class EventMakerLiveEngineTest {
         override suspend fun listOpenPositions(accountId: Long): Result<Map<String, BigDecimal>> =
             Result.success(emptyMap())
 
+        override suspend fun getSettlementSnapshot(
+            accountId: Long,
+            market: LivePaperMarket
+        ): Result<EventMakerSettlementSnapshot> =
+            settlementSnapshot?.let { Result.success(it) }
+                ?: Result.failure(IllegalStateException("settlement_snapshot_missing"))
+
+        override suspend fun getSettlementPosition(
+            accountId: Long,
+            settlement: EventMakerSettlementRecord
+        ): Result<EventMakerSettlementPosition> =
+            settlementPosition?.let { Result.success(it) }
+                ?: Result.failure(IllegalStateException("settlement_position_missing"))
+
+        override suspend fun redeemSettlement(
+            accountId: Long,
+            settlement: EventMakerSettlementRecord
+        ): Result<String> {
+            redeemSettlementCount++
+            return Result.success("0xtx")
+        }
         override suspend fun place(
             accountId: Long,
             market: LivePaperMarket,

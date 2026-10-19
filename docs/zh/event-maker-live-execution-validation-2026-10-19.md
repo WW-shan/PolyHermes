@@ -20,8 +20,10 @@
 - 状态文件损坏、版本不支持、账户不匹配、重复 condition、缺失 favorite token 或非法快照会拒绝启动；
 - 启动前比对账户全部活跃订单，发现未登记订单即拒绝启动；
 - 启动前比对账户正数持仓 conditionId 和数量，未登记持仓、数量不一致或状态库存不在链上即拒绝启动；
-- 孤儿订单先撤销并确认无成交；孤儿库存、撤单失败或状态未知全部阻止重启；
-- 逐笔 fill 重放核对库存、已实现 PnL、完成回合数和 cycle PnL。
+- 孤儿订单先撤销并确认无成交；缺少可恢复元数据的孤儿库存、撤单失败或状态未知阻止重启，完整元数据的孤儿库存进入仅结算恢复；
+- 逐笔 fill 与 settlement 重放核对库存、已实现 PnL、完成回合数、cycle PnL 和赎回记录；
+- Gamma 终局 0/1 后生成 `SETTLE` cycle，先持久化 pending settlement，再执行 Builder Relayer 赎回；
+- 提前结算、已被外部赎回、启动时 pending redemption 重试均 fail-safe 处理。
 
 **仍未完成：使用真实账户和真实资金的小资金 Live smoke。**  
 没有账户、资金和明确授权时，不能宣称 Live 已完整实盘验证。
@@ -96,9 +98,11 @@ backend/data/event-maker-state.json
 - `realizedPnl`、`completedCycles`；
 - `currentEntryOrderId`、`currentEntryShares`；
 - `fills`：逐笔成交；
-- `cycles`：逐回合 entry/exit 价格、数量、PnL、持有时间。
+- `cycles`：逐回合 entry/exit 价格、数量、PnL、持有时间、`SELL/SETTLE` 类型；
+- `settlements`：结算 PnL、outcome、negRisk、赎回状态和交易哈希；
+- favorite index、negRisk、endDate、tickSize：用于重启后恢复 discovery 不再返回的结算持仓。
 
-写入使用临时文件 + 原子替换。读取时校验版本、字段合法性、账户归属和 favorite token；恢复时重放 `fills`，要求库存、realized PnL、完成回合数和 cycle 记录完全一致。文件不包含私钥和 API 凭证。
+写入使用临时文件 + 原子替换。读取时校验版本、字段合法性、账户归属和 favorite token；恢复时重放 `fills + settlements`，要求库存、realized PnL、完成回合数、cycle 和 settlement 记录完全一致。文件不包含私钥和 API 凭证。
 
 ## 5. 账户级启动对账
 
@@ -111,7 +115,7 @@ LIVE 启动在报价前执行：
 5. 读取账户当前正数持仓 conditionId；
 6. 账户持仓与状态库存集合必须完全一致，否则返回 `open_position_state_mismatch`；
 7. 同一 condition 出现多个正数资产时返回 `multiple_position_assets`；
-8. 不在本轮发现列表的孤儿订单先撤销并读取终止快照；孤儿库存直接阻断启动。
+8. 不在本轮发现列表的孤儿订单先撤销并读取终止快照；带完整元数据的孤儿库存进入仅结算恢复，元数据缺失则阻断启动。
 
 该校验要求使用专用账户。复制交易或其他策略留下的订单/持仓会导致 Event Maker 拒绝启动，这是刻意的 fail-closed 行为。
 
@@ -139,10 +143,10 @@ cd D:\Project\PolyHermes\backend
 .\gradlew.bat test --console=plain
 ```
 
-当前结果（2026-10-20 00:00，停机/估值/时钟边界补强后）：
+当前结果（2026-10-20 02:05，结算/赎回闭环补强后）：
 
 ```text
-全量：103 suites / 538 tests，0 failures，0 errors，2 skipped
+全量：103 suites / 555 tests，0 failures，0 errors，2 skipped
 定向：DailyPnlBudget / StateStore / LiveEngine / StrategyServiceSafety / StartupRecovery 通过
 ```
 
@@ -153,6 +157,21 @@ cd D:\Project\PolyHermes\backend
 3. 下单网络超时后订单 ID 可能未知；当前会停机，账户活跃订单检查只能在下一次启动时阻止未登记订单继续运行。
 4. 当前账户级校验要求使用专用账户；复制交易或其他策略的活跃订单/持仓会导致 Event Maker 拒绝启动，这是刻意 fail-closed。
 5. 公共成交模拟无法完全还原真实队列位置，Shadow fill 只能作为近似。
-6. 尚未验证真实 maker fee、rebate、流动性奖励和结算/赎回流程。
-7. `maxDailyLoss` 已按 UTC 日持久化锚点：同日重启不重置，跨日重锚；schema v2 状态会被拒绝，仍需真实 smoke 验证升级和对账流程。
+6. 结算/赎回的 engine、adapter、状态重放和启动恢复已通过 mock 级验证；真实 Builder Relayer、链上回执和到账仍未验证。真实 maker fee、rebate、流动性奖励同样待 smoke。
+7. `maxDailyLoss` 已按 UTC 日持久化锚点：同日重启不重置，跨日重锚；schema v4 会拒绝 v2/v3 旧状态，仍需真实 smoke 验证升级和对账流程。
 8. 实际小资金 smoke 需要用户提供账户并明确授权。
+## 9. 结算与赎回闭环补充（2026-10-20）
+
+本轮补齐了买入后市场直接结算、没有 SELL 的路径：
+
+- Gamma 出现终局 0/1 outcome 后，以 `SETTLE` cycle 记录 `exitPrice × shares` 和 PnL；
+- 终局检查每 30 秒执行，不依赖 `endDate`，覆盖提前结算；
+- 结算记录先写入 state，再调用 Builder Relayer 赎回；
+- 赎回状态为 `PENDING`、`REDEEMED` 或 `ALREADY_ABSENT`；交易哈希持久化；
+- 重启时会恢复 pending settlement、确认链上持仓、重试赎回；
+- 对 discovery 不再返回的孤儿持仓，使用持久化 market 元数据进入仅结算状态；
+- Live 启动若缺少 Builder API Key，将以 `settlement_builder_api_key_missing` 拒绝；
+- state schema 为 v4，恢复时同时重放 fills 和 settlements；
+- 全量回归：103 suites / 555 tests / 0 failures / 0 errors / 2 skipped。
+
+仍未验证：真实账户的 Builder Relayer、链上赎回回执、pUSD 到账延迟和实际到账金额。该部分必须在真实小资金 Live smoke 中完成。

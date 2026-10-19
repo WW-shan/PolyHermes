@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 538 tests 通过；跨进程 UTC 日亏损锚点已修复。v2 正式候选 Shadow 因发现该风控缺口而中止（0 fill、无真实订单），v3 Shadow 已启动但在后续对账停机/无买盘估值审计后被主动停止；v4 Shadow 在后续审计发现初始下单阶段清理边界缺口后停止；v5 已选中市场但被 Guard 阻止挂单，实验暴露审计误分类；修复后 v6 已于 00:53 启动并严格等待。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
-> 最后更新：2026-10-19 23:30 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 555 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已三次挂单并三次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 最后更新：2026-10-20 02:05 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -38,7 +38,7 @@
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | 全量 103 suites / 538 tests 通过；新增日锚点、时钟回拨、无买盘估值和状态 schema 回归 |
+| 策略核心单元测试 | 已完成 | 全量 103 suites / 555 tests 通过；新增日锚点、时钟回拨、无买盘估值、结算账本和状态 schema 回归 |
 | Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
 | Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
@@ -47,7 +47,7 @@
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
 | 新干净长测 | v2 等待 12 轮无活动通过市场，已因安全修复停止；提交后重启 | `event-maker-shadow-watch-v2-20261019/`；不降低价格带 |
-| 全量测试 | 103 suites / 538 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| 全量测试 | 103 suites / 555 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
 | 一键停止 | stop 先中断在途 OkHttp 调用再撤单；REST 实测 20ms 返回 | `EventMakerStrategyStopTest`、`69649e5` |
 | REST 代理回退 | 未显式配置时回退数据库系统代理；显式配置优先 | `EventMakerStrategyStopTest`、`69649e5` |
 | Live 端到端测试 | 引擎级 mock/恢复/账户级对账已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
@@ -353,7 +353,7 @@ cd D:\Project\PolyHermes\backend
 | EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID `25556`（wrapper `22844`），`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
 - 最新两臂进程状态以 10.9 节为准；旧行中的 PID 是历史检查点。
-- 当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）。截至 01:24 为 BUY_PENDING、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
+- 当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）；01:26 `shadow-3` 再次 requote 撤销。截至 02:05 为 FLAT、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
 
 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
 - 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。
@@ -418,8 +418,8 @@ cd D:\Project\PolyHermes\backend
 | OOS-1 | 12h–7d 八窗口 | 已完成 | 正式候选 8 窗口全零结算亏损、训练/测试为正 |
 | OOS-2 | 全窗口配置交集 | 已完成 | 864 配置中仅 2 个通过；正式候选最差窗口 ROI 最高 |
 | GUARD-8 | 同数据同执行模型 A/B | 已完成 | 无 Guard 测试 -0.39% + 1 次归零；Guard +1.058% + 0 归零 |
-| TEST-5 | 全量回归 | 已完成 | 103 suites / 538 tests / 0 failures / 0 errors / 2 skipped |
-| SHADOW-3 | 正式候选 Shadow 长测 | v6 运行中 | 已挂 3 次 Shadow BUY、2 次 requote 撤单；01:21 重挂 `shadow-3` BUY 0.972 / 25.72，queue 5.0；当前 BUY_PENDING、0 fill |
+| TEST-5 | 全量回归 | 已完成 | 103 suites / 555 tests / 0 failures / 0 errors / 2 skipped |
+| SHADOW-3 | 正式候选 Shadow 长测 | v6 运行中 | 已挂 3 次 Shadow BUY、3 次 requote 撤单；`shadow-3` 于 01:26 撤销；当前 FLAT、0 fill |
 | LIVE-A13 | 日亏损跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；同日重启沿用，跨日重锚；8 条新增回归 |
 | LIVE-1 | 真实小资金 Live smoke | 未执行 | 缺账户、资金、明确授权、时间窗口、市场范围 |
 
@@ -431,7 +431,7 @@ cd D:\Project\PolyHermes\backend
 - 24h 费用：50bps +0.069%，100bps -0.914%。
 - 尾部统计：93 个零亏损回合，rule-of-three 95% 上界 3.23%，仍高于 1.041% 盈亏平衡线；约需 289 个零亏损独立回合。
 
-当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）。截至 01:24 为 BUY_PENDING、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
+当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）；01:26 `shadow-3` 再次 requote 撤销。截至 02:05 为 FLAT、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
 
 下一执行顺序：
 
@@ -537,3 +537,18 @@ cd D:\Project\PolyHermes\backend
 - v6 运行期间 `logIssues=0`、`stderrBytes=0`。
 - 未放宽价格带、活动门槛、post-only、队列或亏损限制。
 - 只有出现真实 Shadow fill、SELL/SETTLE cycle 和 markout 后，才可进入下一步 Live 授权讨论。
+
+### 10.21 2026-10-20 02:05 结算与赎回闭环补强
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| LIVE-A14 | Gamma 终局 0/1 结算识别 | 已完成 | 终局每 30s 轮询；覆盖提前结算、endDate 仍在未来的市场 |
+| LIVE-A15 | SETTLE cycle 与 PnL | 已完成 | 结算账本、cycle 重放、schema v4；定向测试 |
+| LIVE-A16 | 赎回前持久化与崩溃恢复 | 已完成 | pending settlement 先落盘；启动时重试/确认已赎回 |
+| LIVE-A17 | Builder API Key 启动前置检查 | 已完成 | 未配置时 `settlement_builder_api_key_missing` |
+| LIVE-A18 | discovery 不再返回的持仓恢复 | 已完成 | 持久化 market 元数据，重建仅结算市场 |
+| TEST-10 | 全量回归 | 已完成 | 103 suites / 555 tests / 0 failures / 0 errors / 2 skipped |
+
+- v6 Shadow 已三次挂单、三次 requote 撤单；`shadow-3` 于 01:26 撤销，当前 FLAT、0 fill，仍不满足真实成交验收。
+- 结算/赎回闭环已完成代码与 mock/engine/startup 级验证。
+- 尚未用真实账户、真实 Builder API Key 和真实资金执行赎回 smoke，因此还不能把“真实结算到账”标记为完成。

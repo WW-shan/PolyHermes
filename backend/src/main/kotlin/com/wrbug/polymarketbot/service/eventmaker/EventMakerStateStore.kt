@@ -113,6 +113,38 @@ class EventMakerStateStore(
         if (market.realizedPnl.isNaN() || market.realizedPnl.isInfinite()) {
             invalid("realized_pnl_invalid:${market.conditionId}")
         }
+        val settlements = market.settlements.orEmpty()
+        val duplicateSettlements = settlements.groupingBy { it.cycleExitOrderId }.eachCount()
+            .filterValues { it > 1 }
+            .keys
+        if (duplicateSettlements.isNotEmpty()) {
+            invalid("duplicate_settlement:${market.conditionId}:${duplicateSettlements.joinToString(",")}")
+        }
+        settlements.forEach { settlement ->
+            if (settlement.marketId != market.conditionId ||
+                settlement.favoriteTokenId != market.favoriteTokenId ||
+                settlement.entryOrderId.isBlank() ||
+                settlement.cycleExitOrderId.isBlank()
+            ) {
+                invalid("settlement_identity_invalid:${market.conditionId}")
+            }
+            if (settlement.entryPrice <= java.math.BigDecimal.ZERO ||
+                settlement.entryPrice > java.math.BigDecimal.ONE ||
+                settlement.exitPrice < java.math.BigDecimal.ZERO ||
+                settlement.exitPrice > java.math.BigDecimal.ONE ||
+                settlement.shares <= java.math.BigDecimal.ZERO ||
+                settlement.entryAt <= 0L ||
+                settlement.settledAt < settlement.entryAt ||
+                settlement.outcomeIndex < 0 ||
+                settlement.pnl.isNaN() || settlement.pnl.isInfinite() ||
+                settlement.redemptionStatus !in EventMakerRedemptionStatus.entries
+            ) {
+                invalid("settlement_values_invalid:${market.conditionId}:${settlement.cycleExitOrderId}")
+            }
+        }
+        if (settlements.isNotEmpty() && inventory > java.math.BigDecimal.ZERO) {
+            invalid("settlement_with_inventory:${market.conditionId}")
+        }
         val orderId = market.activeOrderId
         if (orderId.isNullOrBlank()) {
             if (market.activeOrderSide != null || market.activeOrderPrice != null ||
@@ -145,7 +177,7 @@ class EventMakerStateStore(
     private fun targetPath(): Path = Paths.get(stateFile).toAbsolutePath().normalize()
 
     companion object {
-        const val CURRENT_VERSION = 3
+        const val CURRENT_VERSION = 4
         private val MODES = setOf(EventMakerMode.SHADOW.name, EventMakerMode.LIVE.name)
         private val PHASES = EventMakerPhase.entries.map { it.name }.toSet()
         private val ORDER_SIDES = EventMakerSide.entries.map { it.name }.toSet()

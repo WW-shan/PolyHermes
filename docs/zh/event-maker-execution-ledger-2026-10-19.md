@@ -29,7 +29,7 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | v6 已三次挂单、两次 requote 撤单；shadow-3 当前 BUY_PENDING；0 fill |
+| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | v6 已三次挂单、三次 requote 撤单；当前 FLAT；0 fill |
 | DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 已完成 | keyset 分页、价格带预筛、候选诊断、5 个测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
@@ -50,7 +50,7 @@
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| 正式候选 Shadow v6 | 1252 / 22320 | 00:53 | 运行至约 12:53 | `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` | 三次挂单/两次 requote 撤单；shadow-3 BUY_PENDING、0 fill；日志无异常 |
+| 正式候选 Shadow v6 | 1252 / 22320 | 00:53 | 运行至约 12:53 | `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` | 三次挂单/三次 requote 撤单；当前 FLAT、0 fill；日志无异常 |
 | 实验臂 spread1 v5 | 11300 / 23668 | 00:34 | 00:50 主动中止 | `backend/build/research/event-maker-shadow-experiment-spread1-v5-20261020/` | shadow-1 BUY 0.972 / 25.72，5s 后 adverse_flow 撤销；0 fill |
 | 正式候选 Shadow v5 | 3076 / 23220 | 00:21 | 00:50 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v5-20261020/` | 第17轮 selected=1；bid0.970/ask0.975；flow guard 阻止；0 挂单 |
 | 正式候选 Shadow v4 | 21352 / 17312 | 00:03 | 00:20 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v4-20261020/` | 11 轮 0 选中；清理边界修复后停止 |
@@ -499,3 +499,22 @@ cd D:\Project\PolyHermes\backend
 - shadow-3：BUY 0.972 / 25.72 股，queue 5.0，状态 LIVE。
 - 截至 01:24：phase BUY_PENDING、0 fill、0 cycle、0 inventory；logIssues=0、stderrBytes=0。
 - 门槛未变，继续观察成交、撤单竞态与 markout。
+
+### 02:05 结算与赎回闭环验收
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| SETTLE-1 | 市场终局后生成 SETTLE cycle | 已完成 | `EventMakerLiveStateTest`、`EventMakerLiveEngineTest` |
+| SETTLE-2 | 提前结算不再依赖 endDate | 已完成 | 终局每 30s 轮询；endDate=`Long.MAX_VALUE` 回合测试通过 |
+| SETTLE-3 | 无持仓/已被外部赎回时不得卡死 | 已完成 | `ALREADY_ABSENT` 路径测试通过 |
+| SETTLE-4 | 赎回前先持久化 pending settlement | 已完成 | `EventMakerStrategyService.runEngineTick` 持久化边界 |
+| SETTLE-5 | 赎回交易哈希持久化 | 已完成 | schema v4 settlement record round-trip |
+| SETTLE-6 | 启动恢复重试 pending redemption | 已完成 | `EventMakerStartupRecoveryTest` 2 条恢复测试 |
+| SETTLE-7 | 缺少 Builder API Key 时提前拒绝 Live | 已完成 | adapter `validateAccount` 回归 |
+| SETTLE-8 | discovery 不再返回的孤儿持仓可重建结算元数据 | 已完成 | `EventMakerStartupRecoveryTest` market metadata 测试 |
+| TEST-10 | 全量回归 | 已完成 | 103 suites / 555 tests / 0 failures / 0 errors / 2 skipped |
+### 01:26 v6 shadow-3 撤销
+
+- `shadow-3` BUY 0.972 / 25.72 因 requote 撤销。
+- 当前 FLAT、activeOrders=0、0 fill、0 cycle、0 inventory。
+- 三次挂单、三次 requote 撤单；未放宽任何正式门槛，继续等待真实成交。

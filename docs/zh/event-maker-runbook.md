@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-20 00:00）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 538 tests 通过。日亏损使用持久化 UTC 锚点，同日重启不重置、跨日重锚、时钟回拨不重置；无买盘持仓按最坏估值。对账/初始 tick 的未知状态和日亏损会主动关闭事件通道并进入统一清理。v3 Shadow 严格门槛下 0 选中后因本轮修复停止；v4 Shadow 在后续初始清理边界审计后停止；v5 已选中市场但被 adverse-flow Guard 阻止，实验臂暴露审计误分类；修复后 v6 已完成三次挂单：shadow-1 01:01 挂、01:08 撤；shadow-2 01:08 挂、01:13 撤；shadow-3 01:21 重挂 BUY 0.972 / 25.72（queue 5.0）。当前 BUY_PENDING、0 fill，继续等待成交。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-20 02:05）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 555 tests 通过。日亏损使用持久化 UTC 锚点，同日重启不重置、跨日重锚、时钟回拨不重置；无买盘持仓按最坏估值。对账/初始 tick 的未知状态和日亏损会主动关闭事件通道并进入统一清理。v3 Shadow 严格门槛下 0 选中后因本轮修复停止；v4 Shadow 在后续初始清理边界审计后停止；v5 已选中市场但被 adverse-flow Guard 阻止，实验臂暴露审计误分类；修复后 v6 已完成三次挂单：shadow-1 01:01 挂、01:08 撤；shadow-2 01:08 挂、01:13 撤；shadow-3 01:21 重挂 BUY 0.972 / 25.72（queue 5.0），01:26 再次 requote 撤销。当前 FLAT、0 fill、0 cycle，继续等待价格与真实 crossing flow。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
@@ -182,7 +182,7 @@ cd D:\Project\PolyHermes\backend
 - `events.jsonl`：报价、撤单、有效成交对账和 WS 状态。
 - `trades.csv`：去重后的公共成交。
 - `snapshots.csv`：每个市场每 10 秒的状态、库存、PnL 和回合数。
-- `state.json`：逐笔 fill、逐回合 cycle、库存和活跃订单。
+- `state.json`：逐笔 fill、逐回合 cycle、SETTLE settlement、赎回状态、库存和活跃订单。
 - `markouts.csv`：每笔 Shadow 成交后 60/300/1800 秒的盘口 markout，同时记录盘口年龄。
 - `execution-diagnostics.json`：订单级队列、反向成交、穿越成交、已消耗队列、成交量和最终状态。
 - `summary.json`：最终汇总和错误。
@@ -324,7 +324,7 @@ POST /api/event-maker/stop
 - 卖出时 CTF 库存和 exchange 授权足够；
 - 订单价格在 tick 上，数量不低于最小订单量；
 - 所有订单 `postOnly=true`、`orderType=GTC`；
-- 状态文件可解析且版本受支持（当前 schema v3）；
+- 状态文件可解析且版本受支持（当前 schema v4）；
 - 状态文件账户与本次 `accountId` 一致；
 - 状态文件包含 UTC 日亏损锚点 `dailyPnlDay` / `dailyPnlBaseline`，且 baseline 为有限值；
 - 状态文件包含 `conditionId` 和 `favoriteTokenId`；
@@ -395,10 +395,10 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 - 当前库存、入场价、入场时间；
 - 状态级 `cumulativeRealizedPnl`、当前市场已实现 PnL 和已完成回合；
 - 日亏损锚点 `dailyPnlDay`（UTC epoch day）和 `dailyPnlBaseline`（该日开始的累计已实现 PnL）；
-- 逐笔 fill 和逐回合 cycle；
+- 逐笔 fill、逐回合 cycle、SETTLE settlement 和赎回状态；
 - 当前入场订单 ID 和份额。
 
-状态文件不包含私钥或 API 凭证。写入使用临时文件 + 原子替换。当前 schema 为 v3；读取时会拒绝 v2/未知版本、损坏 JSON、错账户状态、缺失日亏损锚点、缺失 favorite token、重复 condition 和非法订单快照。恢复时会重放逐笔 fill，核对库存、已实现 PnL、完成回合数和 cycle 记录。
+状态文件不包含私钥或 API 凭证。写入使用临时文件 + 原子替换。当前 schema 为 v4；读取时会拒绝 v2/v3/未知版本、损坏 JSON、错账户状态、缺失日亏损锚点、缺失 favorite token、重复 condition 和非法订单快照。恢复时会重放 fills + settlements，核对库存、已实现 PnL、完成回合数、cycle 记录和赎回记录。
 
 ## 8. 故障处理
 
@@ -498,7 +498,7 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 
 ### 8.9 状态 schema 版本升级
 
-当前 schema v3 新增了日亏损锚点。v2 状态会被明确拒绝，避免升级或重启时无依据地遗忘当天亏损。处理方式：
+schema v3 新增日亏损锚点；schema v4 新增 settlement 账本与赎回状态。v2/v3 状态会被明确拒绝，避免升级或重启时无依据地遗忘当天亏损或丢失结算记录。处理方式：
 
 1. 先停止 LIVE，查询账户活跃订单和正数持仓；
 2. 核对 `event-maker-state.json` 的 `cumulativeRealizedPnl`、fills 和 cycles；
@@ -538,3 +538,18 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 - 流动性奖励、maker rebate、真实 fee 和撤单竞争尚未完整纳入生产 PnL。
 - 当前没有自动新闻/事件流反应，只使用盘口和公共成交。
 - 真实盘口 Shadow 截至 2026-10-19 05:22 仍为 0 fill，不能据此判断策略可成交。
+
+## 11. 结算与赎回闭环
+
+市场没有产生 SELL 而直接进入结算时，Live 流程如下：
+
+1. LONG 仓位每 30 秒接受一次 Gamma 终局检查；
+2. 只有 Gamma 返回终局 0/1 且持仓身份核对通过后，才写入 `SETTLE` cycle；
+3. 先把 `PENDING` settlement 持久化到 state v4；
+4. 通过 Builder Relayer 赎回，成功后写入 `REDEEMED` 和交易哈希；
+5. 若链上已无对应持仓，写入 `ALREADY_ABSENT`，不重复赎回；
+6. 重启时自动恢复 pending settlement；discovery 不再返回的孤儿持仓使用持久化 market 元数据进入仅结算模式。
+
+Live 启动新增 Builder API Key 前置检查。未配置时直接拒绝，不允许先建仓。
+
+当前 schema 为 v4。v2/v3/未知版本会被明确拒绝；上线前必须核对 `settlements`、`cycles`、`fills` 和账户实际持仓。

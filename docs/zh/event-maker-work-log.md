@@ -1215,3 +1215,22 @@
 - bid 回到 0.972 后挂 shadow-3 BUY 0.972 / 25.72，queue 5.0。
 - 当前 BUY_PENDING、0 fill、0 cycle、0 inventory。
 - 未放宽价格带、活动门槛、post-only、队列或亏损限制。
+
+### 02:05 Event Maker 结算与赎回闭环
+
+- 修复 Live 只在 SELL 时结束 cycle、市场直接结算时无法回收资金的问题。
+- 新增 `SETTLE` cycle：市场出现终局 0/1 outcome 后按 `exitPrice × shares` 记账，P&L 与回测的结算语义一致。
+- 结算记录在链上赎回前先持久化；即使进程在赎回调用后崩溃，重启也能根据 pending settlement 和链上持仓完成对账，不会静默丢失仓位。
+- 新增 `PENDING / REDEEMED / ALREADY_ABSENT` 三种赎回状态；支持 Builder Relayer 赎回、交易哈希持久化和启动恢复重试。
+- Live 启动时若 Builder API Key 未配置，直接以 `settlement_builder_api_key_missing` 拒绝启动，避免先建仓后才发现无法赎回。
+- 终局检查不再只依赖 `endDate`，每 30 秒也会查询 Gamma 终局价格；这覆盖了 Gamma 提前结算但 endDate 仍在未来的市场。
+- 恢复持久化新增 favorite token、favorite index、negRisk、endDate 和 tickSize；重启后可为 discovery 不再返回的持仓重建仅用于结算的市场元数据。
+- 状态 schema 升级为 v4；恢复时重放 fills + settlements，校验库存、cycle、settlement、已实现 PnL 和赎回记录。
+- 外部只读核对：Gamma closed 市场 `0x7ba05d259657e856a103b43c85357dcd2d5446fc056230b0e4eb20420af076d6` 返回 `outcomePrices=["0","1"]`，字段解析路径已覆盖。
+- 全量测试：`103 suites / 555 tests / 0 failures / 0 errors / 2 skipped`。
+- 仍未完成：使用真实账户、Builder API Key 和真实资金执行一次赎回 smoke；本轮只验证到 adapter/engine/startup 的 mock 与单元边界。
+### 01:26 v6 shadow-3 requote 撤销
+
+- `shadow-3` BUY 0.972 / 25.72 于 01:26 因 requote 撤销。
+- v6 当前 FLAT，activeOrders=0、0 fill、0 cycle、0 inventory；`logIssues=0`、`stderrBytes=0`。
+- 三次挂单、三次 requote 撤单均为严格门槛下的正常执行链路，不构成成交验收。

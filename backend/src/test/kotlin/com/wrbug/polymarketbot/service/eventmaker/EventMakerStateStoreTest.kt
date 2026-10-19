@@ -74,7 +74,7 @@ class EventMakerStateStoreTest {
         val path = tempDir.resolve("state.json")
         Files.writeString(
             path,
-            """{"version":3,"mode":"LIVE","accountId":null,"markets":[],"startedAt":1000}"""
+            """{"version":4,"mode":"LIVE","accountId":null,"markets":[],"startedAt":1000}"""
         )
         val store = EventMakerStateStore(path.toString())
 
@@ -88,7 +88,7 @@ class EventMakerStateStoreTest {
         val path = tempDir.resolve("state.json")
         Files.writeString(
             path,
-            """{"version":3,"mode":"LIVE","accountId":7,"markets":[],"startedAt":1000}"""
+            """{"version":4,"mode":"LIVE","accountId":7,"markets":[],"startedAt":1000}"""
         )
         val store = EventMakerStateStore(path.toString())
 
@@ -107,6 +107,93 @@ class EventMakerStateStoreTest {
         assertEquals("event_maker_state_invalid:daily_pnl_baseline_invalid", error.message)
     }
 
+    @Test
+    fun `save and load round trips settlement records`() {
+        val store = EventMakerStateStore(tempDir.resolve("state.json").toString())
+        val settled = persistedState().copy(
+            markets = listOf(settledMarket())
+        )
+
+        store.save(settled)
+
+        assertEquals(settled, store.load())
+    }
+
+    @Test
+    fun `save rejects settlement while inventory is still open`() {
+        val store = EventMakerStateStore(tempDir.resolve("state.json").toString())
+        val invalid = persistedState().copy(
+            markets = listOf(settledMarket().copy(inventoryShares = "1.00", entryPrice = "0.96"))
+        )
+
+        val error = assertThrows(IllegalStateException::class.java) { store.save(invalid) }
+
+        assertEquals("event_maker_state_invalid:settlement_with_inventory:condition", error.message)
+    }
+
+    private fun settledMarket(): EventMakerPersistedMarket {
+        val settlement = EventMakerSettlementRecord(
+            marketId = "condition",
+            favoriteTokenId = "token",
+            entryOrderId = "buy-1",
+            cycleExitOrderId = "settlement:condition:2000",
+            settledAt = 2_000L,
+            entryAt = 1_100L,
+            entryPrice = BigDecimal("0.96"),
+            exitPrice = BigDecimal.ONE,
+            shares = BigDecimal("10.00"),
+            pnl = 0.4,
+            outcomeIndex = 0,
+            negativeRisk = false,
+            redemptionStatus = EventMakerRedemptionStatus.REDEEMED,
+            transactionHash = "0xtx",
+            redemptionUpdatedAt = 2_100L
+        )
+        return EventMakerPersistedMarket(
+            conditionId = "condition",
+            phase = "FLAT",
+            inventoryShares = "0",
+            entryPrice = "0",
+            entryAt = 0L,
+            realizedPnl = 0.4,
+            completedCycles = 1,
+            activeOrderId = null,
+            activeOrderSide = null,
+            activeOrderPrice = null,
+            activeOrderOriginalShares = null,
+            activeOrderMatchedShares = null,
+            activeOrderStatus = null,
+            currentEntryOrderId = null,
+            currentEntryShares = "0",
+            fills = listOf(
+                EventMakerFillRecord(
+                    marketId = "condition",
+                    orderId = "buy-1",
+                    side = EventMakerSide.BUY,
+                    price = BigDecimal("0.96"),
+                    shares = BigDecimal("10.00"),
+                    timestamp = 1_100L
+                )
+            ),
+            cycles = listOf(
+                EventMakerCycleRecord(
+                    marketId = "condition",
+                    entryOrderId = "buy-1",
+                    exitOrderId = "settlement:condition:2000",
+                    entryAt = 1_100L,
+                    exitAt = 2_000L,
+                    entryPrice = BigDecimal("0.96"),
+                    exitPrice = BigDecimal.ONE,
+                    shares = BigDecimal("10.00"),
+                    pnl = 0.4,
+                    holdingSeconds = 900L,
+                    exitType = "SETTLE"
+                )
+            ),
+            favoriteTokenId = "token",
+            settlements = listOf(settlement)
+        )
+    }
     private fun persistedState() = EventMakerPersistedState(
         mode = "LIVE",
         accountId = 7L,

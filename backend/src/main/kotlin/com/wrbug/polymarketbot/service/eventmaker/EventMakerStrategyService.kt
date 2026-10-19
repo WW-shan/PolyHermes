@@ -2,6 +2,7 @@ package com.wrbug.polymarketbot.service.eventmaker
 
 import com.wrbug.polymarketbot.research.livepaper.LiveFeedEvent
 import com.wrbug.polymarketbot.research.livepaper.LivePaperDataClient
+import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import com.wrbug.polymarketbot.research.livepaper.LivePaperWsClient
 import com.wrbug.polymarketbot.research.livepaper.MarketBook
 import com.wrbug.polymarketbot.util.ProxyConfigProvider
@@ -349,10 +350,11 @@ class EventMakerStrategyService(
         proxy: String?
     ) {
         val accountId = config.accountId ?: throw IllegalStateException("live_account_required")
-        val persisted = stateStore.load()
+        var persisted = stateStore.load()
         validatePersistedOwner(persisted, accountId)
         ensureNoUnmanagedOpenOrders(accountId, persisted)
         ensureNoUnmanagedPositions(accountId, persisted)
+        persisted = recoverPendingRedemptions(persisted, accountId)
         val prepared = try {
             prepareMarkets(config, client)
         } catch (e: Exception) {
@@ -367,8 +369,20 @@ class EventMakerStrategyService(
         }
         val discovered = prepared.markets
         val books = prepared.books
-        val states = discovered.map { EventMakerLiveState(it, config) }
-        cancelOrphanedOrders(persisted, discovered.map { it.conditionId }.toSet(), accountId)
+        val discoveredIds = discovered.map { it.conditionId }.toSet()
+        val recoveryMarkets = persisted?.markets
+            .orEmpty()
+            .filter { saved ->
+                saved.conditionId !in discoveredIds &&
+                    (saved.inventoryShares.toBigDecimalOrNull() ?: BigDecimal.ZERO) > BigDecimal.ZERO
+            }
+            .map(::recoveryMarket)
+        val states = (discovered + recoveryMarkets).map { EventMakerLiveState(it, config) }
+        cancelOrphanedOrders(
+            persisted,
+            discoveredIds + recoveryMarkets.map { it.conditionId }.toSet(),
+            accountId
+        )
         persisted?.markets?.forEach { saved ->
             states.firstOrNull { it.market.conditionId == saved.conditionId }?.restore(saved)
         }
@@ -570,6 +584,40 @@ class EventMakerStrategyService(
         }
     }
 
+    /**
+     * Rebuilds only the metadata needed to settle an inventory position whose
+     * market is no longer returned by discovery. It is never subscribed to the
+     * order-book feed, so it cannot start a new cycle.
+     */
+    internal fun recoveryMarket(saved: EventMakerPersistedMarket): LivePaperMarket {
+        val favoriteIndex = saved.favoriteIndex
+            ?.takeIf { it in 0..1 }
+            ?: throw IllegalStateException("orphan_market_metadata_missing:${saved.conditionId}:favorite_index")
+        val favoriteTokenId = saved.favoriteTokenId?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("orphan_market_metadata_missing:${saved.conditionId}:favorite_token")
+        val endTimestamp = saved.endTimestamp
+            ?.takeIf { it > 0L }
+            ?: throw IllegalStateException("orphan_market_metadata_missing:${saved.conditionId}:end_timestamp")
+        val tickSize = saved.tickSize
+            ?.takeIf { it > 0.0 && it < 1.0 }
+            ?: throw IllegalStateException("orphan_market_metadata_missing:${saved.conditionId}:tick_size")
+        val negativeRisk = saved.negativeRisk
+            ?: throw IllegalStateException("orphan_market_metadata_missing:${saved.conditionId}:negative_risk")
+        val tokenIds = MutableList(2) { index -> "recovery:${saved.conditionId}:$index" }
+        tokenIds[favoriteIndex] = favoriteTokenId
+        return LivePaperMarket(
+            conditionId = saved.conditionId,
+            question = "Recovered market ${saved.conditionId}",
+            tag = "Recovery",
+            volume24hr = 0.0,
+            endTimestamp = endTimestamp,
+            tickSize = tickSize,
+            outcomes = listOf("Outcome 0", "Outcome 1"),
+            tokenIds = tokenIds,
+            favoriteIndex = favoriteIndex,
+            negRisk = negativeRisk
+        )
+    }
     private suspend fun prepareMarkets(
         config: EventMakerConfig,
         client: LivePaperDataClient
@@ -672,13 +720,19 @@ class EventMakerStrategyService(
             }
             ?.toMap()
             .orEmpty()
-        val unmanaged = activePositions.keys - managedPositions.keys
+        val recoverablePositions = persisted?.markets
+            ?.flatMap { market -> market.settlements.orEmpty() }
+            ?.filter { it.redemptionStatus != EventMakerRedemptionStatus.ALREADY_ABSENT }
+            ?.associate { it.marketId.lowercase() to it.shares }
+            .orEmpty()
+        val allowedPositions = managedPositions + recoverablePositions
+        val unmanaged = activePositions.keys - allowedPositions.keys
         val missing = managedPositions.keys - activePositions.keys
-        val sizeMismatch = (activePositions.keys intersect managedPositions.keys)
-            .filter { activePositions.getValue(it).compareTo(managedPositions.getValue(it)) != 0 }
+        val sizeMismatch = (activePositions.keys intersect allowedPositions.keys)
+            .filter { activePositions.getValue(it).compareTo(allowedPositions.getValue(it)) != 0 }
             .sorted()
             .joinToString(",") { conditionId ->
-                "$conditionId:${activePositions.getValue(conditionId)}!=${managedPositions.getValue(conditionId)}"
+                "$conditionId:${activePositions.getValue(conditionId)}!=${allowedPositions.getValue(conditionId)}"
             }
         if (unmanaged.isNotEmpty() || missing.isNotEmpty() || sizeMismatch.isNotEmpty()) {
             throw IllegalStateException(
@@ -688,6 +742,87 @@ class EventMakerStrategyService(
         }
     }
 
+    /**
+     * Finishes redemption attempts that were already booked before a process
+     * stopped. A pending settlement is committed to disk before this call, so
+     * finding no on-chain position is success (the previous attempt landed).
+     */
+    internal suspend fun recoverPendingRedemptions(
+        persisted: EventMakerPersistedState?,
+        accountId: Long
+    ): EventMakerPersistedState? {
+        if (persisted == null) return null
+        var changed = false
+        val updatedMarkets = persisted.markets.map { market ->
+            val records = market.settlements.orEmpty()
+            if (records.none { it.redemptionStatus == EventMakerRedemptionStatus.PENDING }) {
+                return@map market
+            }
+            val updatedRecords = records.map { record ->
+                if (record.redemptionStatus != EventMakerRedemptionStatus.PENDING) {
+                    record
+                } else {
+                    changed = true
+                    recoverSettlementRecord(accountId, record)
+                }
+            }
+            market.copy(settlements = updatedRecords)
+        }
+        if (!changed) return persisted
+        val updated = persisted.copy(markets = updatedMarkets)
+        stateStore.save(updated)
+        return updated
+    }
+
+    private suspend fun recoverSettlementRecord(
+        accountId: Long,
+        settlement: EventMakerSettlementRecord
+    ): EventMakerSettlementRecord {
+        var lastError: Throwable? = null
+        for (attempt in 0 until SETTLEMENT_RECOVERY_ATTEMPTS) {
+            try {
+                val position = executionPort.getSettlementPosition(accountId, settlement).getOrThrow()
+                if (position.shares < BigDecimal.ZERO) {
+                    throw IllegalStateException("settlement_position_negative:${settlement.marketId}")
+                }
+                if (position.shares > BigDecimal.ZERO && position.shares.compareTo(settlement.shares) != 0) {
+                    throw IllegalStateException("settlement_position_size_mismatch:${settlement.marketId}")
+                }
+                if (position.outcomeIndex != null && position.outcomeIndex != settlement.outcomeIndex) {
+                    throw IllegalStateException("settlement_position_outcome_mismatch:${settlement.marketId}")
+                }
+                if (position.negativeRisk != null && position.negativeRisk != settlement.negativeRisk) {
+                    throw IllegalStateException("settlement_position_neg_risk_mismatch:${settlement.marketId}")
+                }
+                val now = System.currentTimeMillis()
+                if (position.shares.compareTo(BigDecimal.ZERO) == 0) {
+                    return settlement.copy(
+                        redemptionStatus = EventMakerRedemptionStatus.ALREADY_ABSENT,
+                        redemptionUpdatedAt = now
+                    )
+                }
+                if (!position.redeemable) {
+                    throw IllegalStateException("settlement_position_not_redeemable:${settlement.marketId}")
+                }
+                val transactionHash = executionPort.redeemSettlement(accountId, settlement).getOrThrow()
+                if (transactionHash.isBlank()) {
+                    throw IllegalStateException("settlement_redemption_hash_missing:${settlement.marketId}")
+                }
+                return settlement.copy(
+                    redemptionStatus = EventMakerRedemptionStatus.REDEEMED,
+                    transactionHash = transactionHash,
+                    redemptionUpdatedAt = now
+                )
+            } catch (error: Throwable) {
+                lastError = error
+                if (attempt < SETTLEMENT_RECOVERY_ATTEMPTS - 1) delay(SETTLEMENT_RECOVERY_DELAY_MS)
+            }
+        }
+        throw IllegalStateException(
+            "pending_redemption_recovery_failed:${settlement.marketId}:${lastError?.message}",
+            lastError
+        )
+    }
     internal fun restoredRealizedBaseline(
         persisted: EventMakerPersistedState?,
         restoredRealizedPnl: Double
@@ -788,10 +923,27 @@ class EventMakerStrategyService(
     ): EventMakerEngineResult {
         if (stopping) return EventMakerEngineResult()
         val now = System.currentTimeMillis()
-        val reconciled = engine.reconcile(states, accountId, now)
-        if (engine.haltedReason != null) return reconciled
-        if (stopping) return reconciled
-        return reconciled.merge(engine.quote(states, books, accountId, now))
+        var result = engine.reconcile(states, accountId, now)
+        if (engine.haltedReason != null) return result
+        if (stopping) return result
+        result = result.merge(engine.quote(states, books, accountId, now))
+        if (engine.haltedReason != null) return result
+
+        val settled = engine.settleResolved(states, accountId, now)
+        result = result.merge(settled)
+        if (settled.settlements.isNotEmpty()) {
+            // Persist the payout before any on-chain redemption can make the
+            // position disappear. This is the settlement crash-safety boundary.
+            persistLive(status.startedAt, accountId, states, engine)
+        }
+        if (engine.haltedReason != null) return result
+
+        val redeemed = engine.redeemPendingRedemptions(states, accountId, now)
+        result = result.merge(redeemed)
+        if (redeemed.redemptions.isNotEmpty()) {
+            persistLive(status.startedAt, accountId, states, engine)
+        }
+        return result
     }
 
     private fun applyEngineResult(result: EventMakerEngineResult): Boolean {
@@ -805,6 +957,14 @@ class EventMakerStrategyService(
         }
         result.reconciled.filter { it.events.isNotEmpty() }.forEach {
             logger.info("Event maker reconcile: market=${it.marketId}, order=${it.orderId}, events=${it.events}, status=${it.status}")
+        }
+        result.settlements.forEach {
+            logger.info(
+                "Event maker settlement: market=${it.marketId}, shares=${it.shares}, exit=${it.exitPrice}, pnl=${it.pnl}"
+            )
+        }
+        result.redemptions.forEach {
+            logger.info("Event maker redemption: market=${it.marketId}, status=${it.status}, tx=${it.transactionHash}")
         }
         val actionableErrors = result.errors.filterNot { it.startsWith("risk_blocked:") }
         if (actionableErrors.isNotEmpty()) {
@@ -894,6 +1054,8 @@ class EventMakerStrategyService(
          */
         private const val LIVE_PERSIST_INTERVAL_MS = 5_000L
         private const val ORPHAN_CONFIRM_ATTEMPTS = 3
+        private const val SETTLEMENT_RECOVERY_ATTEMPTS = 3
+        private const val SETTLEMENT_RECOVERY_DELAY_MS = 1_000L
         private const val ORPHAN_CONFIRM_DELAY_MS = 250L
     }
 }
