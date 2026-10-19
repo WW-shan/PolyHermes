@@ -245,3 +245,7 @@ cd D:\Project\PolyHermes\backend
 | 首次结果 | qualified=6, activityPassed=0, selected=0, volume_floor_reached |
 
 恢复规则：先检查 PID 3764/24888 和 `watch-process.json`，再读 `discovery-attempts.jsonl`、`stdout.log`、`stderr.log`。进程运行期间禁止编译和测试。
+### 08:04 一档价差过滤差异记录
+
+- `spread` 回测字段是目标卖出价差，不是实时 `minSpreadTicks`。
+- 当前保留 `minSpreadTicks=2`；一档市场仅作为未来独立实验臂，不用于本轮正式 fill 证据。
