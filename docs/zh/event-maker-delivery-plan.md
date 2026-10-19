@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 558 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已八次挂单并八次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
-> 最后更新：2026-10-20 04:05 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 560 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已八次挂单并八次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 最后更新：2026-10-20 04:15 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -38,7 +38,7 @@
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | 全量 103 suites / 558 tests 通过；新增日锚点、时钟回拨、无买盘估值、结算账本和状态 schema 回归 |
+| 策略核心单元测试 | 已完成 | 全量 103 suites / 560 tests 通过；新增日锚点、时钟回拨、无买盘估值、结算账本和状态 schema 回归 |
 | Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
 | Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
@@ -47,7 +47,7 @@
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
 | 新干净长测 | v2 等待 12 轮无活动通过市场，已因安全修复停止；提交后重启 | `event-maker-shadow-watch-v2-20261019/`；不降低价格带 |
-| 全量测试 | 103 suites / 558 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| 全量测试 | 103 suites / 560 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
 | 一键停止 | stop 先中断在途 OkHttp 调用再撤单；REST 实测 20ms 返回 | `EventMakerStrategyStopTest`、`69649e5` |
 | REST 代理回退 | 未显式配置时回退数据库系统代理；显式配置优先 | `EventMakerStrategyStopTest`、`69649e5` |
 | Live 端到端测试 | 引擎级 mock/恢复/账户级对账已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
@@ -602,3 +602,10 @@ cd D:\Project\PolyHermes\backend
 - 新增两条隔离回归：结算快照“2 次失败 -> 成功未决议 -> 2 次再失败”不 halt；赎回持仓“2 次失败 -> 成功不可赎回 -> 2 次再失败”不 halt。
 - 隔离 worktree 全量回归：103 suites / 558 tests / 0 failures / 0 errors / 2 skipped。
 - v6 在 04:02 仍正常运行，当前 FLAT、0 fill、0 cycle、0 inventory，`logIssues=0`、`stderrBytes=0`。
+### 10.27 2026-10-20 04:15 结算身份与赎回回执核验
+
+- `getSettlementSnapshot` 现在使用已发现市场的 `negRisk` 校验账户持仓，不再接受账户数据与市场元数据不一致的仓位。
+- `redeemSettlement` 不再只看交易哈希：必须从 AccountService 回执中找到相同 `marketId`、`outcomeIndex`、且 `quantity == settlement.shares` 的赎回记录。
+- 新增两条 adapter 反例：negRisk 不匹配拒绝读取；赎回数量不匹配拒绝标记 REDEEMED。
+- 隔离 worktree 全量回归：103 suites / 560 tests / 0 failures / 0 errors / 2 skipped。
+- 这仍是 mock/回执结构级验证；真实 Builder Relayer、真实链上回执和 pUSD 到账必须由小资金 Live smoke 证明。

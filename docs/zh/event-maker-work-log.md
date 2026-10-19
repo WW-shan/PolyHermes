@@ -1279,3 +1279,11 @@
 - 新增 `EventMakerLiveEngineTest` 两条回归：结算快照失败计数重置、赎回持仓失败计数重置。
 - 隔离 worktree 全量测试：103 suites / 558 tests / 0 failures / 0 errors / 2 skipped。
 - v6 Shadow 继续运行，04:02 为 FLAT、0 fill、0 cycle、0 inventory；未触碰运行中 v6 的构建产物。
+### 04:15 结算身份与赎回回执核验
+
+- 发现 `getSettlementSnapshot` 只把 market 作为查询上下文，没有强制校验账户持仓的 `negativeRisk` 与市场元数据一致。
+- 改为 `expectedNegRisk = market.negRisk`，negRisk 不一致时 fail-closed，避免用错赎回 adapter。
+- `redeemSettlement` 增加回执内容核对：交易必须包含相同 market/outcome，且赎回 quantity 必须等于 settlement.shares；只有交易哈希不再足够。
+- 新增 adapter 反例测试：negRisk 不匹配、赎回数量不匹配均拒绝。
+- 隔离 worktree 全量测试：103 suites / 560 tests / 0 failures / 0 errors / 2 skipped。
+- v6 在 04:11 仍正常运行，FLAT、0 fill、0 cycle、0 inventory；本轮未替换运行中 v6 的构建产物。

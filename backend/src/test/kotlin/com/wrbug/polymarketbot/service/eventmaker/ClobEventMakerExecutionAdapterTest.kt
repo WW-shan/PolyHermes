@@ -16,6 +16,7 @@ import com.wrbug.polymarketbot.api.TickSizeResponse
 import com.wrbug.polymarketbot.dto.AccountRedeemTransaction
 import com.wrbug.polymarketbot.dto.PositionRedeemRequest
 import com.wrbug.polymarketbot.dto.PositionRedeemResponse
+import com.wrbug.polymarketbot.dto.RedeemedPositionInfo
 import com.wrbug.polymarketbot.entity.Account
 import com.wrbug.polymarketbot.repository.AccountRepository
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
@@ -429,6 +430,41 @@ class ClobEventMakerExecutionAdapterTest {
     }
 
     @Test
+    fun `settlement snapshot rejects neg risk mismatch against market metadata`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(marketService.getMarketResolution("condition")).thenReturn(
+            Result.success(
+                com.wrbug.polymarketbot.service.common.MarketResolutionSnapshot(
+                    closed = true,
+                    outcomePrices = listOf(BigDecimal.ONE, BigDecimal.ZERO),
+                    resolvedOutcomeIndex = 0
+                )
+            )
+        )
+        Mockito.`when`(blockchainService.getPositions("0xproxy")).thenReturn(
+            Result.success(
+                listOf(
+                    PositionResponse(
+                        proxyWallet = "0xproxy",
+                        asset = "token",
+                        conditionId = "condition",
+                        size = 10.0,
+                        redeemable = true,
+                        outcomeIndex = 0,
+                        negativeRisk = true,
+                        currentValue = 10.0
+                    )
+                )
+            )
+        )
+
+        val result = adapter.getSettlementSnapshot(1L, market())
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is EventMakerUnknownOrderStateException)
+        assertTrue(result.exceptionOrNull()?.message?.contains("settlement_position_market_mismatch") == true)
+    }
+    @Test
     fun `unresolved market does not read account positions`() = runTest {
         stubAccountAndMarket()
         Mockito.`when`(marketService.getMarketResolution("condition")).thenReturn(
@@ -459,7 +495,7 @@ class ClobEventMakerExecutionAdapterTest {
                             accountId = 1L,
                             accountName = "account",
                             transactionHash = "0xtx",
-                            positions = emptyList()
+                            positions = listOf(RedeemedPositionInfo("condition", "Yes", 0, "10.00", "10"))
                         )
                     ),
                     totalRedeemedValue = "10",
@@ -475,6 +511,31 @@ class ClobEventMakerExecutionAdapterTest {
         Mockito.verify(accountService).redeemPositions(captorCaptureRedeem(captor))
         assertEquals("condition", captor.value.positions.single().marketId)
         assertEquals(0, captor.value.positions.single().outcomeIndex)
+    }
+    @Test
+    fun `settlement redemption rejects mismatched redeemed quantity`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(accountService.redeemPositions(Mockito.any(PositionRedeemRequest::class.java) ?: PositionRedeemRequest(emptyList()))).thenReturn(
+            Result.success(
+                PositionRedeemResponse(
+                    transactions = listOf(
+                        AccountRedeemTransaction(
+                            accountId = 1L,
+                            accountName = "account",
+                            transactionHash = "0xtx",
+                            positions = listOf(RedeemedPositionInfo("condition", "Yes", 0, "9.00", "9"))
+                        )
+                    ),
+                    totalRedeemedValue = "9",
+                    createdAt = 2_000L
+                )
+            )
+        )
+
+        val result = adapter.redeemSettlement(1L, settlementRecord())
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("settlement_redemption_quantity_mismatch") == true)
     }
     @Test
     fun `live adapter is the primary execution port bean`() {

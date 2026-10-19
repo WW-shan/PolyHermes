@@ -132,7 +132,7 @@ class ClobEventMakerExecutionAdapter(
             conditionId = market.conditionId,
             tokenId = market.favoriteTokenId,
             expectedOutcomeIndex = market.favoriteIndex,
-            expectedNegRisk = null
+            expectedNegRisk = market.negRisk
         ).getOrElse { return Result.failure(it) }
         return Result.success(
             EventMakerSettlementSnapshot(
@@ -178,6 +178,13 @@ class ClobEventMakerExecutionAdapter(
                     ?: return Result.failure(IllegalStateException("settlement_redemption_transaction_missing"))
                 if (transaction.transactionHash.isBlank()) {
                     return Result.failure(IllegalStateException("settlement_redemption_hash_missing"))
+                }
+                val redeemed = transaction.positions.singleOrNull { redeemed ->
+                    redeemed.marketId.equals(settlement.marketId, ignoreCase = true) &&
+                        redeemed.outcomeIndex == settlement.outcomeIndex
+                } ?: return Result.failure(IllegalStateException("settlement_redemption_position_missing"))
+                if (redeemed.quantity.toBigDecimalOrNull()?.compareTo(settlement.shares) != 0) {
+                    return Result.failure(IllegalStateException("settlement_redemption_quantity_mismatch"))
                 }
                 Result.success(transaction.transactionHash)
             },

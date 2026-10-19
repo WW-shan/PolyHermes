@@ -573,3 +573,13 @@ cd D:\Project\PolyHermes\backend
 
 - 只改了故障计数重置逻辑，没有改报价、价格带、活动门槛、post-only、q20 或资金限制。
 - 真实 Builder Relayer、链上回执、pUSD 到账和真实小资金 smoke 仍未完成。
+### 04:15 结算身份与赎回回执
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| ADAPTER-1 | 结算快照校验 market negRisk | 已完成 | `ClobEventMakerExecutionAdapterTest` 反例通过 |
+| ADAPTER-2 | 赎回回执校验 market/outcome/quantity | 已完成 | `ClobEventMakerExecutionAdapterTest` 数量反例通过 |
+| TEST-13 | 隔离 worktree 全量回归 | 已完成 | 103 suites / 560 tests / 0 failures / 0 errors / 2 skipped |
+
+- 赎回交易哈希单独不再视为成功；回执必须能对应到本地 settlement 的市场、outcome 和股数。
+- 仍未验证真实 Builder Relayer、链上回执、pUSD 到账延迟和实际到账金额。
