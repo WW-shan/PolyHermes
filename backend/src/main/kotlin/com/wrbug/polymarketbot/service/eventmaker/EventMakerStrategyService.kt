@@ -107,6 +107,7 @@ class EventMakerStrategyService(
         }
         stopping = false
         realizedPnlBaseline = 0.0
+        dailyBaselineDay = currentDayKey()
         val runId = generation.incrementAndGet()
         val scope = CoroutineScope(Job() + Dispatchers.IO)
         val channel = Channel<LiveFeedEvent>(Channel.UNLIMITED)
@@ -312,7 +313,8 @@ class EventMakerStrategyService(
                 }
                 updateStatus(states, books, trades, bookUpdates)
                 if (shouldStop) break
-                if (riskPolicy.shouldHalt(config, status.realizedPnl + status.unrealizedPnl)) {
+                rollDailyPnlBaseline(engine, states)
+                if (riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))) {
                     status = status.copy(lastError = "daily_loss_limit")
                     break
                 }
@@ -470,7 +472,8 @@ class EventMakerStrategyService(
                     lastPersistAt = now
                 }
                 if (shouldStop) break
-                if (riskPolicy.shouldHalt(config, status.realizedPnl + status.unrealizedPnl)) {
+                rollDailyPnlBaseline(engine, states)
+                if (riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))) {
                     status = status.copy(lastError = "daily_loss_limit")
                     break
                 }
@@ -769,6 +772,28 @@ class EventMakerStrategyService(
             recentCycles = states.flatMap { it.cycles }.sortedBy { it.exitAt }.takeLast(100)
         )
     }
+
+    /** Rolling day key (UTC) used to scope the daily loss budget. */
+    private fun currentDayKey(now: Long = System.currentTimeMillis()): Long = now / 86_400_000L
+
+    @Volatile
+    private var dailyBaselineDay: Long = currentDayKey()
+
+    /**
+     * Advances the engine's daily PnL baseline when the UTC day rolls over, so
+     * `maxDailyLoss` measures today's loss instead of the whole run's loss.
+     */
+    private fun rollDailyPnlBaseline(engine: EventMakerLiveEngine, states: List<EventMakerLiveState>) {
+        val today = currentDayKey()
+        if (today != dailyBaselineDay) {
+            dailyBaselineDay = today
+            engine.dailyPnlBaseline = engine.initialRealizedPnl + states.sumOf { it.realizedPnl }
+            logger.info("Event maker daily loss budget reset for day=$today")
+        }
+    }
+
+    private fun dailyPnlSinceBaseline(engine: EventMakerLiveEngine, states: List<EventMakerLiveState>): Double =
+        engine.initialRealizedPnl + states.sumOf { it.realizedPnl } + status.unrealizedPnl - engine.dailyPnlBaseline
 
     private fun persistLive(startedAt: Long?, accountId: Long, states: List<EventMakerLiveState>) {
         stateStore.save(

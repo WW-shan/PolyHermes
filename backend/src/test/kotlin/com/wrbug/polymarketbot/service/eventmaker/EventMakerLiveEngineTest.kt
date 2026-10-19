@@ -315,6 +315,27 @@ class EventMakerLiveEngineTest {
     }
 
     @Test
+    fun `daily pnl baseline scopes the loss budget to the current day`() = runTest {
+        // A run that is already down 4.0 must still be allowed to quote when the
+        // daily baseline is advanced past that loss (new trading day).
+        val now = System.currentTimeMillis()
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        val state = EventMakerLiveState(market, config)
+        state.onBook(book(0.95, 0.97, now))
+
+        val blocked = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+        assertTrue(blocked.placed.isNotEmpty(), "fresh run should quote")
+
+        engine.dailyPnlBaseline = 10_000.0
+        val afterReset = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+        assertTrue(
+            afterReset.placed.isNotEmpty() || afterReset.errors.none { it.contains("daily_loss_limit") },
+            "advanced baseline must not report a daily loss block: ${afterReset.errors}"
+        )
+    }
+
+    @Test
     fun `quote does not perform order lookups`() = runTest {
         // The LIVE event loop quotes on every WS event. Order reconciliation is a
         // REST call per active order, so quote() must never issue one; otherwise a

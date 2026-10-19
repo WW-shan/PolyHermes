@@ -52,7 +52,7 @@ class EventMakerLiveEngine(
     private val quotePlanner: EventMakerQuotePlanner,
     private val riskPolicy: EventMakerRiskPolicy,
     private val executionPort: EventMakerExecutionPort,
-    private val initialRealizedPnl: Double = 0.0
+    val initialRealizedPnl: Double = 0.0
 ) {
     private val activeAccounts = ConcurrentHashMap<String, Long>()
     private val reconcileFailures = ConcurrentHashMap<String, Int>()
@@ -60,6 +60,15 @@ class EventMakerLiveEngine(
     @Volatile
     var haltedReason: String? = null
         private set
+
+    /**
+     * Cumulative PnL at the start of the current trading day. The risk policy's
+     * `maxDailyLoss` is a DAILY budget, so the service advances this baseline when
+     * the day rolls over; without it the limit would compare against the whole run
+     * and a single early loss would lock the strategy out permanently.
+     */
+    @Volatile
+    var dailyPnlBaseline: Double = 0.0
 
     fun registerRestoredOrders(states: List<EventMakerLiveState>, accountId: Long) {
         states.forEach { state ->
@@ -141,7 +150,7 @@ class EventMakerLiveEngine(
                     totalInventoryNotional = states.sumOf { it.inventoryNotional() + it.pendingBuyNotional() },
                     openMarketCount = states.count { it.inventoryShares > BigDecimal.ZERO || it.activeOrder != null },
                     dailyPnl = initialRealizedPnl + states.sumOf { it.realizedPnl } +
-                        states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) }
+                        states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) } - dailyPnlBaseline
                 )
                 val decision = riskPolicy.canOpenBuy(config, snapshot)
                 if (!decision.allowed) {
