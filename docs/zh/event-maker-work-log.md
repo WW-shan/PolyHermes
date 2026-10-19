@@ -1171,3 +1171,10 @@
 - 外层 run job 失败 catch 现在取消 runScope 并关闭 feed、WS、data client。
 - 全量测试：103 suites / 538 tests / 0 failures / 0 errors / 2 skipped。
 - v4 Shadow 运行约 15m，11 轮严格发现均 activityPassed=0、selected=0，随后主动停止；未产生 Shadow 订单或真实订单。
+### 00:22 v5 Shadow 启动
+
+- 修复提交：`c570151 fix: cover initial live setup in cleanup`，已推送 `2b5ee12..c570151`。
+- v5 输出：`backend/build/research/event-maker-safe-candidate-shadow-main-v5-20261020/`。
+- wrapper PID `3076`，Java PID `23220`，启动 `2026-10-20 00:21:30 +08:00`。
+- 首轮 qualified=1、activityPassed=0、selected=0；原因 `recent_trades_30m_below_min=1`。
+- 当前 waiting，日志 0 异常，stderr 为空；门槛不变。

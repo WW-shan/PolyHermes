@@ -29,7 +29,7 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 干净长测真实盘口 Shadow | v4 已中止，待 v5 | v4 15m 内 0 选中；初始清理边界修复后重启 |
+| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | v5 wrapper 3076 / Java 23220；00:21 启动；当前 waiting |
 | DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 已完成 | keyset 分页、价格带预筛、候选诊断、5 个测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
@@ -42,7 +42,7 @@
 | SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 475 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 正式候选 Shadow 长测 | v4 已中止，待 v5 | setup/initial/loop 清理边界修复后需重启 |
+| OBS-4 | 正式候选 Shadow 长测 | v5 运行中 | wrapper 3076 / Java 23220；严格门槛等待中 |
 | RISK-DAY-1 | 日亏损锚点跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；103 suites / 538 tests 通过 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
@@ -50,7 +50,8 @@
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| 正式候选 Shadow v4 | 21352 / 17312 | 00:03 | 00:20 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v4-20261020/` | 11 轮 qualified=1、activityPassed=0、selected=0；清理边界修复后停止 |
+| 正式候选 Shadow v5 | 3076 / 23220 | 00:21 | 等待最多 720m；选出后 Shadow 720m | `backend/build/research/event-maker-safe-candidate-shadow-main-v5-20261020/` | waiting；首轮 qualified=1、activityPassed=0、selected=0；日志无异常 |
+| 正式候选 Shadow v4 | 21352 / 17312 | 00:03 | 00:20 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v4-20261020/` | 11 轮 0 选中；清理边界修复后停止 |
 | 正式候选 Shadow v3 | 23852 / 20988 | 23:41 | 23:55 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v3-20261019/` | 5 轮 qualified=2、activityPassed=0、selected=0；不作为最终证据 |
 | 正式候选 Shadow v2 | 5600 / 8300 | 22:51 | 23:20 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` | 29m、2 次挂单、1 次 requote、0 fill；不作为最终证据 |
 | v5 等待+Shadow 主臂 | 25560 | 09:32 | 等待最多 720m；选出后 Shadow 720m | `backend/build/research/event-maker-shadow-watch-v5-20261019/` | waiting；严格参数；窗口按 time-to-fill 分布延长 |
@@ -458,3 +459,10 @@ cd D:\Project\PolyHermes\backend
 - 外层 run job 失败路径新增资源回收：取消 runScope，关闭 feed channel、WS 和 data client。
 - 全量测试：103 suites / 538 tests / 0 failures / 0 errors / 2 skipped。
 - v4 Shadow 于 00:20 主动停止；11 轮严格发现均为 activityPassed=0、selected=0，未产生 Shadow 订单或真实订单。
+### 00:22 v5 Shadow 启动
+
+- 提交 `c570151` 已推送，最终代码启动 v5 Shadow。
+- wrapper PID `3076`，Shadow Java PID `23220`，启动 `2026-10-20 00:21:30 +08:00`。
+- 输出：`backend/build/research/event-maker-safe-candidate-shadow-main-v5-20261020/`。
+- 首轮 qualified=1、activityPassed=0、selected=0；原因 `recent_trades_30m_below_min=1`。
+- 当前 waiting、logIssues=0、stderrBytes=0；门槛不变。
