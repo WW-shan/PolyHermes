@@ -80,6 +80,13 @@ fun main(args: Array<String>) {
 
     val engine = EventMakerBacktestEngine()
     val configs = buildGrid(options.entryHorizonSeconds, options.activityGate, options.flowGuard, options.gridProfile, options.maxOrderAgeSeconds)
+    val activityGate = options.activityGate
+    println(
+        "activityGate 30m=${activityGate.minRecentTrades30m}/${activityGate.minRecentNotional30m}/" +
+            "${activityGate.minRecentTradesPerSide30m} 2h=${activityGate.minRecentTrades2h}/" +
+            "${activityGate.minRecentNotional2h}/${activityGate.minRecentTradesPerSide2h} " +
+            "(zero values mean the live Shadow/Live activity gate is NOT modelled)"
+    )
     println("configs=${configs.size}; simulating ${markets.size} markets")
     val summaries = configs.map { engine.run(markets, it).first }
     writeSummaryCsv(options.output.resolveSibling(options.output.fileName.toString() + "-summary.csv"), summaries)
@@ -248,6 +255,8 @@ private fun writeSummaryCsv(path: Path, summaries: List<EventMakerSummary>) {
     val header = listOf(
         "config", "min_price", "max_price", "entry_offset_cents", "exit_spread_cents", "queue_factor", "requote_seconds", "max_order_age_seconds", "max_cycles",
         "flow_guard_window_seconds", "flow_guard_max_signed_flow", "flow_guard_min_price_drop_cents",
+        "min_recent_trades_30m", "min_recent_notional_30m", "min_recent_trades_per_side_30m",
+        "min_recent_trades_2h", "min_recent_notional_2h", "min_recent_trades_per_side_2h",
         "total_markets", "eligible_markets", "filled_markets", "fill_rate", "total_cycles", "sold_cycles", "settled_cycles",
         "win_rate", "deployed_notional", "total_pnl", "total_roi", "avg_pnl_per_filled_market", "worst_market_pnl",
         "max_drawdown", "avg_holding_seconds", "hold_baseline_roi", "profitable_filled_markets", "total_fees", "train_pnl", "train_roi", "train_filled_markets", "train_cycles", "test_pnl", "test_roi", "test_filled_markets", "test_cycles", "max_adverse_excursion", "average_time_to_fill_seconds", "settled_losses", "break_even_loss_rate", "flow_guard_triggers"
@@ -257,6 +266,8 @@ private fun writeSummaryCsv(path: Path, summaries: List<EventMakerSummary>) {
             s.config.name, s.config.minPrice, s.config.maxPrice, s.config.entryOffsetCents, s.config.exitSpreadCents,
             s.config.queueFactor, s.config.requoteSeconds, s.config.maxOrderAgeSeconds, s.config.maxCycles,
             s.config.flowGuardWindowSeconds, s.config.flowGuardMaxSignedFlow, s.config.flowGuardMinPriceDropCents,
+            s.config.minRecentTrades30m, s.config.minRecentNotional30m, s.config.minRecentTradesPerSide30m,
+            s.config.minRecentTrades2h, s.config.minRecentNotional2h, s.config.minRecentTradesPerSide2h,
             s.totalMarkets, s.eligibleMarkets, s.filledMarkets, s.fillRate,
             s.totalCycles, s.soldCycles, s.settledCycles, s.winRate, s.deployedNotional, s.totalPnl, s.totalRoi,
             s.averagePnlPerFilledMarket, s.worstMarketPnl, s.maxDrawdown, s.averageHoldingSeconds,

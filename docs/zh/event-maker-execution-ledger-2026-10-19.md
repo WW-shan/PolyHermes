@@ -44,7 +44,9 @@
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
 | OBS-4 | 正式候选 Shadow 长测 | v6 运行中 | shadow-1..shadow-8 共 8 次挂单/8 次 requote 撤单；shadow-7 0.973/25.69 q6.18、shadow-8 0.970/25.77 q105.70，均 0 fill |
 | RISK-DAY-1 | 日亏损锚点跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；103 suites / 538 tests 通过 |
-| LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
+| RECHECK-1 | markout 时间单位修复 | 已完成 | dde0131；全量 103 suites / 562 tests |
+| RECHECK-2 | 八窗口活动门槛口径复核 | 已完成 | 1d 由 93/0 亏损变为 68/1 亏损；全窗口通过配置 0 个；见 event-maker-activity-gate-recheck-2026-10-20.md |
+| LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围；**且策略经济性证据尚不成立** |
 
 ## 3. 最近后台进程与状态
 
