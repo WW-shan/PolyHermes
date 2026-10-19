@@ -705,11 +705,16 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
     private fun recordEngineResult(result: EventMakerEngineResult) {
         quotesPlaced += result.placed.size
         cancels += result.canceled.size
-        val actionableErrors = result.errors.filterNot { it.startsWith("risk_blocked:") }
+        val flowGuardBlocks = result.errors.filter { it.startsWith("flow_guard_blocked:") }
+        val actionableErrors = result.errors.filterNot {
+            it.startsWith("risk_blocked:") || it.startsWith("flow_guard_blocked:")
+        }
         actionableErrors.forEach { addError(it) }
         result.haltedReason?.let { addError(it) }
         val meaningfulReconciled = result.reconciled.filter { it.events.isNotEmpty() }
-        if (result.placed.isNotEmpty() || result.canceled.isNotEmpty() || meaningfulReconciled.isNotEmpty() || actionableErrors.isNotEmpty()) {
+        if (result.placed.isNotEmpty() || result.canceled.isNotEmpty() ||
+            meaningfulReconciled.isNotEmpty() || actionableErrors.isNotEmpty() || flowGuardBlocks.isNotEmpty()
+        ) {
             writeEvent(
                 mapOf(
                     "type" to "engine",
@@ -717,6 +722,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     "placed" to result.placed,
                     "canceled" to result.canceled,
                     "reconciled" to meaningfulReconciled,
+                    "blocked" to flowGuardBlocks,
                     "errors" to actionableErrors,
                     "haltedReason" to result.haltedReason
                 )

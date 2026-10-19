@@ -1182,3 +1182,12 @@
 
 - Shadow 请求示例更新为正式候选：price 0.97–0.99、activity 30m/2h 门槛、remaining 720–10080m、entryOffset 0、exitSpread 1c、fillFactor 20、maxCycles 1、orderNotional 25。
 - Live 示例改为单市场最小 smoke 参数，明确不是放宽门槛；`maxMarkets=1`、`maxTotalInventoryNotional=25`、`maxDailyLoss=5`，并要求用户先提供账户、资金、时间窗口、市场范围和明确授权。
+### 00:50 Guard 审计语义与实验臂执行证据
+
+- 正式 v5 在第 17 轮选中 Israel x Iran，bid 0.970 / ask 0.975、5 ticks、队列 6.87；Guard 连续阻止，未挂单。
+- 实验臂（仅 minSpreadTicks=1）产生 shadow-1 BUY 0.972 / 25.72 股，queue 5.74，5 秒后 adverse_flow 撤单，0 fill。
+- 实验期间出现 WS/Data API 握手瞬态，自动重连后恢复。
+- 发现 `flow_guard_blocked` 被写入 `lastErrors`，会使最终审计误报；已改为事件 `blocked`，`lastErrors` 只保留真正的异常。
+- `audit-event-maker-shadow.ps1` 只拒绝非预期 `lastErrors`；fixture 正向/负向均验证通过。
+- 全量测试：103 suites / 538 tests / 0 failures / 0 errors / 2 skipped。
+- v5 正式臂与实验臂于 00:50 主动停止；v6 待提交后启动。

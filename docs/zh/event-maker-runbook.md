@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-20 00:00）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 538 tests 通过。日亏损使用持久化 UTC 锚点，同日重启不重置、跨日重锚、时钟回拨不重置；无买盘持仓按最坏估值。对账/初始 tick 的未知状态和日亏损会主动关闭事件通道并进入统一清理。v3 Shadow 严格门槛下 0 选中后因本轮修复停止；v4 Shadow 在后续初始清理边界审计后停止；v5 已于 00:21 用最终代码启动并等待严格活动市场。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-20 00:00）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 538 tests 通过。日亏损使用持久化 UTC 锚点，同日重启不重置、跨日重锚、时钟回拨不重置；无买盘持仓按最坏估值。对账/初始 tick 的未知状态和日亏损会主动关闭事件通道并进入统一清理。v3 Shadow 严格门槛下 0 选中后因本轮修复停止；v4 Shadow 在后续初始清理边界审计后停止；v5 已选中市场但被 adverse-flow Guard 阻止，实验臂暴露审计误分类后停止；v6 待最终提交后重启。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
@@ -233,13 +233,14 @@ cd D:\Project\PolyHermes
 - `summary.fills` 与 `state.json` 的逐市场 fills 总数一致；
 - `summary.completedCycles` 与 state cycles 总数一致；
 - `execution-diagnostics.json` 的 `activeOrders=0`；
-- `haltedReason` 为空且 `lastErrors` 为空；
+- `haltedReason` 为空，且 `lastErrors` 中没有非预期异常；
 - `trades.csv` 中同一 transaction hash/token/side/size 没有重复行；
 - `events.jsonl` 的 placed/canceled 数量与 summary 的 quotesPlaced/cancels 一致；
 - 每个已挂订单都出现在 `execution-diagnostics.json`，且不存在重复 orderId；
 - 有 fill 时 markout 是否写出；
 - 未平库存作为 warning 报告；
-- `events.jsonl` 缺失或为空只作为 warning，兼容旧运行产物。
+- `events.jsonl` 缺失或为空只作为 warning，兼容旧运行产物；
+- `risk_blocked:*` 和 `flow_guard_blocked:*` 是预期防守事件，不应作为 fatal `lastErrors`；Guard 阻止会记录在 engine event 的 `blocked` 字段。
 
 结果写入同目录 `shadow-audit.json`；`failures` 非空时脚本非零退出。
 ## 5. Spring REST 控制

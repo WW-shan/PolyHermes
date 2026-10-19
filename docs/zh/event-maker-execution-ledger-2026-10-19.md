@@ -29,7 +29,7 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | v5 wrapper 3076 / Java 23220；00:21 启动；当前 waiting |
+| OBS-1 | 干净长测真实盘口 Shadow | v5 已中止，待 v6 | v5 选中但被 Guard 阻止；修复审计分类后重启 |
 | DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 已完成 | keyset 分页、价格带预筛、候选诊断、5 个测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
@@ -42,7 +42,7 @@
 | SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 475 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 正式候选 Shadow 长测 | v5 运行中 | wrapper 3076 / Java 23220；严格门槛等待中 |
+| OBS-4 | 正式候选 Shadow 长测 | v5 已中止，待 v6 | 实验臂完成挂单/adverse_flow 撤单；审计分类修复后重启 |
 | RISK-DAY-1 | 日亏损锚点跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；103 suites / 538 tests 通过 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
@@ -50,7 +50,8 @@
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| 正式候选 Shadow v5 | 3076 / 23220 | 00:21 | 等待最多 720m；选出后 Shadow 720m | `backend/build/research/event-maker-safe-candidate-shadow-main-v5-20261020/` | waiting；首轮 qualified=1、activityPassed=0、selected=0；日志无异常 |
+| 实验臂 spread1 v5 | 11300 / 23668 | 00:34 | 00:50 主动中止 | `backend/build/research/event-maker-shadow-experiment-spread1-v5-20261020/` | selected=1；shadow-1 BUY 0.972 / 25.72，5s 后 adverse_flow 撤销；0 fill |
+| 正式候选 Shadow v5 | 3076 / 23220 | 00:21 | 00:50 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v5-20261020/` | 第17轮 selected=1；bid0.970/ask0.975；flow guard 阻止；0 挂单 |
 | 正式候选 Shadow v4 | 21352 / 17312 | 00:03 | 00:20 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v4-20261020/` | 11 轮 0 选中；清理边界修复后停止 |
 | 正式候选 Shadow v3 | 23852 / 20988 | 23:41 | 23:55 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v3-20261019/` | 5 轮 qualified=2、activityPassed=0、selected=0；不作为最终证据 |
 | 正式候选 Shadow v2 | 5600 / 8300 | 22:51 | 23:20 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` | 29m、2 次挂单、1 次 requote、0 fill；不作为最终证据 |
@@ -466,3 +467,12 @@ cd D:\Project\PolyHermes\backend
 - 输出：`backend/build/research/event-maker-safe-candidate-shadow-main-v5-20261020/`。
 - 首轮 qualified=1、activityPassed=0、selected=0；原因 `recent_trades_30m_below_min=1`。
 - 当前 waiting、logIssues=0、stderrBytes=0；门槛不变。
+### 00:50 Guard 审计语义与实验臂执行证据
+
+- 正式 v5 第 17 轮选中 Israel x Iran 市场：bid `0.970`、ask `0.975`、5 ticks、队列 `6.87`。
+- 选中后收到 `flow_guard_blocked`，没有产生活动订单；这是防守行为，不是故障。
+- 实验臂（仅 `minSpreadTicks=1`）在同一市场产生 `shadow-1` BUY `0.972` / `25.72` 股，queue `5.74`；5 秒后因 `adverse_flow` 撤销，0 fill。
+- 发现 `flow_guard_blocked` 被 Shadow CLI 写入 `lastErrors`，会让最终审计误报。已改为写入事件 `blocked` 字段，不进入 fatal `lastErrors`。
+- 审计脚本只对非预期 `lastErrors` 失败；fixture 验证 `flow_guard_blocked` 通过、`fatal_state_error` 非零失败。
+- 全量测试：103 suites / 538 tests / 0 failures / 0 errors / 2 skipped。
+- v5 正式臂和实验臂均于 00:50 主动停止；v6 待最终提交后启动。

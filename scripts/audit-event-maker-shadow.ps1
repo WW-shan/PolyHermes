@@ -193,8 +193,14 @@ if ($null -ne $summary.droppedPendingMarkouts) {
 if ($droppedMarkouts -gt 0) {
     $warnings.Add("droppedPendingMarkouts=$droppedMarkouts (fills too close to run end for their horizon)")
 }
-if (@($summary.lastErrors).Count -gt 0) {
-    $failures.Add("lastErrors=$((@($summary.lastErrors) | ConvertTo-Json -Compress))")
+$expectedNonFatalErrors = @($summary.lastErrors | Where-Object {
+    $_ -like 'risk_blocked:*' -or $_ -like 'flow_guard_blocked:*'
+})
+$unexpectedLastErrors = @($summary.lastErrors | Where-Object {
+    $_ -notlike 'risk_blocked:*' -and $_ -notlike 'flow_guard_blocked:*'
+})
+if ($unexpectedLastErrors.Count -gt 0) {
+    $failures.Add("lastErrors=$($unexpectedLastErrors | ConvertTo-Json -Compress)")
 }
 
 $audit = [ordered]@{
@@ -208,6 +214,7 @@ $audit = [ordered]@{
     cancels = $summary.cancels
     fills = $summary.fills
     stateFills = $stateFills
+    expectedNonFatalErrors = $expectedNonFatalErrors
     completedCycles = $summary.completedCycles
     stateCycles = $stateCycles
     realizedPnl = $summary.realizedPnl
