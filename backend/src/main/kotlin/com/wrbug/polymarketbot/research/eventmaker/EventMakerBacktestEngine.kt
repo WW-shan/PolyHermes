@@ -295,7 +295,10 @@ class EventMakerBacktestEngine(
             }
             val worstMarkPrice = markedPrices.minOrNull() ?: cycle.entryPrice
             val entryFee = cycle.entryPrice * cycle.shares * config.makerFeeRate
-            val markoutTarget = cycle.entryTimestamp + 60_000L
+            // Research dataset timestamps are epoch seconds, so the 60-second
+            // markout horizon must be +60, not +60_000. The Shadow/Live path
+            // uses epoch milliseconds and applies its own *1_000 conversion.
+            val markoutTarget = cycle.entryTimestamp + 60L
             val markoutTrade = trades.firstOrNull { it.timestamp >= markoutTarget }
                 ?: trades.lastOrNull { it.timestamp in cycle.entryTimestamp..markoutTarget }
             cycle.copy(

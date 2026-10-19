@@ -428,6 +428,28 @@ class EventMakerBacktestEngineTest {
         assertEquals(MakerExitType.SETTLE, result.cycles.single().exitType)
     }
 
+    @Test
+    fun `markout uses the first print at or after 60 seconds, not 60_000 seconds`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_100, 0, 0.975, 300.0, "SELL"),
+                trade(9_165, 0, 0.980, 10.0),
+                trade(9_500, 0, 0.990, 300.0, "BUY")
+            )
+        )
+
+        val result = engine.simulateMarket(market, baseConfig())
+
+        val cycle = result.cycles.single()
+        assertEquals(MakerExitType.SELL, cycle.exitType)
+        assertEquals(9_100L, cycle.entryTimestamp)
+        val shares = 100.0 / 0.975
+        // The print at 9_165 is the first one at or after entry + 60 seconds.
+        assertEquals(0.005 * shares, cycle.markout60sPnl!!, 0.0001)
+    }
+
     private fun baseConfig(maxCycles: Int = 1) = EventMakerConfig(
         name = "test",
         entryHorizonSeconds = 1_000,
