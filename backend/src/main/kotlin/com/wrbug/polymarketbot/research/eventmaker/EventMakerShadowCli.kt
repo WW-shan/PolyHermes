@@ -76,7 +76,8 @@ private data class ShadowOptions(
     val staleBookSeconds: Long,
     val activeOrderStaleBookSeconds: Long,
     val orderNotional: Double,
-    val fillVolumeFactor: Double
+    val fillVolumeFactor: Double,
+    val maxCyclesPerMarket: Int
 )
 
 private data class ShadowSummary(
@@ -174,6 +175,7 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     val activeOrderStaleBookSeconds = option("active-order-stale-seconds")?.toLongOrNull() ?: 600L
     val orderNotional = option("order-notional")?.toDoubleOrNull() ?: 25.0
     val fillVolumeFactor = option("fill-volume-factor")?.toDoubleOrNull() ?: 1.0
+    val maxCyclesPerMarket = option("max-cycles-per-market")?.toIntOrNull() ?: 3
     val discoveryPages = option("discovery-pages")?.toIntOrNull() ?: 50
     val waitForMarketMinutes = option("wait-for-market-minutes")?.toIntOrNull() ?: 0
     val discoveryRetrySeconds = option("discovery-retry-seconds")?.toLongOrNull() ?: 60L
@@ -191,6 +193,7 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     require(activeOrderStaleBookSeconds >= staleBookSeconds)
     require(orderNotional > 0.0)
     require(fillVolumeFactor >= 0.0)
+    require(maxCyclesPerMarket >= 1)
     require(discoveryPages in 1..100)
     require(waitForMarketMinutes >= 0)
     require(discoveryRetrySeconds > 0)
@@ -232,7 +235,8 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
         staleBookSeconds = staleBookSeconds,
         activeOrderStaleBookSeconds = activeOrderStaleBookSeconds,
         orderNotional = orderNotional,
-        fillVolumeFactor = fillVolumeFactor
+        fillVolumeFactor = fillVolumeFactor,
+        maxCyclesPerMarket = maxCyclesPerMarket
     )
 }
 
@@ -479,7 +483,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             exitImproveTicks = options.exitImproveTicks,
             maxTotalInventoryNotional = 100.0,
             maxDailyLoss = 5.0,
-            maxCyclesPerMarket = 3,
+            maxCyclesPerMarket = options.maxCyclesPerMarket,
             requoteSeconds = options.requoteSeconds,
             maxOrderAgeSeconds = options.maxOrderAgeSeconds,
             flowGuardWindowSeconds = options.flowGuardWindowSeconds,

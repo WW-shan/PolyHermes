@@ -37,15 +37,65 @@ cd D:\Project\PolyHermes\backend
 - 全量测试 0 失败；
 - 不允许用“编译通过”代替订单状态机、执行守卫和 mock 流程测试。
 
+### 3.1 历史研究数据缓存与参数邻域
+
+完整池抓取一次后可以复用压缩数据集，避免参数网格重复请求 API：
+
+```powershell
+cd D:\Project\PolyHermes\backend
+
+.\gradlew.bat eventMakerBacktest `
+  "-PresearchProxy=http://127.0.0.1:10808" `
+  "-PresearchDataset=build/research/event-maker-24h.json.gz" `
+  "-PresearchMaxMarkets=5000" `
+  "-PresearchMinVolume=100000" `
+  "-PresearchFrom=2024-01-01" `
+  "-PresearchTo=2026-10-01" `
+  "-PresearchEntryHorizonSeconds=86400" `
+  "-PresearchFlowGuardWindowSeconds=3600" `
+  "-PresearchFlowGuardMaxSignedFlow=-0.4" `
+  "-PresearchFlowGuardMinPriceDropCents=0.5" `
+  "-PresearchOutput=build/research/event-maker-grid" `
+  --console=plain
+```
+
+- 数据集是 gzip JSON，写入采用临时文件 + 原子替换；损坏或不完整的数据不会覆盖旧缓存。
+- 缓存必须匹配 `from/to/minVolume/maxMarkets`，且数据集的成交窗口不能短于本次 `entryHorizonSeconds`；更长窗口的数据集可安全重放更短窗口。
+- 需要强制重新抓取时增加 `"-PresearchRefreshDataset=true"`。
+- Gamma 发现或任一市场成交抓取失败会中止整次运行，不再静默跳过月份或写成空成交。
+- 未传 `-PresearchProxy` 时研究客户端明确使用直连；如果本机 DNS 被污染导致直连超时，显式传代理。
+- `"-PresearchGridProfile=candidate-neighborhood"` 会运行候选价格带、相邻价格带、0.75–2.0c 退出价差和 q10–q50 的 1,008 配置邻域。
+- `"-PresearchFocusConfig=<config>"` 会额外输出该配置的完整 markets、cycles 和费用敏感性。
+- `"-PresearchMaxOrderAgeSeconds=1800"` 必须与 Shadow 的 `shadowMaxOrderAgeSeconds` 一致；回测会在成交前撤销过期订单。
+
 ## 4. 独立 Shadow 长测
+
+推荐用封装脚本启动正式候选（只读、不会下真实订单）：
+
+```powershell
+.\scripts\start-event-maker-shadow.ps1 `
+  -OutputDir "backend/build/research/event-maker-safe-candidate-shadow-main-20261019" `
+  -Spread 2 `
+  -MaxMarkets 18 `
+  -WaitMinutes 720 `
+  -Minutes 720 `
+  -MinRemainingMinutes 720 `
+  -MaxRemainingMinutes 10080 `
+  -MaxCyclesPerMarket 1 `
+  -FillVolumeFactor 20 `
+  -EntryOffsetCents 0 `
+  -ExitSpreadCents 1
+```
+
+等价的底层 Gradle 命令：
 
 ```powershell
 cd D:\Project\PolyHermes\backend
 
 .\gradlew.bat eventMakerShadow `
   "-PshadowProxy=http://127.0.0.1:10808" `
-  "-PshadowMinutes=120" `
-  "-PshadowMaxMarkets=6" `
+  "-PshadowMinutes=720" `
+  "-PshadowMaxMarkets=18" `
   "-PshadowDiscoveryPages=50" `
   "-PshadowWaitForMarketMinutes=720" `
   "-PshadowDiscoveryRetrySeconds=60" `
@@ -58,15 +108,16 @@ cd D:\Project\PolyHermes\backend
   "-PshadowMinRecentTrades2h=20" `
   "-PshadowMinRecentNotional2h=500" `
   "-PshadowMinRecentTradesPerSide2h=3" `
-  "-PshadowMinRemainingMinutes=120" `
+  "-PshadowMinRemainingMinutes=720" `
+  "-PshadowMaxRemainingMinutes=10080" `
   "-PshadowAllowNegRisk=true" `
   "-PshadowMaxQueue=100000" `
   "-PshadowSnapshotSeconds=10" `
   "-PshadowMinSpreadTicks=2" `
   "-PshadowImproveTicks=0" `
-  "-PshadowEntryOffsetCents=0.5" `
+  "-PshadowEntryOffsetCents=0" `
   "-PshadowExitImproveTicks=0" `
-  "-PshadowExitSpreadCents=2" `
+  "-PshadowExitSpreadCents=1" `
   "-PshadowRequoteSeconds=300" `
   "-PshadowMaxOrderAgeSeconds=1800" `
   "-PshadowStaleBookSeconds=300" `
@@ -75,8 +126,9 @@ cd D:\Project\PolyHermes\backend
   "-PshadowFlowGuardMaxSignedFlow=-0.4" `
   "-PshadowFlowGuardMinPriceDropCents=0.5" `
   "-PshadowOrderNotional=25" `
-  "-PshadowFillVolumeFactor=1" `
-  "-PshadowOutput=build/research/event-maker-shadow-passive" `
+  "-PshadowFillVolumeFactor=20" `
+  "-PshadowMaxCyclesPerMarket=1" `
+  "-PshadowOutput=build/research/event-maker-safe-candidate-shadow" `
   --console=plain
 ```
 
@@ -98,7 +150,8 @@ cd D:\Project\PolyHermes\backend
 | `shadowMinRecentNotional2h` | 近 2 小时最少成交额 |
 | `shadowMinRecentTradesPerSide2h` | 近 2 小时买卖两侧各自最少成交笔数 |
 | `shadowMinPrice` / `shadowMaxPrice` | favorite 买一价格带 |
-| `shadowMinRemainingMinutes` | 距离结束至少剩余分钟数 |
+| `shadowMinRemainingMinutes` | 距离结束至少剩余分钟数；正式候选默认 720（12h） |
+| `shadowMaxRemainingMinutes` | 距离结束最多剩余分钟数；正式候选默认 10080（7d），与回测窗口范围一致 |
 | `shadowAllowNegRisk` | 是否允许 negRisk 市场 |
 | `shadowMaxQueue` | 前方最大可接受队列股数；过小会导致一档价差市场完全不报价 |
 | `shadowSnapshotSeconds` | 快照间隔 |
@@ -115,7 +168,8 @@ cd D:\Project\PolyHermes\backend
 | `shadowFlowGuardMaxSignedFlow` | 触发 Guard 的最大 signed flow，默认 -0.4 |
 | `shadowFlowGuardMinPriceDropCents` | 触发 Guard 的最小价格跌幅（美分），默认 0.5 |
 | `shadowOrderNotional` | 单市场订单名义金额 |
-| `shadowFillVolumeFactor` | 队列清空后，累计需要多少倍订单股数的反向成交才成交；0 为旧乐观模式，1 为保守基准，10/50 为深队列压力测试 |
+| `shadowMaxCyclesPerMarket` | 每个市场最多完成的回合数；正式候选为 1 |
+| `shadowFillVolumeFactor` | 队列清空后，累计需要多少倍订单股数的反向成交才成交；0 为旧乐观模式，1 为保守基准，正式候选为 20 |
 | `shadowOutput` | 输出目录 |
 
 输出文件：

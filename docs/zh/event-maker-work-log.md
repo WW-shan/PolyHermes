@@ -994,3 +994,115 @@
 - 正式参数两臂已运行 5 轮：主臂和实验臂均为 qualified=2、activityPassed=0、selected=0，拒绝原因 `recent_trades_30m_below_min=2`。
 - 两臂 `logIssues=0`、`stderrBytes=0`，未降低活动门槛。
 - 进程：主臂 wrapper `11600` / Java `26308`；实验臂 wrapper `25864` / Java `22788`。
+## 22:35 数据缓存、执行一致性修复与跨窗口候选复核
+
+### 本轮目标
+
+- 补全候选策略的稳健性证明，不再用单窗口结果直接启动 Shadow。
+- 修复研究数据抓取和回测执行模型中会导致假结论的缺口。
+- 生成可重复的数据集、跨窗口报告和 Shadow 启动参数。
+- 在证据充分后重启正式 Shadow，并提交本轮代码与文档。
+
+### 数据与缓存
+
+- 新增 `EventMakerDatasetStore`：gzip JSON 数据快照，写入采用临时文件 + 原子替换，避免中断时损坏旧缓存。
+- CLI 增加 `--dataset`、`--refresh-dataset`、`--focus-config`、`--grid-profile`，以及可覆盖更大窗口的缓存复用规则。
+- 生成 `backend/build/research/event-maker-full-v2-7d-20261019-dataset.json.gz`，4,189 个市场，7 天成交历史。
+- 抓取失败不再静默跳过月份或写入空成交：Gamma 发现失败直接中止，单市场成交重试 3 次后仍失败也中止整次运行。
+- 未传代理时显式使用 `Proxy.NO_PROXY`；本机 DNS 污染时通过 `-PresearchProxy=http://127.0.0.1:10808` 运行。
+
+### 回测执行模型修复
+
+- 发现回测允许挂单存活数天，而 Shadow/Live 在 `maxOrderAgeSeconds=1800` 时撤单。旧结果中的 3d/6d 结算归零来自这种“过期挂单迟到成交”的失真。
+- 回测现在在成交前检查最大挂单年龄；买单过期直接撤单，卖单过期撤单后必须等待后续打印才能重新排队。
+- 买单 requote 仅在目标价真的变化时发生，和 Live `priceChanged` 逻辑对齐。
+- 新增 `--max-order-age-seconds` / `-PresearchMaxOrderAgeSeconds`，默认 1,800。
+- 新增两条单元测试：过期买单不得成交；过期卖单不得在同一打印上成交。
+
+### 候选结果
+
+候选：`p0.97-0.99_off0.0_spread1.0_q20.0_c1_r300`
+
+24h 窗口（7d 数据集重放）：
+
+- eligible=566，filled=93，SELL=89，SETTLE=4。
+- 结算亏损 0，胜率 100%，PnL +97.8690，ROI +1.0524%。
+- 训练 27 回合 ROI +1.0378%；测试 66 回合 ROI +1.0583%。
+- 最差市场 +1.0111，最大回撤 0，MAE -92.02。
+- 平均持仓 9.53 小时，平均成交等待 280 秒，Guard 触发 408 次。
+
+8 个入场窗口：
+
+| 窗口 | 回合 | 结算亏损 | ROI | 训练 ROI | 测试 ROI |
+|---|---:|---:|---:|---:|---:|
+| 12h | 63 | 0 | +1.033% | +1.038% | +1.030% |
+| 1d | 93 | 0 | +1.052% | +1.038% | +1.058% |
+| 2d | 96 | 0 | +1.061% | +1.047% | +1.070% |
+| 3d | 77 | 0 | +1.090% | +1.123% | +1.067% |
+| 4d | 87 | 0 | +1.108% | +1.097% | +1.110% |
+| 5d | 75 | 0 | +1.130% | +1.074% | +1.170% |
+| 6d | 78 | 0 | +1.164% | +1.171% | +1.160% |
+| 7d | 61 | 0 | +1.095% | +1.106% | +1.080% |
+
+全窗口交集（8 窗口均零结算亏损、总 ROI/训练/测试为正、训练成交 >=20）只有 2 个配置；正式候选的最差窗口 ROI 为 +1.033%，是两者中更高的。
+
+### Guard A/B 与费用
+
+同数据、同最大挂单年龄的 24h A/B：
+
+- 无 Guard：101 回合，1 次结算亏损，PnL +5.05，ROI +0.05%，测试 ROI -0.39%，最差 -100。
+- Guard：93 回合，0 次结算亏损，PnL +97.87，ROI +1.052%，测试 ROI +1.058%，最差 +1.011。
+
+费用压力（24h）：
+
+- 0bps +1.052%
+- 10bps +0.856%
+- 25bps +0.561%
+- 50bps +0.069%
+- 100bps -0.914%
+
+### 参数邻域
+
+`candidate-neighborhood` 共 1,008 个配置：
+
+- q15–q50 全部 0 结算亏损；q10 仍有 1 次。q20 不是孤立尖峰。
+- spread 0.75/1.0/1.25/1.5c 全部 0 结算亏损；1.75/2.0c 各有 1 次。
+- offset 0/0.25/0.5/1.0c 全部 0 结算亏损，但 offset 越大成交越少。
+- 24h 窗口下相邻价格带 `0.95-0.97`、`0.985-0.995` 也都是 0 结算亏损，但跨窗口收益低于正式候选。
+
+### 尾部风险边界
+
+- 24h 只有 93 个零亏损回合；rule-of-three 95% 上界约 3.23%，高于 1.041% 的盈亏平衡线。
+- 按该粗略标准需要约 289 个零亏损独立回合。
+- 8 个窗口复用同一批市场和成交，不能把回合数直接相加。
+- 因此结论是“可进入 Shadow”，不是“已经证明实盘安全”。
+
+### 测试
+
+- 全量测试：`102 suites / 530 tests / 0 failures / 0 errors / 2 skipped`。
+- 命令：`.\gradlew.bat test --console=plain`。
+- 定向 event-maker 测试：140 tests 通过。
+
+### 证据
+
+- `docs/zh/event-maker-safe-candidate-2026-10-19.md`
+- `backend/build/research/event-maker-guard-age1800-horizon-{12h,1d,2d,3d,4d,5d,6d,7d}-candidate-20261019-summary.csv`
+- `backend/build/research/event-maker-candidate-neighborhood-age1800-20261019-summary.csv`
+- `backend/build/research/event-maker-no-guard-age1800-horizon-1d-candidate-20261019-summary.csv`
+- `backend/build/research/event-maker-guard-age1800-horizon-*-focus-robustness.md`
+
+### 当前边界
+
+- 仍不能真实实盘。
+- 仍不能跟单目标地址。
+- 真实 Live smoke 仍需要账户、资金上限、明确授权和时间窗口。
+### 22:51 正式候选 Shadow 启动
+
+- 输出目录：`backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/`。
+- wrapper PID `5600`，Shadow Java PID `8300`。
+- 参数：spread=2 ticks、price 0.97–0.99、maxMarkets=18、wait=720m、run=720m、minRemaining=720m、maxRemaining=10080m、fillVolumeFactor=20、maxCyclesPerMarket=1、entryOffset=0、exitSpread=1c、maxOrderAge=1800s、Guard 3600s/-0.4/0.5c。
+- 首轮发现：qualified=1、activityPassed=1、selected=1。
+- 选中市场：`Israel x Iran ceasefire continues through October 21?`。
+- 盘口：bid 0.976、ask 0.978；Shadow BUY 0.976、25.61 shares，`shadow-1`，状态 LIVE（仅 Shadow，不下真实订单）。
+- `check-event-maker-watch.ps1`：`logIssues=0`、`stderrBytes=0`。
+- Shadow 运行期间禁止编译和测试；后续按 `summary.json` 和审计脚本验收。

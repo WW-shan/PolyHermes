@@ -37,7 +37,12 @@ class EventMakerResearchDataClient(
         .readTimeout(90, TimeUnit.SECONDS)
         .callTimeout(120, TimeUnit.SECONDS)
         .apply {
-            if (!proxyUrl.isNullOrBlank()) {
+            if (proxyUrl.isNullOrBlank()) {
+                // The JVM/OkHttp default uses the Windows system proxy. Research CLI
+                // callers that omit --proxy expect a direct connection, not an
+                // unrelated global proxy that may be stale or unreachable.
+                proxy(Proxy.NO_PROXY)
+            } else {
                 val uri = URI(proxyUrl)
                 val port = if (uri.port > 0) uri.port else 10808
                 proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(uri.host, port)))
@@ -65,7 +70,14 @@ class EventMakerResearchDataClient(
                         fetchGammaPage(tag, monthStart, monthEnd, offset, minVolume)
                     }.onFailure {
                         progress("Gamma failed tag=${tag.label} month=$month offset=$offset: ${it.message}")
-                    }.getOrNull() ?: break
+                    }.getOrElse {
+                        // A skipped month silently changes the research sample. Refuse to
+                        // produce a cache that looks complete but is missing markets.
+                        throw IllegalStateException(
+                            "Gamma discovery failed tag=${tag.label} month=$month offset=$offset; refusing partial dataset",
+                            it
+                        )
+                    }
                     if (page.isEmpty()) break
                     for (raw in page) {
                         val parsed = parseMarket(raw, tag, minVolume) ?: continue
@@ -82,21 +94,19 @@ class EventMakerResearchDataClient(
         val sampled = sampleEvenly(markets.values.sortedBy { it.closedTimestamp }, maxMarkets)
         progress("markets=${markets.size} sampled=${sampled.size}; fetching trade history")
         val counter = AtomicInteger(0)
-        val failedTradeFetches = AtomicInteger(0)
         val semaphore = Semaphore(concurrency.coerceAtLeast(1))
         coroutineScope {
             sampled.map { market ->
                 async(Dispatchers.IO) {
                     semaphore.withPermit {
-                        val trades = runCatching {
-                            fetchTrades(market.conditionId, market.closedTimestamp, entryHorizonSeconds)
-                        }.onFailure {
-                            failedTradeFetches.incrementAndGet()
-                            progress("trades failed ${market.conditionId}: ${it.message}")
-                        }.getOrDefault(emptyList())
+                        val trades = fetchTradesWithRetry(
+                            market.conditionId,
+                            market.closedTimestamp,
+                            entryHorizonSeconds
+                        )
                         val done = counter.incrementAndGet()
                         if (done % 20 == 0 || done == sampled.size) {
-                            progress("trade history $done/${sampled.size} failures=${failedTradeFetches.get()}")
+                            progress("trade history $done/${sampled.size}")
                         }
                         delay(35)
                         market.copy(trades = trades)
@@ -104,6 +114,27 @@ class EventMakerResearchDataClient(
                 }
             }.awaitAll()
         }
+    }
+
+    private suspend fun fetchTradesWithRetry(
+        conditionId: String,
+        closedTimestamp: Long,
+        entryHorizonSeconds: Long
+    ): List<EventMakerTrade> {
+        var lastError: Exception? = null
+        repeat(3) { attempt ->
+            try {
+                return fetchTrades(conditionId, closedTimestamp, entryHorizonSeconds)
+            } catch (error: Exception) {
+                lastError = error
+                progress("trades retry ${attempt + 1}/3 conditionId=$conditionId: ${error.message}")
+                delay(1_000L * (attempt + 1))
+            }
+        }
+        throw IllegalStateException(
+            "trade history failed conditionId=$conditionId after 3 attempts; refusing partial dataset",
+            lastError
+        )
     }
 
     private fun fetchGammaPage(

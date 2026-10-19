@@ -44,6 +44,12 @@ data class EventMakerConfig(
     val exitSpreadCents: Double = 1.0,
     val queueFactor: Double = 2.0,
     val requoteSeconds: Long = 300,
+    /**
+     * Maximum age of a resting quote before the backtest cancels it, matching
+     * the Shadow/Live max_age path. A zero would be invalid because a never-cancelled
+     * order cannot represent the live execution lifecycle.
+     */
+    val maxOrderAgeSeconds: Long = 1_800,
 
     /**
      * Optional adverse-selection guard. Before quoting/filling, compute the signed
@@ -78,6 +84,8 @@ data class EventMakerConfig(
         require(exitSpreadCents >= 0.0) { "exitSpreadCents must be non-negative" }
         require(queueFactor > 0.0) { "queueFactor must be positive" }
         require(requoteSeconds >= 0) { "requoteSeconds must be non-negative" }
+        require(maxOrderAgeSeconds >= 1) { "maxOrderAgeSeconds must be positive" }
+        require(maxOrderAgeSeconds >= requoteSeconds) { "maxOrderAgeSeconds must be >= requoteSeconds" }
         require(orderNotional > 0.0) { "orderNotional must be positive" }
         require(maxCycles >= 1) { "maxCycles must be at least 1" }
         require(makerFeeRate >= 0.0) { "makerFeeRate must be non-negative" }

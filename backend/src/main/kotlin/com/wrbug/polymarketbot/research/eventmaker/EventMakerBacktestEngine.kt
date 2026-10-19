@@ -131,6 +131,7 @@ class EventMakerBacktestEngine(
         var inventory: Inventory? = null
         var buyOrder: BuyOrder? = null
         var sellPrice: Double? = null
+        var sellPlacedTimestamp: Long? = null
         var sellEligibleVolume = 0.0
         var flowGuardWasBlocked = false
         var flowGuardTriggers = 0
@@ -187,8 +188,18 @@ class EventMakerBacktestEngine(
                     continue
                 }
 
+                // The live engine cancels a resting order once maxOrderAgeSeconds is
+                // reached. Model that cancellation before any fill check so a quote
+                // cannot survive for days in the backtest and fill only after a market
+                // has already broken.
+                if (trade.timestamp - currentOrder.placedTimestamp >= config.maxOrderAgeSeconds) {
+                    buyOrder = null
+                    continue
+                }
+
                 if (config.requoteSeconds > 0 && trade.timestamp - currentOrder.placedTimestamp >= config.requoteSeconds) {
-                    if (trade.price >= config.minPrice && trade.price < config.maxPrice) {
+                    val nextLimit = roundDownToTick(max(0.001, trade.price - entryOffset), tick)
+                    if (trade.price >= config.minPrice && trade.price < config.maxPrice && nextLimit != currentOrder.limitPrice) {
                         placeBuy(trade.price, trade.timestamp)
                         continue
                     }
@@ -209,12 +220,21 @@ class EventMakerBacktestEngine(
                             timeToFillSeconds = max(0L, trade.timestamp - currentOrder.placedTimestamp)
                         )
                         sellPrice = roundUpToTick(min(0.999, currentOrder.limitPrice + exitSpread), tick)
+                        sellPlacedTimestamp = trade.timestamp
                         sellEligibleVolume = 0.0
                         buyOrder = null
                     }
                 }
             } else {
                 val targetSell = sellPrice ?: roundUpToTick(min(0.999, currentInventory.entryPrice + exitSpread), tick)
+                val sellAge = trade.timestamp - (sellPlacedTimestamp ?: currentInventory.entryTimestamp)
+                if (sellAge >= config.maxOrderAgeSeconds) {
+                    // Cancel and re-place on a later print; the same print cannot
+                    // fill a newly created order.
+                    sellPlacedTimestamp = trade.timestamp
+                    sellEligibleVolume = 0.0
+                    continue
+                }
                 // A resting SELL is only filled by taker BUY flow.
                 if (trade.takerIsBuy && trade.price >= targetSell) {
                     sellEligibleVolume += trade.size
@@ -236,6 +256,7 @@ class EventMakerBacktestEngine(
                         )
                         inventory = null
                         sellPrice = null
+                        sellPlacedTimestamp = null
                         sellEligibleVolume = 0.0
                         if (cycles.size < config.maxCycles && trade.price >= config.minPrice && trade.price < config.maxPrice) {
                             placeBuy(trade.price, trade.timestamp)

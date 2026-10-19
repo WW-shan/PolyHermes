@@ -21,30 +21,89 @@ fun main(args: Array<String>) {
     println(
         "from=${options.from} to=${options.to} minVolume=${options.minVolume} " +
             "maxMarkets=${options.maxMarkets} entryHorizonSeconds=${options.entryHorizonSeconds} " +
+            "gridProfile=${options.gridProfile.apiName} maxOrderAgeSeconds=${options.maxOrderAgeSeconds} " +
             "activityGate=${options.activityGate} flowGuard=${options.flowGuard}"
     )
     if (options.proxy != null) println("proxy=${options.proxy}")
 
-    val markets = runBlocking {
-        EventMakerResearchDataClient(
-            proxyUrl = options.proxy,
-            concurrency = options.concurrency,
-            progress = { println(it) }
-        ).fetchMarkets(
-            fromDate = options.from,
-            toDate = options.to,
-            minVolume = options.minVolume,
-            maxMarkets = options.maxMarkets,
-            entryHorizonSeconds = options.entryHorizonSeconds
-        )
+    val datasetPath = options.dataset
+    val cachedDataset = datasetPath != null && !options.refreshDataset && Files.isRegularFile(datasetPath)
+    val markets = if (cachedDataset) {
+        val snapshot = EventMakerDatasetStore.read(datasetPath!!)
+        require(
+            EventMakerDatasetStore.matches(
+                snapshot,
+                options.from,
+                options.to,
+                options.minVolume,
+                options.maxMarkets,
+                options.entryHorizonSeconds
+            )
+        ) {
+            "dataset metadata does not match requested fetch parameters: $datasetPath"
+        }
+        val loadedMarkets = snapshot.markets ?: error("dataset markets are missing")
+        println("dataset loaded markets=${loadedMarkets.size} path=$datasetPath")
+        loadedMarkets
+    } else {
+        val fetched = runBlocking {
+            EventMakerResearchDataClient(
+                proxyUrl = options.proxy,
+                concurrency = options.concurrency,
+                progress = { println(it) }
+            ).fetchMarkets(
+                fromDate = options.from,
+                toDate = options.to,
+                minVolume = options.minVolume,
+                maxMarkets = options.maxMarkets,
+                entryHorizonSeconds = options.entryHorizonSeconds
+            )
+        }
+        if (datasetPath != null && fetched.isNotEmpty()) {
+            EventMakerDatasetStore.write(
+                datasetPath,
+                EventMakerDatasetSnapshot(
+                    createdAt = System.currentTimeMillis(),
+                    fromDate = options.from.toString(),
+                    toDate = options.to.toString(),
+                    minVolume = options.minVolume,
+                    maxMarkets = options.maxMarkets,
+                    entryHorizonSeconds = options.entryHorizonSeconds,
+                    markets = fetched
+                )
+            )
+            println("dataset wrote markets=${fetched.size} path=$datasetPath")
+        }
+        fetched
     }
     require(markets.isNotEmpty()) { "No eligible markets returned" }
 
     val engine = EventMakerBacktestEngine()
-    val configs = buildGrid(options.entryHorizonSeconds, options.activityGate, options.flowGuard)
+    val configs = buildGrid(options.entryHorizonSeconds, options.activityGate, options.flowGuard, options.gridProfile, options.maxOrderAgeSeconds)
     println("configs=${configs.size}; simulating ${markets.size} markets")
     val summaries = configs.map { engine.run(markets, it).first }
     writeSummaryCsv(options.output.resolveSibling(options.output.fileName.toString() + "-summary.csv"), summaries)
+    val baseName = options.output.fileName.toString()
+
+    if (options.focusConfig != null) {
+        val focused = summaries.firstOrNull { it.config.name == options.focusConfig }
+            ?: error("focus config not found: ${options.focusConfig}")
+        val focusedResult = engine.run(markets, focused.config)
+        writeMarketCsv(options.output.resolveSibling("$baseName-focus-markets.csv"), focusedResult.second)
+        writeCycleCsv(options.output.resolveSibling("$baseName-focus-cycles.csv"), focusedResult.second)
+        printSummary("focus", focusedResult.first)
+        val focusFees = listOf(0.0, 0.001, 0.0025, 0.005, 0.01).map { feeRate ->
+            engine.run(
+                markets,
+                focused.config.copy(
+                    name = "${focused.config.name}_fee${(feeRate * 10_000).toInt()}bps",
+                    makerFeeRate = feeRate
+                )
+            ).first
+        }
+        writeFeeSensitivityCsv(options.output.resolveSibling("$baseName-focus-fee-sensitivity.csv"), focusFees)
+        println()
+    }
 
     val balancedConfig = summaries.firstOrNull {
         it.config.minPrice == 0.97 && it.config.maxPrice == 0.99 && it.config.entryOffsetCents == 0.5 &&
@@ -52,7 +111,6 @@ fun main(args: Array<String>) {
     }?.config ?: summaries.maxByOrNull { it.totalRoi }!!.config
 
     val balancedResult = engine.run(markets, balancedConfig)
-    val baseName = options.output.fileName.toString()
     writeMarketCsv(options.output.resolveSibling("$baseName-balanced-markets.csv"), balancedResult.second)
     printSummary("balanced", balancedResult.first)
     println()
@@ -107,17 +165,42 @@ fun main(args: Array<String>) {
 private fun buildGrid(
     entryHorizonSeconds: Long,
     activityGate: ActivityGate,
-    flowGuard: FlowGuardSettings
+    flowGuard: FlowGuardSettings,
+    gridProfile: GridProfile,
+    maxOrderAgeSeconds: Long
 ): List<EventMakerConfig> {
-    val bands = listOf(
-        0.95 to 0.97,
-        0.97 to 0.99,
-        0.985 to 0.995
-    )
-    val offsets = listOf(0.0, 0.25, 0.5, 1.0)
-    val spreads = listOf(0.5, 1.0, 2.0)
-    val queues = listOf(1.0, 2.0, 5.0, 10.0, 20.0, 50.0)
-    val cycles = listOf(1, 3)
+    val bands = when (gridProfile) {
+        GridProfile.DEFAULT -> listOf(
+            0.95 to 0.97,
+            0.97 to 0.99,
+            0.985 to 0.995
+        )
+        GridProfile.WIDE_EXIT -> listOf(
+            0.95 to 0.97,
+            0.97 to 0.99,
+            0.985 to 0.995
+        )
+        GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(
+            0.95 to 0.97,
+            0.97 to 0.99,
+            0.985 to 0.995
+        )
+    }
+    val offsets = when (gridProfile) {
+        GridProfile.DEFAULT -> listOf(0.0, 0.25, 0.5, 1.0)
+        GridProfile.WIDE_EXIT -> listOf(0.25, 0.5, 1.0)
+        GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(0.0, 0.25, 0.5, 1.0)
+    }
+    val spreads = when (gridProfile) {
+        GridProfile.DEFAULT -> listOf(0.5, 1.0, 2.0)
+        GridProfile.WIDE_EXIT -> listOf(2.0, 3.0, 5.0, 8.0, 10.0)
+        GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+    }
+    val queues = when (gridProfile) {
+        GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0)
+        else -> listOf(1.0, 2.0, 5.0, 10.0, 20.0, 50.0)
+    }
+    val cycles = if (gridProfile == GridProfile.CANDIDATE_NEIGHBORHOOD) listOf(1) else listOf(1, 3)
     val requotes = listOf(0L, 300L)
     val result = mutableListOf<EventMakerConfig>()
     for ((minPrice, maxPrice) in bands) {
@@ -137,6 +220,7 @@ private fun buildGrid(
                                 exitSpreadCents = spread,
                                 queueFactor = queue,
                                 requoteSeconds = requote,
+                                maxOrderAgeSeconds = maxOrderAgeSeconds,
                                 orderNotional = 100.0,
                                 maxCycles = maxCycles,
                                 makerFeeRate = 0.0,
@@ -162,7 +246,7 @@ private fun buildGrid(
 private fun writeSummaryCsv(path: Path, summaries: List<EventMakerSummary>) {
     Files.createDirectories(path.parent)
     val header = listOf(
-        "config", "min_price", "max_price", "entry_offset_cents", "exit_spread_cents", "queue_factor", "requote_seconds", "max_cycles",
+        "config", "min_price", "max_price", "entry_offset_cents", "exit_spread_cents", "queue_factor", "requote_seconds", "max_order_age_seconds", "max_cycles",
         "flow_guard_window_seconds", "flow_guard_max_signed_flow", "flow_guard_min_price_drop_cents",
         "total_markets", "eligible_markets", "filled_markets", "fill_rate", "total_cycles", "sold_cycles", "settled_cycles",
         "win_rate", "deployed_notional", "total_pnl", "total_roi", "avg_pnl_per_filled_market", "worst_market_pnl",
@@ -171,7 +255,7 @@ private fun writeSummaryCsv(path: Path, summaries: List<EventMakerSummary>) {
     val lines = summaries.sortedByDescending { it.totalRoi }.map { s ->
         listOf(
             s.config.name, s.config.minPrice, s.config.maxPrice, s.config.entryOffsetCents, s.config.exitSpreadCents,
-            s.config.queueFactor, s.config.requoteSeconds, s.config.maxCycles,
+            s.config.queueFactor, s.config.requoteSeconds, s.config.maxOrderAgeSeconds, s.config.maxCycles,
             s.config.flowGuardWindowSeconds, s.config.flowGuardMaxSignedFlow, s.config.flowGuardMinPriceDropCents,
             s.totalMarkets, s.eligibleMarkets, s.filledMarkets, s.fillRate,
             s.totalCycles, s.soldCycles, s.settledCycles, s.winRate, s.deployedNotional, s.totalPnl, s.totalRoi,
@@ -265,6 +349,20 @@ private fun csvCell(value: Any?): String {
     } else text
 }
 
+private enum class GridProfile(val apiName: String) {
+    DEFAULT("default"),
+    WIDE_EXIT("wide-exit"),
+    CANDIDATE_NEIGHBORHOOD("candidate-neighborhood");
+
+    companion object {
+        fun parse(value: String?): GridProfile {
+            val normalized = value?.trim()?.lowercase() ?: return DEFAULT
+            return entries.firstOrNull { it.apiName == normalized }
+                ?: throw IllegalArgumentException("unknown grid profile: $value")
+        }
+    }
+}
+
 private data class FlowGuardSettings(
     val windowSeconds: Long,
     val maxSignedFlow: Double,
@@ -292,6 +390,11 @@ private data class CliOptions(
     val entryHorizonSeconds: Long,
     val activityGate: ActivityGate,
     val flowGuard: FlowGuardSettings,
+    val gridProfile: GridProfile,
+    val maxOrderAgeSeconds: Long,
+    val dataset: Path?,
+    val refreshDataset: Boolean,
+    val focusConfig: String?,
     val output: Path
 ) {
     companion object {
@@ -308,6 +411,11 @@ private data class CliOptions(
                 to = LocalDate.parse(option("to") ?: "2026-10-01"),
                 concurrency = option("concurrency")?.toIntOrNull() ?: 6,
                 entryHorizonSeconds = option("entry-horizon-seconds")?.toLongOrNull() ?: 86_400L,
+                gridProfile = GridProfile.parse(option("grid-profile")),
+                maxOrderAgeSeconds = option("max-order-age-seconds")?.toLongOrNull() ?: 1_800L,
+                dataset = option("dataset")?.let(Paths::get),
+                refreshDataset = args.contains("--refresh-dataset"),
+                focusConfig = option("focus-config"),
                 flowGuard = FlowGuardSettings(
                     windowSeconds = option("flow-guard-window-seconds")?.toLongOrNull() ?: 0L,
                     maxSignedFlow = option("flow-guard-max-signed-flow")?.toDoubleOrNull() ?: -0.4,

@@ -2,14 +2,22 @@
     [string]$BasePath = "backend/build/research/event-maker-queue-grid-full-v2-20261019",
     [int]$BootstrapIterations = 10000,
     [int]$Seed = 20261019,
-    [string]$Output = ""
+    [string]$Output = "",
+    [string]$DataSuffix = "robust",
+    [string]$MarketCsv = "",
+    [string]$CycleCsv = "",
+    [string]$SelectedConfig = ""
 )
 
 $ErrorActionPreference = "Stop"
 $invariant = [Globalization.CultureInfo]::InvariantCulture
 $base = [IO.Path]::GetFullPath($BasePath)
-$marketFile = "$base-robust-markets.csv"
-$cycleFile = "$base-robust-cycles.csv"
+if ([string]::IsNullOrWhiteSpace($DataSuffix) -and
+    ([string]::IsNullOrWhiteSpace($MarketCsv) -or [string]::IsNullOrWhiteSpace($CycleCsv))) {
+    throw "DataSuffix cannot be empty unless both MarketCsv and CycleCsv are supplied"
+}
+$marketFile = if ([string]::IsNullOrWhiteSpace($MarketCsv)) { "$base-$DataSuffix-markets.csv" } else { $MarketCsv }
+$cycleFile = if ([string]::IsNullOrWhiteSpace($CycleCsv)) { "$base-$DataSuffix-cycles.csv" } else { $CycleCsv }
 $summaryFile = "$base-summary.csv"
 foreach ($required in @($marketFile, $cycleFile, $summaryFile)) {
     if (-not (Test-Path -LiteralPath $required)) { throw "required backtest file missing: $required" }
@@ -144,7 +152,13 @@ foreach ($percent in @(1, 5, 10)) {
 $eligibleConfigs = @($summaries | Where-Object {
     [int]$_.train_filled_markets -ge 20 -and (To-Double $_.train_roi) -gt 0.0
 })
-$selected = $eligibleConfigs | Sort-Object { To-Double $_.train_roi } -Descending | Select-Object -First 1
+if (-not [string]::IsNullOrWhiteSpace($SelectedConfig)) {
+    $selected = $summaries | Where-Object { [string]$_.config -eq $SelectedConfig } | Select-Object -First 1
+    if ($null -eq $selected) { throw "selected config not found in summary: $SelectedConfig" }
+} else {
+    $selected = $eligibleConfigs | Sort-Object { To-Double $_.train_roi } -Descending | Select-Object -First 1
+    if ($null -eq $selected) { throw "no config has >=20 training fills and positive training ROI" }
+}
 $testPositive = @($eligibleConfigs | Where-Object { (To-Double $_.test_roi) -gt 0.0 }).Count
 $testNegative = @($eligibleConfigs | Where-Object { (To-Double $_.test_roi) -le 0.0 }).Count
 $testOrdered = @($eligibleConfigs | Sort-Object { To-Double $_.test_roi } -Descending)
@@ -158,13 +172,20 @@ $totalPnl = ($enriched | Measure-Object pnl -Sum).Sum
 $topCycleCount = [int][math]::Ceiling($enriched.Count * 0.10)
 $topCyclePnl = ($enriched | Sort-Object pnl -Descending | Select-Object -First $topCycleCount | Measure-Object pnl -Sum).Sum
 $topCycleShare = 100.0 * $topCyclePnl / $totalPnl
+$settledLossCount = @($enriched | Where-Object settled_loss).Count
+$ruleOfThreeUpper = if ($enriched.Count -gt 0) { 300.0 / $enriched.Count } else { 0.0 }
+$breakEvenLossRate = 100.0 * (To-Double $selected.break_even_loss_rate)
+$negativeSegmentCount = @($segments | Where-Object { $_.ROI -le 0.0 -or $_.SettledLosses -gt 0 }).Count
 
 $lines = [System.Collections.Generic.List[string]]::new()
 $lines.Add("# Event Maker 稳健性交叉核验")
 $lines.Add("")
-$lines.Add('> 生成命令：`.\scripts\analyze-event-maker-robustness.ps1 -BasePath "' + $BasePath + '"`<br>')
+$selectedArgument = if ([string]::IsNullOrWhiteSpace($SelectedConfig)) { "" } else { " -SelectedConfig `"$SelectedConfig`"" }
+$commandLine = '> 生成命令：`.\scripts\analyze-event-maker-robustness.ps1 -BasePath "{0}" -DataSuffix "{1}"{2}<br>' -f $BasePath, $DataSuffix, $selectedArgument
+$lines.Add($commandLine)
 $lines.Add("> 数据：$($filledMarkets.Count) 个成交市场、$($enriched.Count) 个回合；Bootstrap $BootstrapIterations 次，seed $Seed。<br>")
 $lines.Add("> 说明：这是事后稳健性审查，测试集没有参与参数选择。")
+$lines.Add("> 数据文件：$marketFile；$cycleFile。<br>")
 $lines.Add("")
 $lines.Add("## 1. 交叉分段")
 $lines.Add("")
@@ -199,12 +220,16 @@ $lines.Add("- 选中配置：``$($selected.config)``；训练 ROI $(F3 (100.0 * 
 $lines.Add("- 这些训练期正收益配置中，测试期为正 $testPositive 个、非正 $testNegative 个（$([math]::Round(100.0 * $testNegative / $eligibleConfigs.Count, 1))% 失败）。")
 $lines.Add("- 训练期正收益配置的训练 ROI 中位数 $(F3 $trainMedian)%，测试 ROI 中位数 $(F3 $testMedian)%。")
 $lines.Add("- 选中配置在 $($eligibleConfigs.Count) 个训练期正收益配置中的测试排名：$selectedTestRank。")
+$lines.Add("- 候选回合中结算亏损 $settledLossCount 次；rule-of-three 的 95% 亏损率上界约 $(F3 $ruleOfThreeUpper)%，盈亏平衡线约 $(F3 $breakEvenLossRate)%。")
+if ($settledLossCount -eq 0 -and $ruleOfThreeUpper -gt $breakEvenLossRate) {
+    $requiredZeroLossRounds = [math]::Ceiling(300.0 / $breakEvenLossRate)
+    $lines.Add("- **统计尾部仍未被证明安全**：零结算亏损样本不足，保守上界高于盈亏平衡线；至少需要约 $requiredZeroLossRounds 个零亏损独立回合才接近该门槛。")
+}
 $lines.Add("")
 $lines.Add("## 4. 解释")
 $lines.Add("")
-$lines.Add("- 训练集正、测试集正只能说明方向上复现，不能说明 edge 已显著；全部市场和自然月聚类的 95% 区间都包含 0。")
-$lines.Add("- 标签 × 期间的收益不稳定：Geopolitics 从训练期较高 ROI 降到测试期较低 ROI，而 Politics 测试样本只有 20 个回合。")
-$lines.Add("- 价格桶也存在期间翻转，不能用测试集结果反选价格桶或标签。")
+$lines.Add("- 训练集正、测试集正只能说明方向上复现，不能说明 edge 已显著；应结合上面的 cluster bootstrap 区间判断。")
+$lines.Add("- 有 $negativeSegmentCount 个分段分组 ROI<=0 或出现结算亏损；不能用测试集结果反选标签、价格桶或参数。")
 $lines.Add("- 结论仍是不进入真实资金；先等待严格 Shadow 的真实 fill/cycle/markout 证据。")
 
 $report = $lines -join [Environment]::NewLine

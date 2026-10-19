@@ -2,13 +2,14 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**逆势流 Guard 已接入回测/Live/Shadow，并通过全量测试与 Shadow 冒烟；全量 4,189 市场 A/B 证明 Guard 只能挡住部分尾部，仍有不可预测的同笔大额卖单亏损；两臂已重启；仍不可实盘**<br>
-> 最后更新：2026-10-19 19:20 +08:00<br>
+> 当前状态：**数据快照缓存、抓取完整性、回测/Live 最大挂单年龄一致性修复完成；正式候选通过 12h–7d 八窗口回测，8 个窗口全部零结算亏损且训练/测试为正；全量测试 102 suites / 530 tests 通过；正式候选 Shadow 已启动并完成首轮选中，但仍不可实盘**<br>
+> 最后更新：2026-10-19 22:45 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
 > 正式回测：[完整池回测与策略审计](event-maker-robust-backtest-2026-10-19.md)<br>
 > 稳健性核验：[交叉分段与 cluster bootstrap](event-maker-robustness-crosscheck-2026-10-19.md)<br>
+> 正式候选报告：[12h–7d 跨窗口、Guard A/B、费用与邻域](event-maker-safe-candidate-2026-10-19.md)<br>
 > Live 验证：[执行链路验证](event-maker-live-execution-validation-2026-10-19.md)<br>
 
 ## 1. 完成定义
@@ -30,11 +31,14 @@
 |---|---|---|
 | adonpoli 成交结构分析 | 已完成 | 历史报告 |
 | 1,000 市场 / 162 配置历史回测 | 已完成 | `event-maker-backtest-2026-10-17.md` |
-| 4,187 市场 / 864 配置完整池回测 | 已完成；策略 edge 不足以实盘 | `event-maker-robust-backtest-2026-10-19.md` |
+| 4,187 市场 / 864 配置完整池回测 | 历史基线；旧回测未模拟最大挂单年龄 | `event-maker-robust-backtest-2026-10-19.md` |
+| 4,189 市场 / 7d 数据快照 | 已完成；可原子缓存并重放 12h–7d 窗口 | `EventMakerDatasetStore.kt`、`event-maker-full-v2-7d-20261019-dataset.json.gz` |
+| 回测/Live 挂单年龄一致性 | 已修复；过期买单/卖单撤单已验证 | `EventMakerBacktestEngineTest` |
+| 正式候选跨窗口回测 | 8 窗口全零结算亏损，最差窗口 ROI +1.033% | [候选报告](event-maker-safe-candidate-2026-10-19.md) |
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | event-maker/research 定向 94 tests；全量 475 tests 通过 |
+| 策略核心单元测试 | 已完成 | event-maker 定向 140 tests；全量 530 tests 通过 |
 | Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
 | Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
@@ -43,12 +47,12 @@
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
 | 新干净长测 | v2 等待 12 轮无活动通过市场，已因安全修复停止；提交后重启 | `event-maker-shadow-watch-v2-20261019/`；不降低价格带 |
-| 全量测试 | 101 suites / 525 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| 全量测试 | 102 suites / 530 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
 | 一键停止 | stop 先中断在途 OkHttp 调用再撤单；REST 实测 20ms 返回 | `EventMakerStrategyStopTest`、`69649e5` |
 | REST 代理回退 | 未显式配置时回退数据库系统代理；显式配置优先 | `EventMakerStrategyStopTest`、`69649e5` |
 | Live 端到端测试 | 引擎级 mock/恢复/账户级对账已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
 | 逆势流 Guard | 已接入回测、REST DTO、Shadow/Live 引擎；默认 3600s / -0.4 / 0.5c | `EventMakerAdverseFlowGuard.kt`、Guard 单测、LiveEngine 撤单测试 |
-| 全量 Guard A/B | 已完成 4,189 市场 / 864 配置；尾部仍未完全消除 | [尾部审计](event-maker-flow-guard-tail-audit-2026-10-19.md) |
+| Guard 同模型 A/B | 24h：无 Guard 测试 -0.39% 且有 1 次归零；Guard 测试 +1.058% 且 0 归零 | [候选报告](event-maker-safe-candidate-2026-10-19.md) |
 | 最终 Shadow 冒烟 | 5 分钟、1 市场、1 报价、1 撤单、0 fill、0 错误；审计通过 | `backend/build/research/event-maker-shadow-flowguard-smoke-wide-20261019/` |
 
 ## 3. 目标架构
@@ -127,10 +131,13 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 ### P4：验证与交付
 
 - [x] 历史回测重复运行，结果写入报告。
-- [x] 完整候选池 4,187 市场、864 配置回测完成。
-- [x] 训练期唯一选参、费用压力、队列压力、MAE 和 markout 分析完成。
-- [x] Shadow 长测运行完成（旧基线稳定性通过；策略成交 edge 未通过）。
-- [ ] 保守成交因子下 Shadow 产生足够 fill，且 markout/PnL/尾部风险可解释。（实验臂已首次选中真实市场并挂出 Shadow 买单，等待成交）
+- [x] 完整候选池 4,189 市场、864 配置回测完成。
+- [x] 新增原子 gzip 数据快照，参数网格可复用同一数据且失败时不写残缺缓存。
+- [x] 回测补上 `maxOrderAgeSeconds` 撤单，和 Shadow/Live 执行生命周期一致。
+- [x] 正式候选通过 12h/1d/2d/3d/4d/5d/6d/7d 八窗口回测；全部零结算亏损，训练/测试为正。
+- [x] 训练期唯一选参、费用压力、队列压力、MAE、跨窗口和参数邻域分析完成。
+- [x] Shadow 长测运行完成（旧基线稳定性通过；旧策略成交 edge 未通过）。
+- [ ] 保守成交因子下 Shadow 产生足够 fill，且 markout/PnL/尾部风险可解释。（正式候选待启动长测并通过审计）
 - [x] Live mock 端到端测试通过（引擎级 mock 流程）。
 - [x] 逆势流 Guard 在回测、Shadow、Live 共用引擎中实现并通过边界/撤单测试。
 - [x] 完成 4,189 市场 Guard A/B、三笔历史归零因果审计和 Shadow 冒烟。
@@ -145,7 +152,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 
 | 需求 | 必须提供的证据 | 当前 |
 |---|---|---|
-| 回测可复现 | 命令、输入参数、summary、报告 | 已完成（4,187 市场完整池） |
+| 回测可复现 | 命令、输入参数、summary、报告 | 已完成（4,189 市场 7d 快照，12h–7d 可重放） |
 | 报价逻辑正确 | 单元测试覆盖买入/卖出/队列/tick | 已完成 |
 | 风险限制有效 | 单元测试覆盖库存/亏损/市场数 | 已完成 |
 | Shadow 无重复成交 | transaction hash 去重统计为 0 重复组 | 已完成（2h 基线 0 重复键） |
@@ -156,8 +163,8 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | 一键停止 | 停止后无活跃订单、无新报价 | 已完成（引擎撤单测试） |
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
 | Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；v5 主臂/一档实验臂已用 69649e5 重启；实验臂已选中真实市场并挂单 |
-| 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；q50 与 50bps 均转负 |
-| 全量回归 | 98 suites / 478 tests / 0 failures / 0 errors / 2 skipped | 已完成 |
+| 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；候选 q15–q50 零归零，50bps +0.069%、100bps -0.914% |
+| 全量回归 | 102 suites / 530 tests / 0 failures / 0 errors / 2 skipped | 已完成 |
 | 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
@@ -346,7 +353,9 @@ cd D:\Project\PolyHermes\backend
 | EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID `25556`（wrapper `22844`），`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
 - 最新两臂进程状态以 10.9 节为准；旧行中的 PID 是历史检查点。
-- 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
+- 当前 Shadow：`backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/`，首轮选中 Israel x Iran 市场并挂 Shadow BUY `0.976` / `25.61` shares；无真实订单。`logIssues=0`、`stderrBytes=0`。
+
+下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
 - 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。
 
 ### 10.9 2026-10-19 17:3x-17:5x 实盘执行链路审计补漏
@@ -395,3 +404,38 @@ cd D:\Project\PolyHermes\backend
 - 严格 0.97–0.99 价格带当前仍无报价市场；正式两臂继续等待，不降低门槛。
 - 当前两臂首轮均无日志错误、无 stderr；运行期间禁止编译/测试。
 - 真实 Live smoke 仍缺 `accountId`、资金上限、明确授权、时间窗口和市场范围。- 提交并推送：`d768950 feat: add causal adverse-flow guard to event maker`（`c8fb838..d768950 main -> main`）。
+### 10.11 2026-10-19 22:45 数据/执行一致性收口与正式候选
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| DATA-1 | gzip 数据快照可复用 | 已完成 | `EventMakerDatasetStore.kt`、3 条存储测试 |
+| DATA-2 | 抓取失败不产生残缺缓存 | 已完成 | Gamma/成交失败 fail-fast；成交 3 次重试 |
+| DATA-3 | 缓存原子替换 | 已完成 | 临时文件 + `ATOMIC_MOVE`，测试无残留 |
+| EXEC-1 | 回测模拟买单最大年龄撤单 | 已完成 | `EventMakerBacktestEngineTest` |
+| EXEC-2 | 回测模拟卖单最大年龄重挂 | 已完成 | `EventMakerBacktestEngineTest` |
+| GRID-1 | 候选参数邻域 | 已完成 | `candidate-neighborhood`，1,008 配置 |
+| GRID-2 | q/spread/offset 稳定性 | 已完成 | q15–q50、spread 0.75–1.5c、offset 0–1c 全部零归零 |
+| OOS-1 | 12h–7d 八窗口 | 已完成 | 正式候选 8 窗口全零结算亏损、训练/测试为正 |
+| OOS-2 | 全窗口配置交集 | 已完成 | 864 配置中仅 2 个通过；正式候选最差窗口 ROI 最高 |
+| GUARD-8 | 同数据同执行模型 A/B | 已完成 | 无 Guard 测试 -0.39% + 1 次归零；Guard +1.058% + 0 归零 |
+| TEST-5 | 全量回归 | 已完成 | 102 suites / 530 tests / 0 failures / 0 errors / 2 skipped |
+| SHADOW-3 | 正式候选 Shadow 长测 | 运行中 | wrapper `5600` / Java `8300`；首轮 selected=1；输出 `event-maker-safe-candidate-shadow-main-v2-20261019/` |
+| LIVE-1 | 真实小资金 Live smoke | 未执行 | 缺账户、资金、明确授权、时间窗口、市场范围 |
+
+当前检查点：
+
+- 正式候选：`p0.97-0.99_off0.0_spread1.0_q20.0_c1_r300`。
+- 24h：93 回合、0 结算亏损、PnL +97.87、ROI +1.052%、测试 ROI +1.058%。
+- 8 窗口 ROI 范围：+1.033%..+1.164%；所有窗口最差市场 +1.011。
+- 24h 费用：50bps +0.069%，100bps -0.914%。
+- 尾部统计：93 个零亏损回合，rule-of-three 95% 上界 3.23%，仍高于 1.041% 盈亏平衡线；约需 289 个零亏损独立回合。
+
+当前 Shadow：`backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/`，首轮选中 Israel x Iran 市场并挂 Shadow BUY `0.976` / `25.61` shares；无真实订单。`logIssues=0`、`stderrBytes=0`。
+
+下一执行顺序：
+
+1. 用正式候选启动 Shadow 长测，保持 post-only、不降低活动门槛、不放宽价格带。
+2. 轮询 `check-event-maker-watch.ps1`，运行结束或达到证据门槛后执行 `audit-event-maker-shadow.ps1`。
+3. 检查真实 fill、部分成交、撤单竞态、markout、activeOrders=0 和重复成交。
+4. 若 Shadow 通过，仍需用户提供账户、资金上限、明确授权、时间窗口和市场范围后才能做真实 Live smoke。
+5. 在真实 Live smoke 通过前，不把目标标记完成，不使用回测/Shadow 冒充实盘。

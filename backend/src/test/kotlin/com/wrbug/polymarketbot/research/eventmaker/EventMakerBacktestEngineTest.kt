@@ -393,6 +393,41 @@ class EventMakerBacktestEngineTest {
         assertEquals(0.972, result.cycles.single().entryPrice, 0.000001)
     }
 
+    @Test
+    fun `stale buy quote is canceled before a late taker sell can fill it`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0, "BUY"),
+                trade(9_300, 0, 0.975, 300.0, "SELL")
+            )
+        )
+        val config = baseConfig().copy(requoteSeconds = 120, maxOrderAgeSeconds = 120)
+
+        val result = engine.simulateMarket(market, config)
+
+        assertTrue(result.eligible)
+        assertFalse(result.filled, "a quote older than maxOrderAgeSeconds must not fill")
+    }
+
+    @Test
+    fun `stale sell quote is reposted instead of filling on the cancel tick`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0, "BUY"),
+                trade(9_100, 0, 0.975, 300.0, "SELL"),
+                trade(9_500, 0, 0.985, 300.0, "BUY")
+            )
+        )
+        val config = baseConfig().copy(requoteSeconds = 120, maxOrderAgeSeconds = 120)
+
+        val result = engine.simulateMarket(market, config)
+
+        assertEquals(1, result.cycles.size)
+        assertEquals(MakerExitType.SETTLE, result.cycles.single().exitType)
+    }
+
     private fun baseConfig(maxCycles: Int = 1) = EventMakerConfig(
         name = "test",
         entryHorizonSeconds = 1_000,

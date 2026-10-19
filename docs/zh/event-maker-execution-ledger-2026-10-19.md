@@ -1,6 +1,6 @@
 # Event Maker 执行台账（2026-10-19）
 
-> 最后更新：2026-10-19 09:01 +08:00
+> 最后更新：2026-10-19 22:52 +08:00
 > 目的：把目标、计划、实际动作、命令、结果、证据和恢复步骤持续写入仓库，避免依赖聊天记忆。
 > 当前状态：**进行中，不得标记完成**
 > 权威计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
@@ -8,6 +8,7 @@
 > 运行手册：[event-maker-runbook.md](event-maker-runbook.md)
 > 正式回测：[event-maker-robust-backtest-2026-10-19.md](event-maker-robust-backtest-2026-10-19.md)
 > 稳健性核验：[event-maker-robustness-crosscheck-2026-10-19.md](event-maker-robustness-crosscheck-2026-10-19.md)
+> 正式候选：[event-maker-safe-candidate-2026-10-19.md](event-maker-safe-candidate-2026-10-19.md)
 > Live 验证：[event-maker-live-execution-validation-2026-10-19.md](event-maker-live-execution-validation-2026-10-19.md)
 
 ## 1. 当前目标
@@ -28,7 +29,7 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 干净长测真实盘口 Shadow | 等待候选发现修复 | 先排除 Gamma 分页/候选截断导致的假空窗 |
+| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | 正式候选首轮 selected=1；输出 `event-maker-safe-candidate-shadow-main-v2-20261019/` |
 | DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 已完成 | keyset 分页、价格带预筛、候选诊断、5 个测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
@@ -41,13 +42,14 @@
 | SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 475 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 用新代码重启严格等待 + Shadow | 运行中 | v4 PID 15340/21804；启动 09:22；不降低门槛 |
+| OBS-4 | 正式候选 Shadow 长测 | 运行中 | wrapper 5600 / Java 8300；开始 22:51；不降低门槛 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
 ## 3. 最近后台进程与状态
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
+| 正式候选 Shadow | 5600 / 8300 | 22:51 | 等待最多 720m；选出后 Shadow 720m | `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` | 已选中 1 个市场并挂 Shadow BUY；`logIssues=0`、`stderrBytes=0` |
 | v5 等待+Shadow 主臂 | 25560 | 09:32 | 等待最多 720m；选出后 Shadow 720m | `backend/build/research/event-maker-shadow-watch-v5-20261019/` | waiting；严格参数；窗口按 time-to-fill 分布延长 |
 | 一档价差实验臂 | 15356 | 09:32 | 同上 | `backend/build/research/event-maker-shadow-experiment-spread1-v2-20261019/` | waiting；唯一变量 `minSpreadTicks=1`；不混入正式验证 |
 | v3 等待+Shadow 任务 | 6296 / 7788 | 09:06 | 09:10 已停止 | `backend/build/research/event-maker-shadow-watch-v3-20261019/` | 因持仓数量精确对账修复停止 |
@@ -372,3 +374,33 @@ cd D:\Project\PolyHermes\backend
 结论：Guard 是部分尾部防御，不是完整解决方案；当前不能实盘。真实 Live smoke 仍缺 `accountId`、资金上限、明确下单授权、时间窗口和市场范围。
 - 提交并推送：`d768950 feat: add causal adverse-flow guard to event maker`（`c8fb838..d768950 main -> main`）。
 - 正式参数两臂运行 5 轮仍无活动通过市场；主臂/实验臂均为 qualified=2、activityPassed=0、selected=0，最近拒绝原因 `recent_trades_30m_below_min=2`。
+### 20:04-22:40 数据缓存、执行一致性与跨窗口候选复核
+
+- 20:04 曾按旧候选参数启动一次 Shadow；完成首批发现后确认跨窗口证据不足，在任何订单产生前停止，仅留下等待日志。
+- 新增 7 天研究数据集 `backend/build/research/event-maker-full-v2-7d-20261019-dataset.json.gz`，4,189 个市场。
+- 抓取完整性：Gamma 月页失败不再静默跳过；单市场成交 3 次重试失败会中止整次抓取；数据集写入使用临时文件 + 原子替换。
+- 回测一致性：补上 `maxOrderAgeSeconds=1800` 的买单/卖单撤单逻辑。旧回测允许挂单存活数天，导致 3d/6d 窗口出现虚假结算归零。
+- 正式候选：`p0.97-0.99_off0.0_spread1.0_q20.0_c1_r300`。
+- 12h/1d/2d/3d/4d/5d/6d/7d 八个窗口全部 0 结算亏损，ROI 范围 +1.033%..+1.164%，训练/测试均为正。
+- 864 个配置中，8 窗口全部满足零结算亏损、正收益和训练成交 >=20 的只有 2 个；正式候选的最差窗口 ROI 最高。
+- 24h 同数据 A/B：无 Guard 为 101 回合、1 次结算亏损、ROI +0.05%、测试 -0.39%；有 Guard 为 93 回合、0 次结算亏损、ROI +1.052%、测试 +1.058%。
+- 24h 费用压力：50bps ROI +0.069%，100bps ROI -0.914%。
+- 全量测试：`102 suites / 530 tests / 0 failures / 0 errors / 2 skipped`。
+- 报告：`docs/zh/event-maker-safe-candidate-2026-10-19.md`。
+- 尾部边界：24h 样本 93 个零亏损回合，rule-of-three 95% 上界约 3.23%，仍高于 1.041% 盈亏平衡线；约需 289 个零亏损独立回合才能接近证明门槛。
+- Shadow 尚不能替代真实 Live smoke。真实账户、资金上限、明确下单授权、时间窗口和市场范围仍未提供。
+### 22:51 正式候选 Shadow 运行
+
+| 项目 | 当前值 |
+|---|---|
+| wrapper PID | `5600` |
+| Shadow Java PID | `8300` |
+| 输出 | `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` |
+| 首轮发现 | qualified=1、activityPassed=1、selected=1 |
+| 市场 | `Israel x Iran ceasefire continues through October 21?` |
+| 盘口 | bid `0.976` / ask `0.978` |
+| Shadow 挂单 | BUY `0.976`，`25.61` shares，`shadow-1`，状态 `LIVE` |
+| 真实下单 | 无；这是只读 Shadow |
+| 日志 | `logIssues=0`、`stderrBytes=0` |
+
+运行中禁止编译和测试。轮询：`.\scripts\check-event-maker-watch.ps1 -OutputDir "backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019"`。

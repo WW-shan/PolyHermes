@@ -1,5 +1,7 @@
 # Event Maker 逆势流 Guard 前后对照
 
+> **历史说明（2026-10-19 22:45）：本报告生成于回测补齐 maxOrderAgeSeconds 撤单之前，部分迟到成交和尾部数字已被后续修复推翻。最新正式结论见 [强安全候选报告](event-maker-safe-candidate-2026-10-19.md)。**
+
 > 基线：`backend\build\research\event-maker-queue-grid-full-v2-20261019-summary.csv`<br>
 > Guard：`backend\build\research\event-maker-flowguard-full-v2-20261019-summary.csv`<br>
 > 只比较同名参数配置；不是实盘收益证明。

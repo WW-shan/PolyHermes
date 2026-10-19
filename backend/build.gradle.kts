@@ -141,6 +141,21 @@ tasks.register<JavaExec>("eventMakerBacktest") {
     providers.gradleProperty("researchFlowGuardMinPriceDropCents").orNull?.let {
         argsList += listOf("--flow-guard-min-price-drop-cents", it)
     }
+    providers.gradleProperty("researchMaxOrderAgeSeconds").orNull?.let {
+        argsList += listOf("--max-order-age-seconds", it)
+    }
+    providers.gradleProperty("researchGridProfile").orNull?.let {
+        argsList += listOf("--grid-profile", it)
+    }
+    providers.gradleProperty("researchDataset").orNull?.let {
+        argsList += listOf("--dataset", it)
+    }
+    providers.gradleProperty("researchFocusConfig").orNull?.let {
+        argsList += listOf("--focus-config", it)
+    }
+    if (providers.gradleProperty("researchRefreshDataset").orNull == "true") {
+        argsList += "--refresh-dataset"
+    }
     argsList += listOf("--output", providers.gradleProperty("researchOutput").orNull ?: "build/research/event-maker-backtest")
     args(argsList)
 }
@@ -216,6 +231,7 @@ tasks.register<JavaExec>("eventMakerShadow") {
     argsList += listOf("--active-order-stale-seconds", providers.gradleProperty("shadowActiveOrderStaleSeconds").orNull ?: "600")
     argsList += listOf("--order-notional", providers.gradleProperty("shadowOrderNotional").orNull ?: "25")
     argsList += listOf("--fill-volume-factor", providers.gradleProperty("shadowFillVolumeFactor").orNull ?: "1")
+    argsList += listOf("--max-cycles-per-market", providers.gradleProperty("shadowMaxCyclesPerMarket").orNull ?: "3")
     if (providers.gradleProperty("shadowAllowNegRisk").orNull == "true") argsList += "--allow-neg-risk"
     argsList += listOf("--output", providers.gradleProperty("shadowOutput").orNull ?: "build/research/event-maker-shadow")
     args(argsList)
