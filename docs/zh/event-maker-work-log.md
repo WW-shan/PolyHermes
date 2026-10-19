@@ -1113,3 +1113,10 @@
 - 内容：数据快照/原子写入、严格抓取、回测最大挂单年龄一致性、8 窗口候选回测、参数邻域、Shadow 参数、全量 530 tests 和运行文档。
 - 提交后 Shadow 继续运行，运行期间不重新编译。
 - 提交后清理：停止 Spring 冒烟实例 PID 24064；停止 Docker 容器 polyhermes-mysql（保留容器和数据，可随时 docker start）。当前仅保留正式 Shadow。
+
+### 23:06 监控状态语义修复
+
+- 发现 check-event-maker-watch.ps1 在 Shadow 已选中市场并挂单时仍输出 state=waiting。
+- 现已读取 state.json：有市场时输出 state=running，并显示 activeOrders、fills、cycles、inventoryShares、phases；有 state 文件但无市场时输出 state=discovering。
+- 当前实跑输出：state=running markets=1 activeOrders=1 fills=0 cycles=0 inventoryShares=0 phases=BUY_PENDING。
+- Shadow 于 22:59 完成一次真实 Shadow 重挂：取消 shadow-1（reason=requote），新挂 shadow-2 BUY 0.975 / 25.64 shares。

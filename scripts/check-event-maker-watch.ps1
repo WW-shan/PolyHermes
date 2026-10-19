@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$OutputDir = "D:\Project\PolyHermes\backend\build\research\event-maker-shadow-watch-v5-20261019"
 )
 
@@ -54,8 +54,31 @@ if (Test-Path -LiteralPath $timeoutFile) {
     Write-Output "state=timeout attempts=$($timeout.attempts) stopped=$($timeout.lastDiscoveryStoppedReason) reasons=$($timeout.lastSelectionReasons | ConvertTo-Json -Compress)"
     exit 2
 }
+$stateFile = Join-Path $OutputDir "state.json"
+if (Test-Path -LiteralPath $stateFile) {
+    $state = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $stateMarkets = @($state.markets)
+    if ($stateMarkets.Count -gt 0) {
+        $activeOrders = @($stateMarkets | Where-Object { $_.activeOrderId }).Count
+        $fills = 0
+        $cycles = 0
+        $inventoryShares = 0.0
+        foreach ($market in $stateMarkets) {
+            $fills += @($market.fills).Count
+            $cycles += [int]$market.completedCycles
+            if ($market.inventoryShares) { $inventoryShares += [double]$market.inventoryShares }
+        }
+        $phases = @($stateMarkets | ForEach-Object { $_.phase } | Sort-Object -Unique) -join ","
+        Write-Output "state=running markets=$($stateMarkets.Count) activeOrders=$activeOrders fills=$fills cycles=$cycles inventoryShares=$inventoryShares phases=$phases"
+        exit 0
+    }
+}
 if ($wrapper -or $shadow) {
-    Write-Output "state=waiting"
+    if (Test-Path -LiteralPath $stateFile) {
+        Write-Output "state=discovering"
+    } else {
+        Write-Output "state=waiting"
+    }
     exit 0
 }
 Write-Output "state=stopped-without-summary-or-timeout"

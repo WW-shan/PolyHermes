@@ -213,8 +213,10 @@ cd D:\Project\PolyHermes
 - `logIssues` / `stderrBytes`：扫描 stdout/stderr 中的 API 失败、HTTP 429、异常和 OOM 信号；
 - `attempts`：已完成发现轮数；
 - `lastAttempt`：最近一轮候选、活动过滤、选择数和停止原因；
-- `state=waiting`：仍在等待；
-- `state=summary`：已进入 Shadow 并完成，同时显示 markets/fills/cycles/totalPnl；
+- `state=waiting`：进程存活，但尚未写出 `state.json`；
+- `state=discovering`：`state.json` 已建立但尚未选中市场；
+- `state=running`：已选中市场，显示 markets、activeOrders、fills、cycles、inventoryShares 和 phases；
+- `state=summary`：Shadow 已结束，同时显示 markets/fills/cycles/totalPnl；
 - `state=timeout`：等待超时，显示尝试次数和最后拒绝原因。
 
 禁止在等待或 Shadow 运行期间执行编译或测试；需要改代码时先停止 PID，并记录停止原因。
