@@ -1263,3 +1263,11 @@
 - 审计临时 fixture 正反例通过：正常场景 `passed=true`；篡改 settlement PnL 或 cycle shares 后退出码为 1；fixture 已清理。
 - 隔离 worktree 全量回归：103 suites / 556 tests / 0 failures / 0 errors / 2 skipped。
 - v6 Shadow 继续运行；截至 03:38 仍为 FLAT、6 次挂单、0 fill、0 cycle、0 inventory，`logIssues=0`、`stderrBytes=0`。v6 使用启动时构建产物，本轮 Kotlin 修改未替换运行中的产物。
+
+### 03:50 v6 shadow-7 / shadow-8 继续执行证据
+
+- `shadow-7`：03:23:44 BUY 0.973 / 25.69，queue 6.18；03:28:44 requote 撤销，0 fill。
+- `shadow-8`：03:45:38 BUY 0.970 / 25.77，queue 105.70；03:50:39 requote 撤销，0 fill。
+- v6 累计 8 次 Shadow 挂单、8 次 requote 撤单；当前 FLAT、activeOrders=0、0 fill、0 cycle、0 inventory。
+- `logIssues=0`、`stderrBytes=0`；没有放宽价格带、活动门槛、post-only、q20 或队列限制。
+- 真实 Shadow fill/cycle 仍未出现，因此不能把 Shadow 长测标记为成交验收通过。

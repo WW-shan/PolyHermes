@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 556 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已六次挂单并六次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
-> 最后更新：2026-10-20 03:45 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 556 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已八次挂单并八次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 最后更新：2026-10-20 03:55 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -419,7 +419,7 @@ cd D:\Project\PolyHermes\backend
 | OOS-2 | 全窗口配置交集 | 已完成 | 864 配置中仅 2 个通过；正式候选最差窗口 ROI 最高 |
 | GUARD-8 | 同数据同执行模型 A/B | 已完成 | 无 Guard 测试 -0.39% + 1 次归零；Guard +1.058% + 0 归零 |
 | TEST-5 | 全量回归 | 已完成 | 103 suites / 555 tests / 0 failures / 0 errors / 2 skipped |
-| SHADOW-3 | 正式候选 Shadow 长测 | v6 运行中 | 已挂 6 次 Shadow BUY、6 次 requote 撤单；`shadow-6` 于 02:56 撤销；当前 FLAT、0 fill |
+| SHADOW-3 | 正式候选 Shadow 长测 | v6 运行中 | 已挂 8 次 Shadow BUY、8 次 requote 撤单；`shadow-8` 于 03:50 撤销；当前 FLAT、0 fill |
 | LIVE-A13 | 日亏损跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；同日重启沿用，跨日重锚；8 条新增回归 |
 | LIVE-1 | 真实小资金 Live smoke | 未执行 | 缺账户、资金、明确授权、时间窗口、市场范围 |
 
@@ -583,3 +583,14 @@ cd D:\Project\PolyHermes\backend
 - 临时正反例已验证：正常部分卖出后结算通过；篡改 settlement PnL 或 cycle 股数会被拒绝；临时 fixture 已删除。
 - 隔离 worktree 全量回归：103 suites / 556 tests / 0 failures / 0 errors / 2 skipped。
 - v6 Shadow 在 03:38 仍正常等待，6 次挂单、0 fill、0 cycle、0 inventory；没有放宽任何正式门槛。真实 Builder Relayer、链上赎回和到账仍未验证。
+
+### 10.25 2026-10-20 03:50 v6 新增 shadow-7 / shadow-8
+
+| 时间 | 订单 | 价格/股数 | queue | 结果 |
+|---|---|---|---|---|
+| 03:23:44 | `shadow-7` | 0.973 / 25.69 | 6.18 | 03:28:44 requote 撤销 |
+| 03:45:38 | `shadow-8` | 0.970 / 25.77 | 105.70 | 03:50:39 requote 撤销 |
+
+- v6 累计 8 次挂单、8 次 requote 撤单；`shadow-7` 和 `shadow-8` 均未产生 fill。
+- 当前 FLAT、activeOrders=0、fills=0、cycles=0、inventory=0；`logIssues=0`、`stderrBytes=0`。
+- 仍保持 post-only、正式价格带、活动门槛、q20 和队列限制，没有为了成交放宽任何参数。

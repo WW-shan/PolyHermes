@@ -29,7 +29,7 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | v6 已六次挂单、六次 requote 撤单；当前 FLAT；0 fill |
+| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | v6 已八次挂单、八次 requote 撤单；当前 FLAT；0 fill |
 | DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 已完成 | keyset 分页、价格带预筛、候选诊断、5 个测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
@@ -42,7 +42,7 @@
 | SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 475 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 正式候选 Shadow 长测 | v6 运行中 | shadow-1..shadow-6 共 6 次挂单/6 次 requote 撤单；最后 shadow-6 0.970/25.77 q485.03，0 fill |
+| OBS-4 | 正式候选 Shadow 长测 | v6 运行中 | shadow-1..shadow-8 共 8 次挂单/8 次 requote 撤单；shadow-7 0.973/25.69 q6.18、shadow-8 0.970/25.77 q105.70，均 0 fill |
 | RISK-DAY-1 | 日亏损锚点跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；103 suites / 538 tests 通过 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
@@ -552,3 +552,14 @@ cd D:\Project\PolyHermes\backend
 - 旧实现的风险：部分卖出后结算只记录剩余仓位 PnL，cycle PnL 和股数会低估；本轮在 live state 与恢复重放两侧同时修复。
 - `audit-event-maker-shadow.ps1` 同时保留 fill-analysis 告警，并新增 settlement/cycle 一致性校验。
 - 仍未验证：真实账户的 Builder Relayer、链上赎回回执、pUSD 到账延迟和实际到账金额。
+
+### 03:50 v6 shadow-7 / shadow-8
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| SHADOW-E12 | 低队列 shadow-7 仍无成交 | 已完成 | 03:23 BUY 0.973 / 25.69，queue 6.18；03:28 requote，0 fill |
+| SHADOW-E13 | 高队列 shadow-8 仍无成交 | 已完成 | 03:45 BUY 0.970 / 25.77，queue 105.70；03:50 requote，0 fill |
+| SHADOW-E14 | 累计 Shadow fill | 未完成 | 8 次挂单/8 次撤单，仍 0 fill |
+
+- 当前 FLAT、activeOrders=0、fills=0、cycles=0、inventory=0；`logIssues=0`、`stderrBytes=0`。
+- 低队列订单也未成交，说明当前缺口不是单一 queue 数值问题；需要继续等待严格条件市场的真实可穿越成交量。
