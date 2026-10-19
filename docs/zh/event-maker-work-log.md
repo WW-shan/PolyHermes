@@ -773,3 +773,18 @@
 - 跨三窗口同时为正的配置只有 **93 个（10.8%）**，最稳定一族为 `p0.97-0.99_off1.0_spread2.0_q*_c*_r300`；但即使该族，rule-of-three 95% 上界（2.88%，n=104）仍**高于**盈亏平衡线（2.02%），样本量不足。
 - 文档：新增 `docs/zh/event-maker-horizon-stability-2026-10-19.md`；并在 7 天报告头部与结论节加显式否证提示，避免后续误读。
 - 结论：**不能因为 7 天窗口好看就宣称策略可实盘**；Shadow 需积累真实 fill/cycle/markout，尤其要观察到若干次结算事件，才能把尾部亏损率约束到盈亏平衡线以下。
+
+### 14:3x-15:0x 回测成交模型方向保真度修复（重大）
+
+- 缺陷：回测的成交模型**不检查成交方向**——只要价格穿过限价就累计成交量。而 Shadow 引擎要求**反向成交**（挂单 BUY 只能被 taker SELL 成交，挂单 SELL 只能被 taker BUY 成交）。这使回测系统性高估成交，是"回测有 fill、Shadow 无 fill"的结构性原因之一。
+- 证据：Data API `/trades` 明确返回 `side` 字段（BUY/SELL），此前 `EventMakerTrade` 直接丢弃。
+- 修复：
+  - `EventMakerTrade` 新增 `side` 与 `takerIsBuy`/`takerIsSell`；`side` 缺失的成交**不参与撮合**（宁可少算，不多算）。
+  - `EventMakerResearchDataClient` 解析并保留 `side`。
+  - `EventMakerBacktestEngine` 买入累计要求 `trade.takerIsSell`，卖出累计要求 `trade.takerIsBuy`。
+- 新增测试：`same side taker flow does not fill a resting maker order`、`prints without a known taker side never fill`；既有 33 处测试成交样本全部补上显式方向。
+- 全量测试：100 suites / 486 tests / 0 failures / 0 errors / 2 skipped。
+- 影响量化（同一配置 `p0.985-0.995_off1.0_spread2.0_q10.0_c1_r300`，7 天窗口）：成交市场 36 → 27、结算 4 → 5、训练 ROI 1.95% → 1.97%、测试 ROI 1.96% → 2.02%。方向修复后结论方向不变，但成交数下降约 25%，说明此前的回测确实偏乐观。
+- 当前 Shadow 配置 `p0.97-0.99_off0.5_spread2.0_q1.0_c3_r300`（side-aware 7d）：97 成交、107 回合、5 次结算其中 1 次亏损、训练 +0.23%、测试 +1.98%、回撤 100、`breakEvenLossRate=1.95%`。
+- 提交并推送：`6557968 fix: make backtest fill model taker-side aware to match live engine`。
+- 说明：两臂在修复期间已停止（主臂 60 轮无活动通过），修复后需用新代码重启。
