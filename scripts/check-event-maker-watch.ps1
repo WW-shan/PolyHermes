@@ -1,5 +1,5 @@
 param(
-    [string]$OutputDir = "D:\Project\PolyHermes\backend\build\research\event-maker-shadow-watch-20261019"
+    [string]$OutputDir = "D:\Project\PolyHermes\backend\build\research\event-maker-shadow-watch-v2-20261019"
 )
 
 $ErrorActionPreference = "Stop"

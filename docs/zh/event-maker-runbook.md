@@ -161,7 +161,7 @@ cd D:\Project\PolyHermes
 ```powershell
 cd D:\Project\PolyHermes
 .\scripts\audit-event-maker-shadow.ps1 `
-  -OutputDir "D:\Project\PolyHermes\backend\build\research\event-maker-shadow-watch-20261019"
+  -OutputDir "D:\Project\PolyHermes\backend\build\research\event-maker-shadow-watch-v2-20261019"
 ```
 
 审计会检查：

@@ -42,7 +42,7 @@
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| 当前等待+Shadow 任务 | 3764 / 24888 | 07:46 | 等待最多 180m；选出后 Shadow 120m | `backend/build/research/event-maker-shadow-watch-20261019/` | waiting；每 60s 重新发现 |
+| 当前等待+Shadow 任务 | 7652 / 14836 | 08:05 | 等待最多 180m；选出后 Shadow 120m | `backend/build/research/event-maker-shadow-watch-v2-20261019/` | waiting；每 60s 重新发现；每轮记录活动拒绝原因 |
 | 旧被动入场 2h/12h | 旧会话 | 04:50 / 04:52 | 已结束 | `event-maker-shadow-passive-2c-*` | 历史记录；2h 收尾类冲突无效；12h 已停止；均 0 fill |
 
 轮询方式：运行 `.\scripts\check-event-maker-watch.ps1`；不要重复启动同一输出目录的 Shadow。
@@ -255,3 +255,10 @@ cd D:\Project\PolyHermes\backend
 - 新增 `activityRejectionReasons` 到每轮 attempt 记录；真实 0 分钟冒烟显示 `recent_trades_30m_below_min=6`。
 - 全量测试 96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
 - 下一步：提交后重启后台等待任务。
+### 08:05 重启增强后的后台等待任务
+
+- 新输出目录：`backend/build/research/event-maker-shadow-watch-v2-20261019/`。
+- 包装进程：PowerShell PID `7652`；JavaExec：java.exe PID `14836`。
+- 首轮已记录 `qualified=6 activityPassed=0 selected=0 activityRejections={recent_trades_30m_below_min=6}`。
+- 参数仍为严格条件：0.97～0.99、24h >=100,000、30m/2h 活动门槛、`minSpreadTicks=2`、成交因子 1。
+- 进程运行期间禁止编译和测试；轮询使用 `.\scripts\check-event-maker-watch.ps1`。

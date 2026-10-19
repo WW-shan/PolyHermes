@@ -583,3 +583,8 @@
 - 证据：`backend/build/research/event-maker-shadow-wait-reason-smoke-20261019/`。
 - 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
 - 下一步：提交增强后的版本，重新启动后台等待；等待期间只轮询和写文档，不编译。
+### 08:05 重启增强后的后台等待任务
+
+- 新后台任务 PID：PowerShell `7652`，JavaExec `14836`；输出 `event-maker-shadow-watch-v2-20261019/`。
+- 首轮：qualified=6、activityPassed=0、selected=0，`activityRejections={recent_trades_30m_below_min=6}`；等待循环正常进入下一次重试。
+- 检查脚本默认目录已切到 v2；运行期间禁止编译和跑测试。
