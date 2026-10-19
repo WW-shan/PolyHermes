@@ -2,7 +2,7 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 536 tests 通过；跨进程 UTC 日亏损锚点已修复。v2 正式候选 Shadow 因发现该风控缺口而中止（0 fill、无真实订单），待用最终代码重启 v3 Shadow。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 536 tests 通过；跨进程 UTC 日亏损锚点已修复。v2 正式候选 Shadow 因发现该风控缺口而中止（0 fill、无真实订单），v3 Shadow 已用最终代码启动并处于严格门槛等待中。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
 > 最后更新：2026-10-19 23:30 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
@@ -353,7 +353,7 @@ cd D:\Project\PolyHermes\backend
 | EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID `25556`（wrapper `22844`），`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
 - 最新两臂进程状态以 10.9 节为准；旧行中的 PID 是历史检查点。
-- 当前 Shadow：v2 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` 是已主动中止的运行（29m、2 次挂单、1 次 requote、0 fill、无真实订单），不作为最终证据。最终代码将写入新的 v3 输出目录重新开始。
+- 当前 Shadow：v3 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v3-20261019/` 已于 23:41 启动，使用最终代码和严格参数。首两轮发现各 2 个价格/剩余时间合格市场，但均因 30 分钟成交数不足未通过活动门槛；当前 `state=waiting`、`logIssues=0`、`stderrBytes=0`。v2 目录保留为缺陷发现过程证据，不作为最终验收。
 
 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
 - 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。
@@ -419,7 +419,7 @@ cd D:\Project\PolyHermes\backend
 | OOS-2 | 全窗口配置交集 | 已完成 | 864 配置中仅 2 个通过；正式候选最差窗口 ROI 最高 |
 | GUARD-8 | 同数据同执行模型 A/B | 已完成 | 无 Guard 测试 -0.39% + 1 次归零；Guard +1.058% + 0 归零 |
 | TEST-5 | 全量回归 | 已完成 | 103 suites / 536 tests / 0 failures / 0 errors / 2 skipped |
-| SHADOW-3 | 正式候选 Shadow 长测 | v2 已中止，待 v3 重启 | v2 wrapper `5600` / Java `8300` 运行 29m，0 fill；发现日亏损重启缺口后主动停止，产物保留但不作为最终证据 |
+| SHADOW-3 | 正式候选 Shadow 长测 | v3 运行中 | wrapper `23852` / Java `20988`，23:41 启动；输出 `event-maker-safe-candidate-shadow-main-v3-20261019/`；当前 waiting |
 | LIVE-A13 | 日亏损跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；同日重启沿用，跨日重锚；6 条新增回归 |
 | LIVE-1 | 真实小资金 Live smoke | 未执行 | 缺账户、资金、明确授权、时间窗口、市场范围 |
 
@@ -431,7 +431,7 @@ cd D:\Project\PolyHermes\backend
 - 24h 费用：50bps +0.069%，100bps -0.914%。
 - 尾部统计：93 个零亏损回合，rule-of-three 95% 上界 3.23%，仍高于 1.041% 盈亏平衡线；约需 289 个零亏损独立回合。
 
-当前 Shadow：v2 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` 是已主动中止的运行（29m、2 次挂单、1 次 requote、0 fill、无真实订单），不作为最终证据。最终代码将写入新的 v3 输出目录重新开始。
+当前 Shadow：v3 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v3-20261019/` 已于 23:41 启动，使用最终代码和严格参数。首两轮发现各 2 个价格/剩余时间合格市场，但均因 30 分钟成交数不足未通过活动门槛；当前 `state=waiting`、`logIssues=0`、`stderrBytes=0`。v2 目录保留为缺陷发现过程证据，不作为最终验收。
 
 下一执行顺序：
 
@@ -460,3 +460,10 @@ cd D:\Project\PolyHermes\backend
 - 主动停止原因：发现同日重启会遗忘当天已实现亏损，可能在崩溃恢复后绕过日亏损上限。
 - 修复后必须重启 v3 Shadow；v2 产物只作为“发现缺陷”的过程证据，不能作为最终 Shadow 验收。
 - 真实 Live smoke 仍等待用户提供 `accountId`、资金上限、明确授权、时间窗口和市场范围。
+### 10.13 2026-10-19 23:42 v3 Shadow 启动
+
+- 提交 `c39b00a fix: persist daily loss budget across restarts` 已推送。
+- v3 输出目录：`backend/build/research/event-maker-safe-candidate-shadow-main-v3-20261019/`。
+- wrapper PID `23852`，Shadow Java PID `20988`，启动时间 `2026-10-19 23:41:45 +08:00`。
+- 首两轮发现：qualified=2、activityPassed=0、selected=0；拒绝原因均为 `recent_trades_30m_below_min=2`。
+- 当前：`state=waiting`、`logIssues=0`、`stderrBytes=0`。保持门槛，不调低活动要求。

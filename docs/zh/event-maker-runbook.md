@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-19 23:30）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 536 tests 通过。日亏损预算已改为持久化 UTC 日锚点：同日重启沿用、跨 UTC 日重锚，旧 v2 状态 fail-closed；v2 Shadow 因发现该缺口而中止（0 fill、无真实订单），待用最终代码重启 v3 Shadow。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-19 23:30）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 536 tests 通过。日亏损预算已改为持久化 UTC 日锚点：同日重启沿用、跨 UTC 日重锚，旧 v2 状态 fail-closed；v2 Shadow 因发现该缺口而中止（0 fill、无真实订单）；v3 Shadow 已用最终代码启动，当前在严格活动门槛下等待。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。

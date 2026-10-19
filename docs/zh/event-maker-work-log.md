@@ -1142,3 +1142,10 @@
   - 全量：`103 suites / 536 tests / 0 failures / 0 errors / 2 skipped`。
 - v2 Shadow（PID 8300 / wrapper 5600）于 23:20 主动停止：运行 29m、1 个市场、2 次 Shadow 挂单、1 次 requote、0 fill、无真实订单。Gradle wrapper 因强制终止记录 exit -1；该目录不作为最终 Shadow 验收。
 - 下一步：提交本修复后，在新目录 `event-maker-safe-candidate-shadow-main-v3-20261019/` 用最终代码重启正式候选 Shadow。
+### 23:42 v3 Shadow 启动
+
+- 修复提交：`c39b00a fix: persist daily loss budget across restarts`，已推送 `fc2e244..c39b00a`。
+- v3 输出：`backend/build/research/event-maker-safe-candidate-shadow-main-v3-20261019/`。
+- wrapper PID `23852`，Java PID `20988`，启动 `2026-10-19 23:41:45 +08:00`。
+- 首两轮均为 qualified=2、activityPassed=0、selected=0，原因 `recent_trades_30m_below_min=2`。
+- 当前 waiting；日志 0 异常，stderr 为空；严格活动门槛和价格带保持不变。
