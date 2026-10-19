@@ -394,4 +394,4 @@ cd D:\Project\PolyHermes\backend
 - 全量配置中位数 ROI 未改善，845/864 个配置仍出现单市场归零，**不能实盘**。
 - 严格 0.97–0.99 价格带当前仍无报价市场；正式两臂继续等待，不降低门槛。
 - 当前两臂首轮均无日志错误、无 stderr；运行期间禁止编译/测试。
-- 真实 Live smoke 仍缺 `accountId`、资金上限、明确授权、时间窗口和市场范围。
+- 真实 Live smoke 仍缺 `accountId`、资金上限、明确授权、时间窗口和市场范围。- 提交并推送：`d768950 feat: add causal adverse-flow guard to event maker`（`c8fb838..d768950 main -> main`）。

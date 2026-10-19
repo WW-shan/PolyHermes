@@ -987,3 +987,10 @@
 - Guard 应保留，但只挡住三笔历史归零中的一笔；全量中位数 ROI 未改善，845/864 配置仍有单市场归零。
 - 当前仍不能实盘，不能标记目标完成。
 - 唯一剩余的真实 Live 阻断条件是用户授权与账户参数；在此之前继续 Shadow 收集 fill/markout/PnL 证据。
+### 提交与最终运行检查
+
+- 提交：`d768950 feat: add causal adverse-flow guard to event maker`。
+- 推送：`c8fb838..d768950 main -> main`。
+- 正式参数两臂已运行 5 轮：主臂和实验臂均为 qualified=2、activityPassed=0、selected=0，拒绝原因 `recent_trades_30m_below_min=2`。
+- 两臂 `logIssues=0`、`stderrBytes=0`，未降低活动门槛。
+- 进程：主臂 wrapper `11600` / Java `26308`；实验臂 wrapper `25864` / Java `22788`。

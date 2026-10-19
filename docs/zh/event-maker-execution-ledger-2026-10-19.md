@@ -370,3 +370,5 @@ cd D:\Project\PolyHermes\backend
 3. 对比报告用 `.\scripts\compare-event-maker-flow-guard.ps1 -Baseline <前缀> -Guard <前缀>`
 
 结论：Guard 是部分尾部防御，不是完整解决方案；当前不能实盘。真实 Live smoke 仍缺 `accountId`、资金上限、明确下单授权、时间窗口和市场范围。
+- 提交并推送：`d768950 feat: add causal adverse-flow guard to event maker`（`c8fb838..d768950 main -> main`）。
+- 正式参数两臂运行 5 轮仍无活动通过市场；主臂/实验臂均为 qualified=2、activityPassed=0、selected=0，最近拒绝原因 `recent_trades_30m_below_min=2`。
