@@ -1305,3 +1305,8 @@
 - 现在 `EventMakerStateStore` 对 `REDEEMED && transactionHash.isNullOrBlank()` fail-closed。
 - 新增 `EventMakerStateStoreTest` 反例并跑通全量：103 suites / 561 tests / 0 failures / 0 errors / 2 skipped。
 - v6 继续运行，未触碰其构建产物。
+### 05:35 两项错误尝试已回滚
+
+- 曾尝试增加 `cumulativeRealizedPnl >= sum(markets.realizedPnl)` 校验；复核发现历史市场退出 `markets` 列表后该关系不成立，会误伤合法重启状态。提交 `500aa71` 已由 `802b8a1` 回滚。
+- 曾尝试新增 `NO_PAYOUT` 状态让输方仓位跳过链上赎回；复核确认输方仓位仍需在链上赎回以清仓，否则重启时会被判定为未管理持仓。未提交的改动已回滚。
+- 当前保留的规则是：所有已结算持仓都先持久化，再走真实赎回；链上已无仓位才标记 `ALREADY_ABSENT`。
