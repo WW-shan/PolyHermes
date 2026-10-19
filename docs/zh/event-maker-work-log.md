@@ -829,3 +829,13 @@
 - 提交并推送：`0228de4 feat: apply live activity gate inside the backtest`。
 - 报告：`docs/zh/event-maker-activity-gate-consistency-2026-10-19.md`。
 - 结论：回测与实盘选市场逻辑的最后一个已知结构性差异已消除；候选池缩小是真实约束，不是发现故障；仍不能实盘，需 Shadow 积累真实成交与结算事件。
+
+### 16:1x-16:2x Spring REST 路径等待市场修复（可用性缺口）
+
+- 缺陷：Spring REST 路径的 `prepareMarkets` 一次性发现失败就抛 `no_eligible_markets` 并永久停止；而 CLI 路径有 `waitForMarketMinutes` + `discoveryRetrySeconds` 重试。严格条件下市场空窗可持续数小时，因此通过 REST 启动的 SHADOW **结构上必然失败**。
+- 修复：`prepareMarkets` 改为在 `waitForMarketMinutes` 预算内循环重试，每次间隔 `discoveryRetrySeconds`；`discoverAndSelect` 返回 null 而非抛异常；`EventMakerConfig`/DTO 新增 `waitForMarketMinutes`、`discoveryRetrySeconds`（默认 0 / 60，保持向后兼容的 fail-fast）。
+- 新增测试 `rest path keeps waiting instead of failing on the first empty scan`：本地 HTTP fixture 第一次返回空、第二次返回可交易市场；断言 start 成功、discovery 至少重试 2 次、最终采纳市场。
+- 全量测试：100 suites / 492 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`5c2b9cb fix: let the REST path wait for an eligible market instead of failing fast`（`58d5d2b..5c2b9cb main -> main`）。
+- REST 实测（Spring PID 13384，dev profile）：`start` 221ms 返回 `running=true`（异步等待，不再阻塞）；日志出现 `waiting for an eligible market (attempt=1/2)`；`stop` 39ms 返回 `running=false`，等待期间一键停止仍即时。
+- 两臂已用新代码重启：主臂 Java PID `19804`（wrapper 13916）；实验臂 Java PID `5444`（wrapper 23824）。
