@@ -812,3 +812,20 @@
 - 全量测试：100 suites / 489 tests / 0 failures / 0 errors / 2 skipped。
 - 提交并推送：`dbacd9e fix: stop reconciling live orders on every websocket event`（`8ac8207..dbacd9e main -> main`）。
 - 两臂已重启：主臂 Java PID `13976`（wrapper 8584）；实验臂 Java PID `22292`（wrapper 23760）。
+
+### 16:0x-16:5x 活动门槛一致性核验（回测 vs Shadow，关键结论）
+
+- 缺口：此前回测**没有建模 Shadow/Live 的活动门槛**（30m/2h 笔数、成交额、买卖各边）。实盘只在通过门槛的市场报价，两者不一致意味着回测的 fill 不代表真实可交易集合。
+- 动作：把活动门槛原样加进回测（同阈值、同口径、且只统计 favorite token，与 `194baf0` 修复后一致），做对照实验。
+- 对照结果（7 天窗口 / 864 配置，门槛 = 30m≥3/≥50/各≥1，2h≥20/≥500/各≥3）：
+  - 无门槛：训练期正收益 284 个、测试非正 0、最优训练 1.98% / 测试 1.97%、成交 47
+  - **有门槛：训练期正收益 192 个、测试非正 0、最优训练 1.96% / 测试 1.96%、成交 45**
+  - 候选数下降约 32%，但训练/测试一致性与 ROI 水平基本不变 → **edge 在真实门槛下存活**。
+- 当前 Shadow 配置（有门槛）：合格 260、成交 37、回合 44、结算 0、训练 +1.96%、测试 +1.98%、回撤 0。
+- 尾部风险（仍不能上线）：`breakEvenLossRate=1.93%`，成交 37、观测 0 次亏损，rule-of-three 95% 上界 = 3/37 ≈ **8.11%**，远高于盈亏平衡线。
+- 新增能力：回测 CLI/Gradle 支持 `--min-recent-*` 门槛参数（`-PresearchMinRecent*`）。
+- 新增测试：`activity gate blocks quoting when the trailing window is too thin`、`activity gate allows quoting when the trailing window is active enough`。
+- 全量测试：100 suites / 491 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`0228de4 feat: apply live activity gate inside the backtest`。
+- 报告：`docs/zh/event-maker-activity-gate-consistency-2026-10-19.md`。
+- 结论：回测与实盘选市场逻辑的最后一个已知结构性差异已消除；候选池缩小是真实约束，不是发现故障；仍不能实盘，需 Shadow 积累真实成交与结算事件。

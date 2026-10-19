@@ -113,6 +113,25 @@ tasks.register<JavaExec>("eventMakerBacktest") {
         "--entry-horizon-seconds",
         providers.gradleProperty("researchEntryHorizonSeconds").orNull ?: "86400"
     )
+    // Optional activity gate mirroring the live discovery filter.
+    providers.gradleProperty("researchMinRecentTrades").orNull?.let {
+        argsList += listOf("--min-recent-trades", it)
+    }
+    providers.gradleProperty("researchMinRecentNotional").orNull?.let {
+        argsList += listOf("--min-recent-notional", it)
+    }
+    providers.gradleProperty("researchMinRecentTradesPerSide").orNull?.let {
+        argsList += listOf("--min-recent-trades-per-side", it)
+    }
+    providers.gradleProperty("researchMinRecentTrades2h").orNull?.let {
+        argsList += listOf("--min-recent-trades-2h", it)
+    }
+    providers.gradleProperty("researchMinRecentNotional2h").orNull?.let {
+        argsList += listOf("--min-recent-notional-2h", it)
+    }
+    providers.gradleProperty("researchMinRecentTradesPerSide2h").orNull?.let {
+        argsList += listOf("--min-recent-trades-per-side-2h", it)
+    }
     argsList += listOf("--output", providers.gradleProperty("researchOutput").orNull ?: "build/research/event-maker-backtest")
     args(argsList)
 }
