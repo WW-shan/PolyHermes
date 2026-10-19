@@ -14,8 +14,8 @@ class EventMakerBacktestEngineTest {
             winnerIndex = 0,
             trades = listOf(
                 trade(8_990, 0, 0.980, 10.0),
-                trade(9_100, 0, 0.975, 300.0),
-                trade(9_200, 0, 0.985, 300.0)
+                trade(9_100, 0, 0.975, 300.0, "SELL"),
+                trade(9_200, 0, 0.985, 300.0, "BUY")
             )
         )
         val config = baseConfig()
@@ -37,8 +37,8 @@ class EventMakerBacktestEngineTest {
             winnerIndex = 0,
             trades = listOf(
                 trade(8_990, 0, 0.980, 10.0),
-                trade(9_100, 0, 0.975, 300.0),
-                trade(9_200, 0, 0.985, 300.0)
+                trade(9_100, 0, 0.975, 300.0, "SELL"),
+                trade(9_200, 0, 0.985, 300.0, "BUY")
             )
         )
         val result = engine.simulateMarket(market, baseConfig().copy(makerFeeRate = 0.01))
@@ -54,8 +54,8 @@ class EventMakerBacktestEngineTest {
             winnerIndex = 0,
             trades = listOf(
                 trade(8_990, 0, 0.980, 10.0),
-                trade(9_100, 0, 0.975, 50.0),
-                trade(9_200, 0, 0.985, 50.0)
+                trade(9_100, 0, 0.975, 50.0, "SELL"),
+                trade(9_200, 0, 0.985, 50.0, "BUY")
             )
         )
 
@@ -72,7 +72,7 @@ class EventMakerBacktestEngineTest {
             winnerIndex = 0,
             trades = listOf(
                 trade(8_990, 0, 0.980, 10.0),
-                trade(9_100, 0, 0.975, 300.0)
+                trade(9_100, 0, 0.975, 300.0, "SELL")
             )
         )
 
@@ -89,7 +89,7 @@ class EventMakerBacktestEngineTest {
             winnerIndex = 1,
             trades = listOf(
                 trade(8_990, 0, 0.980, 10.0),
-                trade(9_100, 0, 0.975, 300.0)
+                trade(9_100, 0, 0.975, 300.0, "SELL")
             )
         )
 
@@ -121,16 +121,16 @@ class EventMakerBacktestEngineTest {
             winnerIndex = 0,
             trades = listOf(
                 trade(8_990, 0, 0.980, 10.0),
-                trade(9_100, 0, 0.975, 300.0),
-                trade(9_200, 0, 0.985, 300.0)
+                trade(9_100, 0, 0.975, 300.0, "SELL"),
+                trade(9_200, 0, 0.985, 300.0, "BUY")
             )
         ).copy(conditionId = "train", closedTimestamp = 10_000)
         val testMarket = market(
             winnerIndex = 0,
             trades = listOf(
                 trade(18_990, 0, 0.980, 10.0),
-                trade(19_100, 0, 0.975, 300.0),
-                trade(19_200, 0, 0.985, 300.0)
+                trade(19_100, 0, 0.975, 300.0, "SELL"),
+                trade(19_200, 0, 0.985, 300.0, "BUY")
             )
         ).copy(conditionId = "test", closedTimestamp = 20_000)
 
@@ -152,10 +152,10 @@ class EventMakerBacktestEngineTest {
             winnerIndex = 0,
             trades = listOf(
                 trade(8_990, 0, 0.980, 10.0),
-                trade(9_100, 0, 0.975, 300.0),
-                trade(9_200, 0, 0.986, 300.0),
-                trade(9_300, 0, 0.976, 300.0),
-                trade(9_400, 0, 0.992, 300.0)
+                trade(9_100, 0, 0.975, 300.0, "SELL"),
+                trade(9_200, 0, 0.986, 300.0, "BUY"),
+                trade(9_300, 0, 0.976, 300.0, "SELL"),
+                trade(9_400, 0, 0.992, 300.0, "BUY")
             )
         )
         val config = baseConfig(maxCycles = 2)
@@ -173,15 +173,15 @@ class EventMakerBacktestEngineTest {
             winnerIndex = 0,
             trades = listOf(
                 trade(8_990, 0, 0.980, 10.0),
-                trade(9_100, 0, 0.975, 300.0),
-                trade(9_200, 0, 0.985, 300.0)
+                trade(9_100, 0, 0.975, 300.0, "SELL"),
+                trade(9_200, 0, 0.985, 300.0, "BUY")
             )
         ).copy(conditionId = "winner", closedTimestamp = 10_000)
         val loser = market(
             winnerIndex = 1,
             trades = listOf(
                 trade(18_990, 0, 0.980, 10.0),
-                trade(19_100, 0, 0.975, 300.0)
+                trade(19_100, 0, 0.975, 300.0, "SELL")
             )
         ).copy(conditionId = "loser", closedTimestamp = 20_000)
 
@@ -194,6 +194,43 @@ class EventMakerBacktestEngineTest {
         assertTrue(summary.maxAdverseExcursion < -99.0)
         assertEquals(100.0, summary.averageTimeToFillSeconds, 0.0001)
         assertTrue(summary.breakEvenLossRate in 0.009..0.011)
+    }
+
+    @Test
+    fun `same side taker flow does not fill a resting maker order`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                // Taker BUY cannot fill our resting BUY, even below our limit.
+                trade(9_100, 0, 0.975, 300.0, "BUY"),
+                // Taker SELL cannot fill our resting SELL, even above our target.
+                trade(9_200, 0, 0.985, 300.0, "SELL")
+            )
+        )
+
+        val result = engine.simulateMarket(market, baseConfig())
+
+        assertTrue(result.eligible)
+        assertFalse(result.filled)
+        assertEquals(0, result.cycles.size)
+    }
+
+    @Test
+    fun `prints without a known taker side never fill`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_100, 0, 0.975, 300.0),
+                trade(9_200, 0, 0.985, 300.0)
+            )
+        )
+
+        val result = engine.simulateMarket(market, baseConfig())
+
+        assertTrue(result.eligible)
+        assertFalse(result.filled)
     }
 
     private fun baseConfig(maxCycles: Int = 1) = EventMakerConfig(
@@ -220,6 +257,15 @@ class EventMakerBacktestEngineTest {
         trades = trades
     )
 
-    private fun trade(timestamp: Long, outcomeIndex: Int, price: Double, size: Double) =
-        EventMakerTrade(timestamp, outcomeIndex, price, size)
+    /**
+     * Taker-side explicit trade. A resting BUY fills only on taker SELL prints and a
+     * resting SELL only on taker BUY prints, mirroring the live Shadow engine.
+     */
+    private fun trade(
+        timestamp: Long,
+        outcomeIndex: Int,
+        price: Double,
+        size: Double,
+        side: String? = null
+    ) = EventMakerTrade(timestamp, outcomeIndex, price, size, side)
 }

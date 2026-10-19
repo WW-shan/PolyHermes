@@ -107,7 +107,10 @@ class EventMakerBacktestEngine(
                     }
                 }
 
-                if (trade.price <= currentOrder.limitPrice) {
+                // A resting BUY is only filled by taker SELL flow. Prints without a
+                // known side are ignored so the simulation cannot claim a fill that
+                // the live engine would never see.
+                if (trade.takerIsSell && trade.price <= currentOrder.limitPrice) {
                     currentOrder.eligibleVolume += trade.size
                     if (currentOrder.eligibleVolume + 1e-9 >= config.queueFactor * currentOrder.shares) {
                         val entryFee = currentOrder.shares * currentOrder.limitPrice * config.makerFeeRate
@@ -125,7 +128,8 @@ class EventMakerBacktestEngine(
                 }
             } else {
                 val targetSell = sellPrice ?: roundUpToTick(min(0.999, currentInventory.entryPrice + exitSpread), tick)
-                if (trade.price >= targetSell) {
+                // A resting SELL is only filled by taker BUY flow.
+                if (trade.takerIsBuy && trade.price >= targetSell) {
                     sellEligibleVolume += trade.size
                     if (sellEligibleVolume + 1e-9 >= config.queueFactor * currentInventory.shares) {
                         val exitFee = currentInventory.shares * targetSell * config.makerFeeRate

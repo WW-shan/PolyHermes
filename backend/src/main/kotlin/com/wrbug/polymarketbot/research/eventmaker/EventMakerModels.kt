@@ -22,8 +22,18 @@ data class EventMakerTrade(
     val timestamp: Long,
     val outcomeIndex: Int,
     val price: Double,
-    val size: Double
-)
+    val size: Double,
+    /**
+     * Taker side as reported by the Data API ("BUY"/"SELL"). A resting maker BUY can
+     * only be filled by taker SELL flow, and vice versa. Null means the side was not
+     * available; those prints are treated as non-filling so the simulation never
+     * assumes liquidity it cannot prove.
+     */
+    val side: String? = null
+) {
+    val takerIsBuy: Boolean get() = side.equals("BUY", ignoreCase = true)
+    val takerIsSell: Boolean get() = side.equals("SELL", ignoreCase = true)
+}
 
 data class EventMakerConfig(
     val name: String,

@@ -163,7 +163,7 @@ class EventMakerResearchDataClient(
                 val outcome = row.outcomeIndex ?: continue
                 if (ts < start || ts > closedTimestamp || outcome !in 0..1 || price <= 0.0 || price >= 1.0 || size <= 0.0) continue
                 val key = "${row.transactionHash ?: ""}|$ts|$outcome|$price|$size"
-                result[key] = EventMakerTrade(ts, outcome, price, size)
+                result[key] = EventMakerTrade(ts, outcome, price, size, row.side?.uppercase())
             }
             val oldest = rows.minOfOrNull { it.timestamp ?: Long.MAX_VALUE } ?: break
             if (rows.size < 500 || oldest <= start) break
@@ -285,6 +285,7 @@ class EventMakerResearchDataClient(
         val outcomeIndex: Int?,
         val price: Double?,
         val size: Double?,
+        val side: String?,
         val transactionHash: String?
     )
 }
