@@ -152,6 +152,13 @@ if ([double]$summary.openInventoryShares -ne 0.0) {
 if ([int]$summary.fills -gt 0 -and $markoutRows.Count -eq 0) {
     $warnings.Add("fills>0 but markouts.csv is empty")
 }
+$droppedMarkouts = 0
+if ($null -ne $summary.droppedPendingMarkouts) {
+    $droppedMarkouts = [int]$summary.droppedPendingMarkouts
+}
+if ($droppedMarkouts -gt 0) {
+    $warnings.Add("droppedPendingMarkouts=$droppedMarkouts (fills too close to run end for their horizon)")
+}
 if (@($summary.lastErrors).Count -gt 0) {
     $failures.Add("lastErrors=$((@($summary.lastErrors) | ConvertTo-Json -Compress))")
 }
@@ -179,6 +186,7 @@ $audit = [ordered]@{
     queueConsumedShares = $summary.queueConsumedShares
     duplicateTradeRows = $duplicateTradeRows
     markoutsByHorizon = $markoutsByHorizon
+    droppedPendingMarkouts = $droppedMarkouts
     failures = @($failures)
     warnings = @($warnings)
     passed = ($failures.Count -eq 0)

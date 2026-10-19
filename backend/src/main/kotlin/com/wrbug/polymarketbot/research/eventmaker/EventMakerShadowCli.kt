@@ -94,6 +94,7 @@ private data class ShadowSummary(
     val filledShares: Double,
     val executionDiagnosticsFile: String,
     val markoutHorizonsSeconds: List<Long>,
+    val droppedPendingMarkouts: Int,
     val completedCycles: Int,
     val winningCycles: Int,
     val losingCycles: Int,
@@ -246,6 +247,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
     private lateinit var tradesWriter: java.io.BufferedWriter
     private lateinit var markoutsWriter: java.io.BufferedWriter
     private val pendingMarkouts = mutableListOf<PendingMarkout>()
+    private var droppedPendingMarkouts = 0
     private var selectedMarkets: List<LivePaperMarket> = emptyList()
 
     fun run(): ShadowSummary = runBlocking {
@@ -534,7 +536,12 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         } finally {
             val shutdownResult = runBlocking { engine.cancelAll(states, 0L) }
             recordEngineResult(shutdownResult)
-            writeSnapshots(states, System.currentTimeMillis())
+            val shutdownAt = System.currentTimeMillis()
+            // Flush every markout that is already due; otherwise a fill near the
+            // end of the run loses its 60s/300s/1800s rows silently.
+            writeDueMarkouts(shutdownAt)
+            droppedPendingMarkouts = pendingMarkouts.size
+            writeSnapshots(states, shutdownAt)
             jobs.forEach { it.cancel() }
             wsClient?.close()
             dataClient.close()
@@ -578,6 +585,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             filledShares = diagnostics.totalFilledShares.toDouble(),
             executionDiagnosticsFile = "execution-diagnostics.json",
             markoutHorizonsSeconds = MARKOUT_HORIZONS_SECONDS,
+            droppedPendingMarkouts = droppedPendingMarkouts,
             completedCycles = cycles.size,
             winningCycles = cycles.count { it.pnl > 0.0 },
             losingCycles = cycles.count { it.pnl < 0.0 },
