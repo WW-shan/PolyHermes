@@ -464,6 +464,7 @@ class EventMakerStrategyService(
             minVolume24hr = config.minVolume24hr,
             allowNegRisk = config.allowNegRisk,
             minRemainingMinutes = config.minRemainingMinutes,
+            maxRemainingMinutes = config.maxRemainingMinutes,
             minRecentTrades30m = config.minRecentTrades30m,
             minRecentNotional30m = config.minRecentNotional30m,
             minRecentTradesPerSide30m = config.minRecentTradesPerSide30m,

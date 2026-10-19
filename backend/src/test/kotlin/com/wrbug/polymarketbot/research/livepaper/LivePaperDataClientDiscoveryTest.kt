@@ -238,11 +238,76 @@ class LivePaperDataClientDiscoveryTest {
         val nextCursor: String?
     )
 
-    private fun market(id: String, bid: Double, ask: Double, volume: Double): Map<String, Any> = mapOf(
+    @Test
+    fun `max remaining minutes excludes markets outside the backtested horizon`() = runBlocking {
+        val client = client()
+        try {
+            val inHorizon = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+                .plusHours(12)
+                .withNano(0)
+                .toString()
+            val outOfHorizon = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+                .plusHours(72)
+                .withNano(0)
+                .toString()
+            marketsResponder = { tag, _, _ ->
+                if (tag == "2") {
+                    FixturePage(
+                        listOf(
+                            marketEndingAt("settles-in-12h", 0.98, 0.985, 250_000.0, inHorizon),
+                            marketEndingAt("settles-in-72h", 0.98, 0.985, 250_000.0, outOfHorizon)
+                        ),
+                        null
+                    )
+                } else {
+                    FixturePage(emptyList(), null)
+                }
+            }
+
+            val bounded = client.discoverMarketsDetailed(
+                maxMarkets = 10,
+                minVolume24hr = 1_000.0,
+                minPrice = 0.97,
+                maxPrice = 0.99,
+                minRemainingMinutes = 120,
+                maxRemainingMinutes = 24 * 60,
+                maxPagesPerTag = 1,
+                pageLimit = 100
+            )
+            assertEquals(listOf("settles-in-12h"), bounded.markets.map { it.conditionId })
+
+            val unbounded = client.discoverMarketsDetailed(
+                maxMarkets = 10,
+                minVolume24hr = 1_000.0,
+                minPrice = 0.97,
+                maxPrice = 0.99,
+                minRemainingMinutes = 120,
+                maxPagesPerTag = 1,
+                pageLimit = 100
+            )
+            assertEquals(
+                setOf("settles-in-12h", "settles-in-72h"),
+                unbounded.markets.map { it.conditionId }.toSet()
+            )
+        } finally {
+            client.close()
+        }
+    }
+
+    private fun market(id: String, bid: Double, ask: Double, volume: Double): Map<String, Any> =
+        marketEndingAt(id, bid, ask, volume, "2099-12-31T00:00:00Z")
+
+    private fun marketEndingAt(
+        id: String,
+        bid: Double,
+        ask: Double,
+        volume: Double,
+        endDate: String
+    ): Map<String, Any> = mapOf(
         "conditionId" to id,
         "question" to id,
         "volume24hr" to volume,
-        "endDate" to "2099-12-31T00:00:00Z",
+        "endDate" to endDate,
         "bestBid" to bid,
         "bestAsk" to ask,
         "outcomes" to listOf("Yes", "No"),

@@ -20,6 +20,11 @@ data class EventMakerConfig(
     val minRecentNotional2h: Double = 0.0,
     val minRecentTradesPerSide2h: Int = 0,
     val minRemainingMinutes: Int = 720,
+    /**
+     * Optional upper bound on time to settlement, mirroring the backtest's
+     * entry horizon. Null keeps the previous unbounded behavior.
+     */
+    val maxRemainingMinutes: Int? = null,
     val allowNegRisk: Boolean = true,
     val minPrice: Double = 0.90,
     val maxPrice: Double = 0.99,
@@ -52,6 +57,7 @@ data class EventMakerConfig(
         require(minRecentNotional2h >= 0.0)
         require(minRecentTradesPerSide2h >= 0)
         require(minRemainingMinutes >= 1)
+        require(maxRemainingMinutes == null || maxRemainingMinutes > minRemainingMinutes)
         require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
         require(improveTicks >= 0)
         require(entryOffsetCents >= 0.0)

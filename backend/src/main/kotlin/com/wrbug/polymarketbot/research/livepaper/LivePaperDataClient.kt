@@ -106,6 +106,7 @@ class LivePaperDataClient(
         minVolume24hr: Double,
         allowNegRisk: Boolean = false,
         minRemainingMinutes: Int = 30,
+        maxRemainingMinutes: Int? = null,
         minRecentTrades30m: Int = 0,
         minRecentNotional30m: Double = 0.0,
         minRecentTradesPerSide30m: Int = 0,
@@ -121,6 +122,7 @@ class LivePaperDataClient(
         minVolume24hr = minVolume24hr,
         allowNegRisk = allowNegRisk,
         minRemainingMinutes = minRemainingMinutes,
+        maxRemainingMinutes = maxRemainingMinutes,
         minRecentTrades30m = minRecentTrades30m,
         minRecentNotional30m = minRecentNotional30m,
         minRecentTradesPerSide30m = minRecentTradesPerSide30m,
@@ -138,6 +140,7 @@ class LivePaperDataClient(
         minVolume24hr: Double,
         allowNegRisk: Boolean = false,
         minRemainingMinutes: Int = 30,
+        maxRemainingMinutes: Int? = null,
         minRecentTrades30m: Int = 0,
         minRecentNotional30m: Double = 0.0,
         minRecentTradesPerSide30m: Int = 0,
@@ -197,6 +200,7 @@ class LivePaperDataClient(
                         minVolume24hr = minVolume24hr,
                         allowNegRisk = allowNegRisk,
                         minRemainingMinutes = minRemainingMinutes,
+                        maxRemainingMinutes = maxRemainingMinutes,
                         minFavoriteBid = minFavoriteBidPrefilter,
                         maxFavoriteBidExclusive = maxFavoriteBidPrefilterExclusive
                     ) ?: continue
@@ -412,6 +416,7 @@ class LivePaperDataClient(
         minVolume24hr: Double,
         allowNegRisk: Boolean,
         minRemainingMinutes: Int,
+        maxRemainingMinutes: Int?,
         minFavoriteBid: Double?,
         maxFavoriteBidExclusive: Double?
     ): LivePaperMarket? {
@@ -423,7 +428,12 @@ class LivePaperDataClient(
         val volume = raw.volume24hr ?: return null
         if (volume < minVolume24hr) return null
         val end = parseTimestamp(raw.endDate) ?: return null
-        if (end <= System.currentTimeMillis() / 1000 + minRemainingMinutes.coerceAtLeast(1) * 60L) return null
+        val nowSeconds = System.currentTimeMillis() / 1000
+        if (end <= nowSeconds + minRemainingMinutes.coerceAtLeast(1) * 60L) return null
+        // The backtest only ever validated the last 24 hours before settlement.
+        // Quoting a market that settles next year is outside that evidence, so
+        // discovery can bound the horizon to match what was actually measured.
+        if (maxRemainingMinutes != null && end > nowSeconds + maxRemainingMinutes.coerceAtLeast(1) * 60L) return null
         val bid0 = raw.bestBid ?: return null
         val ask0 = raw.bestAsk ?: return null
         if (bid0 <= 0.0 || ask0 <= bid0 || ask0 >= 1.0) return null
