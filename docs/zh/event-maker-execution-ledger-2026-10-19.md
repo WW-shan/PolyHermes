@@ -311,3 +311,28 @@ cd D:\Project\PolyHermes\backend
 - 三次请求后 `status.running=false`，未产生任何订单。
 - SHADOW 通过 REST 全链路验证：discovery 走代理成功（qualified=6、activityPassed=1）、start/status/stop 正常、stop 20ms 返回。
 - 真实 Live smoke 仍等待用户提供：可用 `accountId`、资金上限、明确下单授权、时间窗口、市场范围。
+
+### 17:3x-17:5x 实盘执行适配器补漏（可恢复入口）
+
+本轮在 Shadow 等待期间审计真实 CLOB 执行路径，已将以下问题纳入代码和回归测试：
+
+1. 官方单笔撤单为 `DELETE /order` + `{"orderID":"..."}`，不是 `DELETE /orders/{id}`；成功必须由 `canceled` 精确确认，`not_canceled` 视为失败。
+2. CLOB 分页初始游标 `MA==`、终止游标 `LTE=`；活跃订单遍历必须在 `LTE=` 停止。
+3. 撤单与部分成交存在竞态：撤单后必须读取最终订单快照并先记账，不能直接清空 activeOrder。
+4. 下单 2xx 无 body、成功无 orderID、或拒绝响应带 orderID 均属于结果不确定，必须停机并保留恢复线索，不能盲目重试。
+5. 签名异常必须在适配器内转换成 Result，不能逃逸到事件循环。
+6. 状态集合补齐 CLOB V2：`LIVE`、`INVALID`、`CANCELED_MARKET_RESOLVED`、`CANCELED`、`MATCHED`，并兼容 `unmatched`、小写响应和旧状态。
+7. 快照必须核对 proxy maker、conditionId、asset/token；`MATCHED` 但未满额时 fail-closed。
+8. 重启后的每日亏损基线必须重新锚定，不能把历史累计亏损算进当天。
+9. 下单/撤单确认失败增加 5 秒退避，避免每个 WS 事件放大 REST 请求。
+10. Shadow 快照补齐 token/condition/maker 字段；孤儿订单即使撤单返回 `not_canceled`，仍以最终订单快照确认终态。
+
+验证：
+
+- 全量测试：`100 suites / 513 tests / 0 failures / 0 errors / 2 skipped`。
+- Spring：PID `10360`，dev profile，端口 8000，健康检查 200。
+- REST SHADOW 冒烟：start → status → stop 成功；选中 `US x Iran ceasefire continues through October 22?`，Shadow 报价 `BUY 0.95 shares=1.05`；stop `95ms`，无错误。
+- 两臂已用本轮代码重启：主臂 Java PID `25924`（wrapper `20468`，spread=2）；实验臂 Java PID `25556`（wrapper `22844`，spread=1）；`watch-process.json` 已更新。
+- 本轮没有真实 Live 下单；仍缺用户授权、`accountId`、资金上限、时间窗口和市场范围。
+
+恢复规则：若继续 Shadow，先看对应 `watch-process.json` 与 `stdout.log`；运行期间禁止编译/测试。若进入 Live，必须先确认上述快照/撤单路径在真实账户上通过小资金 smoke，再讨论扩大资金。

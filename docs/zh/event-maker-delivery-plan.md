@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**Live 状态恢复/账户级对账已加固；stop 可在途中断网络调用、REST 路径支持系统代理回退；98 suites / 478 tests 通过；已提交 69649e5，两臂等待+Shadow 运行中**<br>
-> 最后更新：2026-10-19 10:40 +08:00<br>
+> 当前状态：**Live 执行适配器本轮再补 12 项缺陷（撤单协议/分页/状态/撤单竞态/下单结果不确定/签名异常/快照校验/日预算重启/退避/Shadow 快照/孤儿恢复/大小写状态）；100 suites / 513 tests 通过；两臂已用新代码重启等待合格市场；仍不可实盘**<br>
+> 最后更新：2026-10-19 17:55 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -336,9 +336,35 @@ cd D:\Project\PolyHermes\backend
 | BT-4 | 标签/价格桶 × 训练/测试与 cluster bootstrap | 已完成 | `docs/zh/event-maker-robustness-crosscheck-2026-10-19.md`、分析脚本 |
 | TEST-3 | 定向与全量回归 | 已完成 | eventmaker 94 tests；全量 97 suites / 475 tests / 0 failures / 0 errors / 2 skipped |
 | GIT-3 | 提交并推送本轮安全修复 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 12h 等待 + 12h Shadow 主臂 | 运行中 | v5 Java PID 25560，输出 `event-maker-shadow-watch-v5-20261019/` |
-| EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID 15356，`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
+| OBS-4 | 12h 等待 + 12h Shadow 主臂 | 运行中 | v5 Java PID `25924`（wrapper `20468`），输出 `event-maker-shadow-watch-v5-20261019/` |
+| EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID `25556`（wrapper `22844`），`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
-- 当前没有运行中的 Shadow/回测进程。
+- 最新两臂进程状态以 10.9 节为准；旧行中的 PID 是历史检查点。
 - 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
 - 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。
+
+### 10.9 2026-10-19 17:3x-17:5x 实盘执行链路审计补漏
+
+本轮不是放宽策略条件，而是逐段核对官方 CLOB V2 文档和 `clob-client` 实现，修复真实 Live 适配器的结构性问题：
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| LIVE-A1 | 单笔撤单端点/请求体/响应确认 | 已完成 | `DELETE /order` + `orderID`；`canceled` 精确确认，`not_canceled` 失败；单测 + HTTP 探测 |
+| LIVE-A2 | 活跃订单分页终止游标 | 已完成 | `MA==` 起始、`LTE=` 终止；单测 |
+| LIVE-A3 | 撤单与部分成交竞态 | 已完成 | 撤单后最终快照先对账，再清 activeOrder；竞态测试 |
+| LIVE-A4 | 不确定下单结果 | 已完成 | 2xx 无 body / 无 orderID / 矛盾 orderID 均 ambiguous + halt；单测 |
+| LIVE-A5 | 签名异常不逃逸 | 已完成 | `order_signing_failed` 预检失败；单测 |
+| LIVE-A6 | CLOB V2 状态集合 | 已完成 | `INVALID`、`CANCELED_MARKET_RESOLVED`、`unmatched`、小写兼容；单测 |
+| LIVE-A7 | 订单快照 maker/condition/token/满额语义 | 已完成 | 不匹配 fail-closed；单测 |
+| LIVE-A8 | 重启后的日亏损基线 | 已完成 | `resetDailyPnlBaseline(states)`；单测 |
+| LIVE-A9 | 下单/撤单失败请求退避 | 已完成 | 5 秒退避；单测 |
+| LIVE-A10 | Shadow 快照字段 | 已完成 | 补齐 token/condition/maker；EventMaker 全测试 |
+| LIVE-A11 | 孤儿订单终态恢复 | 已完成 | 撤单返回 not_canceled 仍查最终快照；单测 |
+| LIVE-A12 | 持久化状态大小写 | 已完成 | 统一状态校验；单测 |
+
+- 全量：`100 suites / 513 tests / 0 failures / 0 errors / 2 skipped`。
+- Spring REST 冒烟：PID `10360`，`/api/system/health=200`；SHADOW `start → status → stop` 通过；`stop=95ms`。
+- 当前两臂：主臂 Java PID `25924`（wrapper `20468`，spread=2）；实验臂 Java PID `25556`（wrapper `22844`，spread=1）。两臂均用新代码等待严格条件市场，输出目录保持不变。
+- 运行期间仍禁止编译/测试；轮询使用 `.\scripts\check-event-maker-watch.ps1`。
+- 真实 Live smoke 仍缺：可用 `accountId`、资金上限、用户明确下单授权、时间窗口、市场范围。
+- **结论不变：执行链路已知结构性问题已修复，但回测尾部风险未被约束，不能宣布可实盘，不能标记目标完成。**

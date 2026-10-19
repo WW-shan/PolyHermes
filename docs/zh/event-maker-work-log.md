@@ -876,3 +876,31 @@
 - 全量测试：100 suites / 494 tests / 0 failures / 0 errors / 2 skipped。
 - 提交并推送：`5483d02 fix: make the daily loss budget actually daily`（`f8cf592..5483d02 main -> main`）。
 - 两臂已重启：主臂 Java PID `12368`（wrapper 23964）；实验臂 Java PID `8428`（wrapper 26264）。
+
+### 17:3x-17:5x 实盘执行链路审计补漏（本轮）
+
+在 Shadow 等待严格条件市场期间，逐段审计 `ClobEventMakerExecutionAdapter`、`EventMakerLiveEngine`、状态恢复和官方 CLOB 文档。依据官方 OpenAPI、`clob-client` 源码和真实 HTTP 探测，确认并修复以下缺陷：
+
+| ID | 缺陷 | 修复 | 回归证据 |
+|---|---|---|---|
+| LIVE-1 | 单笔撤单使用不存在的 `DELETE /orders/{id}`，且未校验 `not_canceled` | 改为官方 `DELETE /order` + JSON `{orderID}`；只有 `canceled` 精确确认当前订单且无 `not_canceled` 才成功 | `ClobEventMakerExecutionAdapterTest` 端点/响应测试；真实无认证探测 `/order` 返回 401、`/orders/0x01` 返回 404 |
+| LIVE-2 | 活跃订单分页只认 `null`，官方终端游标是 `LTE=`，会把终止页当重复游标并拒绝启动 | 使用官方 `INITIAL_CURSOR=MA==`，同时识别 `LTE=` | `active order terminal cursor stops pagination` |
+| LIVE-3 | 撤单后直接清空本地订单，忽略撤单期间/撤单前已发生的部分成交 | 撤单后必须读取最终订单快照并先对账，再清除 activeOrder；查询失败保留 activeOrder | `requote cancellation reconciles a fill that races the cancel`、`partial fill cancellation reconciles a second fill during cancel`、`cancel lookup failure keeps the active order fail closed` |
+| LIVE-4 | 下单返回 2xx 但无 body、成功却无 orderID、或 `success=false` 却带 orderID 时可能被当作普通拒绝并重复下单 | 统一归为 `EventMakerAmbiguousOrderException` 并停机；成功但状态未知时保留 orderID、尝试撤单并停机 | `successful placement without an order id is ambiguous`、`rejected placement carrying an order id is ambiguous` |
+| LIVE-5 | 签名/派生异常会从 `place()` 直接抛出，绕过 engine 的 Result 风控路径 | 捕获签名异常并返回 `order_signing_failed` 预检失败 | `signing failure is returned as a preflight failure instead of escaping` |
+| LIVE-6 | CLOB V2 合法终态 `INVALID`、`CANCELED_MARKET_RESOLVED` 以及 `unmatched` 未识别，可能错误停机 | 新增统一 `EventMakerOrderStatuses`，全链路使用同一状态集合并统一大小写 | `documented terminal statuses are accepted`、状态恢复测试 |
+| LIVE-7 | 订单快照只校验 id/价格/数量，未校验 maker、market、asset，也未校验 `MATCHED` 必须全量成交 | 快照必须由当前 proxy 创建、condition/token 与选市场一致；`MATCHED` 但未满额直接 fail-closed | `order snapshot from a different maker is rejected`、`matched status with an unfilled remainder is rejected` |
+| LIVE-8 | 重启后 `dailyPnlBaseline` 未重新锚定，历史累计亏损仍会占满新一天预算 | 运行开始和 UTC 日切换统一调用 `resetDailyPnlBaseline(states)` | `restored cumulative loss does not consume the new daily budget` |
+| LIVE-9 | 撤单查询失败或下单预检失败会在每个 WS 事件重试，存在请求放大风险 | 每市场下单失败、每订单撤单确认失败均加入 5 秒退避 | `rejected placement is rate limited per market`、撤单失败退避断言 |
+| LIVE-10 | Shadow 订单快照缺少 condition/token/maker，新增的严格快照校验会让 Shadow 撤单失败 | Shadow 订单补齐快照字段并保持模拟语义 | EventMaker 定向测试全部通过 |
+| LIVE-11 | 孤儿订单已是终态时，撤单接口返回 `not_canceled` 会让启动恢复误判失败 | 撤单失败也继续查询最终快照；只有确认终态且无成交才接受 | `already terminal orphan is accepted even if cancel reports not confirmed` |
+| LIVE-12 | 持久化状态中的小写订单状态会被旧大写白名单拒绝 | 状态存储改用统一状态校验，兼容 `live`/`canceled_market_resolved` 等大小写 | `load accepts lower-case documented order statuses` |
+
+验证记录：
+
+- 全量：`100 suites / 513 tests / 0 failures / 0 errors / 2 skipped`。
+- Spring 冒烟：PID `10360`，`/api/system/health=200`；REST `SHADOW start → status → stop` 全链路通过。
+- 冒烟市场：`US x Iran ceasefire continues through October 22?`；日志出现 `BUY 0.95 shares=1.05` 的 Shadow 报价；`stop` 实测 `95ms`，无错误。
+- 两臂已用本轮代码重启：主臂 Java PID `25924`（wrapper `20468`，spread=2）；实验臂 Java PID `25556`（wrapper `22844`，spread=1）。均处于严格条件等待，输出目录已更新 `watch-process.json`。
+- 当前未授权真实下单；没有产生任何 LIVE 订单。
+- 结论：执行链路新增的已知结构性问题已修复，但策略尾部风险仍未约束，**不能因此宣布可实盘**。
