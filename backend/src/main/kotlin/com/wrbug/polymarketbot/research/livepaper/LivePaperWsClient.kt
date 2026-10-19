@@ -24,7 +24,9 @@ class LivePaperWsClient(
     proxyUrl: String?,
     private val tokenToCondition: Map<String, String>,
     private val onEvent: (LiveFeedEvent) -> Unit,
-    private val onStatus: (String) -> Unit = {}
+    private val onStatus: (String) -> Unit = {},
+    private val wsUrl: String = DEFAULT_WS_URL,
+    private val reconnectDelayMs: Long = 3_000L
 ) {
     private val scopeJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + scopeJob)
@@ -40,7 +42,7 @@ class LivePaperWsClient(
             }
         }
         .build()
-    private val wsUrl = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+
     private val lock = Any()
     @Volatile private var socket: WebSocket? = null
     @Volatile private var running = true
@@ -86,6 +88,16 @@ class LivePaperWsClient(
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     if (socket !== created) return
                     parseAndDispatch(text)
+                }
+
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    if (socket !== created) return
+                    // Server-initiated close: complete the handshake so onClosed
+                    // fires immediately. Without this, OkHttp waits out its
+                    // 60-second close timeout before we reconnect, leaving a
+                    // blind window with no book/trade feed during a live run.
+                    webSocket.close(code, reason)
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -135,7 +147,7 @@ class LivePaperWsClient(
     private fun scheduleReconnect() {
         if (!running || reconnectJob?.isActive == true) return
         reconnectJob = scope.launch {
-            delay(3_000)
+            delay(reconnectDelayMs)
             reconnectJob = null
             if (running) connect()
         }
@@ -231,6 +243,10 @@ class LivePaperWsClient(
         }
         val parsed = raw.toDoubleOrNull() ?: return System.currentTimeMillis()
         return if (parsed > 10_000_000_000.0) parsed.toLong() else (parsed * 1000.0).toLong()
+    }
+
+    companion object {
+        const val DEFAULT_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     }
 
     private fun JsonObject.string(name: String): String? {
