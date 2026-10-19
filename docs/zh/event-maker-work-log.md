@@ -731,3 +731,12 @@
 - 提交并推送：`ca2c461 fix: reconnect market websocket promptly on server-initiated close`（`db2c3b1..ca2c461 main -> main`）。
 - 两臂已用含该修复的代码重启：主臂 Java PID `12916`（wrapper 4476）；实验臂 Java PID `16788`（wrapper 18916）。重启前两臂各 34 轮、无 fill、无错误。
 - 说明：重启原因是两臂启动（11:59）早于本轮编译（12:33），避免 classpath 污染；不是放宽门槛。
+
+### 12:38-12:45 markout 收尾证据修复
+
+- 缺陷：Shadow 运行结束的 finally 块不调用 `writeDueMarkouts`，已到期但尚未处理的 markout 被静默丢弃；接近结束的 fill 会丢失 60s/300s/1800s 行，导致 markout 证据不完整。
+- 修复：关闭时先 `writeDueMarkouts(shutdownAt)` 冲刷所有已到期行；剩余未到期数量记录到 `summary.droppedPendingMarkouts`，不再静默。
+- 审计脚本：`audit-event-maker-shadow.ps1` 读取并输出 `droppedPendingMarkouts`，大于 0 时写入 warnings；对旧 summary（无该字段）保持向后兼容。
+- 全量测试：100 suites / 483 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`a3a3b47 fix: flush due markouts at shadow shutdown and report dropped markouts`（`13daf9c..a3a3b47 main -> main`）。
+- 两臂已用含该修复的代码重启：主臂 Java PID `17176`（wrapper 22444）；实验臂 Java PID `25992`（wrapper 7188）。重启前两臂各 2 轮、无 fill、无错误。
