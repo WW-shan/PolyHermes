@@ -563,3 +563,13 @@ cd D:\Project\PolyHermes\backend
 
 - 当前 FLAT、activeOrders=0、fills=0、cycles=0、inventory=0；`logIssues=0`、`stderrBytes=0`。
 - 低队列订单也未成交，说明当前缺口不是单一 queue 数值问题；需要继续等待严格条件市场的真实可穿越成交量。
+### 04:05 结算/赎回瞬态失败计数
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| RESILIENCE-1 | 结算快照成功后清零失败计数 | 已完成 | `EventMakerLiveEngineTest`：失败/成功/再失败不误 halt |
+| RESILIENCE-2 | 赎回持仓成功后清零失败计数 | 已完成 | `EventMakerLiveEngineTest`：失败/成功不可赎回/再失败不误 halt |
+| TEST-12 | 隔离 worktree 全量回归 | 已完成 | 103 suites / 558 tests / 0 failures / 0 errors / 2 skipped |
+
+- 只改了故障计数重置逻辑，没有改报价、价格带、活动门槛、post-only、q20 或资金限制。
+- 真实 Builder Relayer、链上回执、pUSD 到账和真实小资金 smoke 仍未完成。

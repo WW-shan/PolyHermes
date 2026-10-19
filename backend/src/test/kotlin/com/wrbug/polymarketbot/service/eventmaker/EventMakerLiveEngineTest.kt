@@ -575,6 +575,77 @@ class EventMakerLiveEngineTest {
     }
 
     @Test
+    fun `successful settlement snapshot read resets transient failure counter`() = runTest {
+        val start = 1_800_000_000_000L
+        val state = EventMakerLiveState(market, config)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, start))
+        val buy = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, start).placed.single().order
+        port.fill(buy.orderId, buy.originalShares)
+        engine.reconcile(listOf(state), 7L, start + 1)
+
+        port.settlementSnapshotFailuresRemaining = 2
+        engine.settleResolved(listOf(state), 7L, start + 2_000L)
+        engine.settleResolved(listOf(state), 7L, start + 32_001L)
+        assertNull(engine.haltedReason)
+
+        port.settlementSnapshot = EventMakerSettlementSnapshot(null, null)
+        engine.settleResolved(listOf(state), 7L, start + 62_002L)
+        assertNull(engine.haltedReason)
+
+        port.settlementSnapshotFailuresRemaining = 2
+        engine.settleResolved(listOf(state), 7L, start + 92_003L)
+        engine.settleResolved(listOf(state), 7L, start + 122_004L)
+        assertNull(engine.haltedReason)
+    }
+
+    @Test
+    fun `successful redemption position read resets transient failure counter`() = runTest {
+        val start = 1_800_000_000_000L
+        val liveMarket = market
+        val state = EventMakerLiveState(liveMarket, config)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, start))
+        val buy = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, start).placed.single().order
+        port.fill(buy.orderId, buy.originalShares)
+        engine.reconcile(listOf(state), 7L, start + 1)
+        port.settlementSnapshot = EventMakerSettlementSnapshot(
+            resolutionOutcomeIndex = 0,
+            position = EventMakerSettlementPosition(
+                tokenId = liveMarket.favoriteTokenId,
+                shares = state.inventoryShares,
+                redeemable = true,
+                outcomeIndex = 0,
+                negativeRisk = false
+            )
+        )
+        engine.settleResolved(listOf(state), 7L, start + 2_000L)
+        assertNotNull(state.pendingRedemption())
+
+        port.settlementPositionFailuresRemaining = 2
+        engine.redeemPendingRedemptions(listOf(state), 7L, start + 3_000L)
+        engine.redeemPendingRedemptions(listOf(state), 7L, start + 33_001L)
+        assertNull(engine.haltedReason)
+
+        port.settlementPosition = EventMakerSettlementPosition(
+            tokenId = liveMarket.favoriteTokenId,
+            shares = buy.originalShares,
+            redeemable = false,
+            outcomeIndex = 0,
+            negativeRisk = false
+        )
+        engine.redeemPendingRedemptions(listOf(state), 7L, start + 63_002L)
+        assertNull(engine.haltedReason)
+
+        port.settlementPositionFailuresRemaining = 2
+        engine.redeemPendingRedemptions(listOf(state), 7L, start + 93_003L)
+        engine.redeemPendingRedemptions(listOf(state), 7L, start + 123_004L)
+        assertNull(engine.haltedReason)
+    }
+
+    @Test
     fun `expired market cancels a resting order before settlement`() = runTest {
         val start = 1_800_000_000_000L
         val state = EventMakerLiveState(market(endTimestamp = start / 1000L + 1), config)
@@ -616,7 +687,9 @@ class EventMakerLiveEngineTest {
         var mismatchPlacement: Boolean = false
         var placeStatus: String = "LIVE"
         var settlementSnapshot: EventMakerSettlementSnapshot? = null
+        var settlementSnapshotFailuresRemaining: Int = 0
         var settlementPosition: EventMakerSettlementPosition? = null
+        var settlementPositionFailuresRemaining: Int = 0
         var redeemSettlementCount: Int = 0
             private set
         var fillOnCancelShares: BigDecimal? = null
@@ -638,16 +711,26 @@ class EventMakerLiveEngineTest {
         override suspend fun getSettlementSnapshot(
             accountId: Long,
             market: LivePaperMarket
-        ): Result<EventMakerSettlementSnapshot> =
-            settlementSnapshot?.let { Result.success(it) }
+        ): Result<EventMakerSettlementSnapshot> {
+            if (settlementSnapshotFailuresRemaining > 0) {
+                settlementSnapshotFailuresRemaining--
+                return Result.failure(IllegalStateException("settlement_snapshot_transient"))
+            }
+            return settlementSnapshot?.let { Result.success(it) }
                 ?: Result.failure(IllegalStateException("settlement_snapshot_missing"))
+        }
 
         override suspend fun getSettlementPosition(
             accountId: Long,
             settlement: EventMakerSettlementRecord
-        ): Result<EventMakerSettlementPosition> =
-            settlementPosition?.let { Result.success(it) }
+        ): Result<EventMakerSettlementPosition> {
+            if (settlementPositionFailuresRemaining > 0) {
+                settlementPositionFailuresRemaining--
+                return Result.failure(IllegalStateException("settlement_position_transient"))
+            }
+            return settlementPosition?.let { Result.success(it) }
                 ?: Result.failure(IllegalStateException("settlement_position_missing"))
+        }
 
         override suspend fun redeemSettlement(
             accountId: Long,

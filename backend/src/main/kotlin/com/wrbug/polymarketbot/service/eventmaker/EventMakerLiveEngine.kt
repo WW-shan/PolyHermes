@@ -288,6 +288,7 @@ class EventMakerLiveEngine(
                     return EventMakerEngineResult(errors = listOf("settlement_snapshot_failed:${error.message}"))
                 }
             )
+            settlementFailures.remove(key)
             if (!snapshot.resolved) continue
             val position = snapshot.position
             if (position != null && (position.shares <= BigDecimal.ZERO ||
@@ -344,6 +345,7 @@ class EventMakerLiveEngine(
                     )
                 }
             )
+            redemptionFailures.remove(pending.cycleExitOrderId)
             if (position.shares < BigDecimal.ZERO) {
                 val reason = "settlement_position_negative:${pending.marketId}"
                 halt(reason)

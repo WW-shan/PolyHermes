@@ -1271,3 +1271,11 @@
 - v6 累计 8 次 Shadow 挂单、8 次 requote 撤单；当前 FLAT、activeOrders=0、0 fill、0 cycle、0 inventory。
 - `logIssues=0`、`stderrBytes=0`；没有放宽价格带、活动门槛、post-only、q20 或队列限制。
 - 真实 Shadow fill/cycle 仍未出现，因此不能把 Shadow 长测标记为成交验收通过。
+
+### 04:05 结算/赎回瞬态失败计数修复
+
+- 结算快照失败计数和赎回持仓失败计数原先只在最终结算/赎回成功时清零；成功读取但尚未决议/不可赎回时会保留旧失败数，后续瞬态失败可能提前触发 halt。
+- 现在成功读取 settlement snapshot 即清零 `settlementFailures`；成功读取 redemption position 即清零 `redemptionFailures`。
+- 新增 `EventMakerLiveEngineTest` 两条回归：结算快照失败计数重置、赎回持仓失败计数重置。
+- 隔离 worktree 全量测试：103 suites / 558 tests / 0 failures / 0 errors / 2 skipped。
+- v6 Shadow 继续运行，04:02 为 FLAT、0 fill、0 cycle、0 inventory；未触碰运行中 v6 的构建产物。
