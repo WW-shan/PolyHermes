@@ -123,7 +123,7 @@ class EventMakerStateStore(
         val matched = market.activeOrderMatchedShares?.toBigDecimalOrNull()
             ?.takeIf { it >= java.math.BigDecimal.ZERO && it <= original }
             ?: invalid("active_order_matched_invalid:${market.conditionId}")
-        if (market.activeOrderStatus !in ORDER_STATUSES) {
+        if (!EventMakerOrderStatuses.isKnown(market.activeOrderStatus.orEmpty())) {
             invalid("active_order_status_invalid:${market.conditionId}:${market.activeOrderStatus}")
         }
         if (price <= java.math.BigDecimal.ZERO) invalid("active_order_price_invalid:${market.conditionId}")
@@ -140,8 +140,5 @@ class EventMakerStateStore(
         private val MODES = setOf(EventMakerMode.SHADOW.name, EventMakerMode.LIVE.name)
         private val PHASES = EventMakerPhase.entries.map { it.name }.toSet()
         private val ORDER_SIDES = EventMakerSide.entries.map { it.name }.toSet()
-        private val ORDER_STATUSES = setOf(
-            "LIVE", "OPEN", "MATCHED", "FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED"
-        )
     }
 }

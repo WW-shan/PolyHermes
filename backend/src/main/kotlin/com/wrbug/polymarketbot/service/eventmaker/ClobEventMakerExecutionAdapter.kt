@@ -1,5 +1,6 @@
 package com.wrbug.polymarketbot.service.eventmaker
 
+import com.wrbug.polymarketbot.api.CancelOrderPayload
 import com.wrbug.polymarketbot.api.PolymarketClobApi
 import com.wrbug.polymarketbot.entity.Account
 import com.wrbug.polymarketbot.repository.AccountRepository
@@ -52,7 +53,7 @@ class ClobEventMakerExecutionAdapter(
         val context = accountContext(accountId)
             ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
         val orderIds = linkedSetOf<String>()
-        var cursor: String? = null
+        var cursor: String? = INITIAL_CURSOR
         repeat(MAX_ACTIVE_ORDER_PAGES) {
             val response = try {
                 context.api.getActiveOrders(next_cursor = cursor)
@@ -71,7 +72,7 @@ class ClobEventMakerExecutionAdapter(
                 orderIds += order.id
             }
             val next = body.next_cursor?.takeIf { it.isNotBlank() }
-            if (next == null) return Result.success(orderIds)
+            if (next == null || next == END_CURSOR) return Result.success(orderIds)
             if (next == cursor) return Result.failure(IllegalStateException("active_orders_cursor_repeated:$next"))
             cursor = next
         }
@@ -160,18 +161,24 @@ class ClobEventMakerExecutionAdapter(
         }
         fundingCheck.getOrElse { return Result.failure(it) }
 
-        val signed = orderSigningService.createAndSignOrder(
-            privateKey = context.privateKey,
-            makerAddress = context.account.proxyAddress,
-            tokenId = market.favoriteTokenId,
-            side = intent.side.name,
-            price = price.toPlainString(),
-            size = shares.toPlainString(),
-            signatureType = orderSigningService.getSignatureTypeForWalletType(context.account.walletType),
-            exchangeContract = exchange,
-            tickSize = tick,
-            strictTick = true
-        )
+        val signed = try {
+            val signedOrder = orderSigningService.createAndSignOrder(
+                privateKey = context.privateKey,
+                makerAddress = context.account.proxyAddress,
+                tokenId = market.favoriteTokenId,
+                side = intent.side.name,
+                price = price.toPlainString(),
+                size = shares.toPlainString(),
+                signatureType = orderSigningService.getSignatureTypeForWalletType(context.account.walletType),
+                exchangeContract = exchange,
+                tickSize = tick,
+                strictTick = true
+            )
+            signedOrder
+        } catch (e: Exception) {
+            logger.error("Event maker order signing failed: accountId=$accountId, side=${intent.side}", e)
+            return Result.failure(EventMakerPreflightRejectedException("order_signing_failed:${e.message}"))
+        }
         val request = EventMakerOrderRequestFactory.build(signed, context.apiKey)
         val response = try {
             context.api.createOrder(request)
@@ -182,23 +189,37 @@ class ClobEventMakerExecutionAdapter(
         val body = response.body()
         if (!response.isSuccessful || body == null) {
             val reason = response.errorBody()?.string()?.take(300) ?: "create_order_failed_http_${response.code()}"
-            return if (response.code() >= 500 || response.code() == 408 || response.code() == 429) {
+            val retryable = response.code() >= 500 || response.code() == 408 || response.code() == 429 ||
+                (response.isSuccessful && body == null)
+            return if (retryable) {
                 Result.failure(EventMakerAmbiguousOrderException(reason))
             } else {
                 Result.failure(EventMakerPreflightRejectedException(reason))
             }
         }
-        if (!body.success || body.orderId.isNullOrBlank()) {
-            return Result.failure(EventMakerPreflightRejectedException(body.getErrorMessage()))
+        if (!body.success) {
+            val reason = body.getErrorMessage()
+            return if (!body.orderId.isNullOrBlank()) {
+                // A contradictory 200 response may still have created an order.
+                Result.failure(EventMakerAmbiguousOrderException("create_order_rejected_with_order_id:$reason"))
+            } else {
+                Result.failure(EventMakerPreflightRejectedException(reason))
+            }
         }
+        val orderId = body.orderId?.takeIf { it.isNotBlank() }
+            ?: return Result.failure(EventMakerAmbiguousOrderException("create_order_success_without_order_id"))
+        val status = body.status?.trim()?.takeIf { it.isNotEmpty() }?.uppercase() ?: "UNKNOWN"
         return Result.success(
             EventMakerLiveOrder(
-                orderId = body.orderId,
+                orderId = orderId,
                 side = intent.side,
                 price = price,
                 originalShares = shares,
                 matchedShares = BigDecimal.ZERO,
-                status = body.status ?: "LIVE"
+                status = status,
+                tokenId = market.favoriteTokenId,
+                conditionId = market.conditionId,
+                makerAddress = context.account.proxyAddress
             )
         )
     }
@@ -230,9 +251,14 @@ class ClobEventMakerExecutionAdapter(
             ?: return Result.failure(EventMakerUnknownOrderStateException("invalid_order_size"))
         val matched = body.sizeMatched.toBigDecimalOrNull()
             ?: return Result.failure(EventMakerUnknownOrderStateException("invalid_order_matched_size"))
-        if (body.id != orderId || price <= BigDecimal.ZERO || price >= BigDecimal.ONE ||
+        val status = EventMakerOrderStatuses.normalize(body.status)
+        val makerMatches = body.makerAddress.equals(context.account.proxyAddress, ignoreCase = true)
+        val matchedStatusMismatch = EventMakerOrderStatuses.isMatchedTerminal(status) &&
+            matched.compareTo(original) != 0
+        if (!body.id.equals(orderId, ignoreCase = true) || price <= BigDecimal.ZERO || price >= BigDecimal.ONE ||
             original <= BigDecimal.ZERO || matched < BigDecimal.ZERO || matched > original ||
-            body.status.isBlank() || body.status.uppercase() !in KNOWN_ORDER_STATUSES
+            body.market.isBlank() || body.assetId.isBlank() || !makerMatches || !EventMakerOrderStatuses.isKnown(status) ||
+            matchedStatusMismatch || body.createdAt <= 0L
         ) {
             return Result.failure(EventMakerUnknownOrderStateException("invalid_order_snapshot"))
         }
@@ -243,8 +269,11 @@ class ClobEventMakerExecutionAdapter(
                 price = price,
                 originalShares = original,
                 matchedShares = matched,
-                status = body.status,
-                createdAt = body.createdAt.takeIf { it > 0L }?.times(1000L) ?: System.currentTimeMillis()
+                status = status,
+                createdAt = body.createdAt.times(1000L),
+                tokenId = body.assetId,
+                conditionId = body.market,
+                makerAddress = body.makerAddress
             )
         )
     }
@@ -253,7 +282,7 @@ class ClobEventMakerExecutionAdapter(
         val context = accountContext(accountId)
             ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
         val response = try {
-            context.api.cancelOrder(orderId)
+            context.api.cancelOrder(CancelOrderPayload(orderID = orderId))
         } catch (e: Exception) {
             logger.error("Event maker order cancellation failed: accountId=$accountId, orderId=$orderId", e)
             return Result.failure(e)
@@ -261,8 +290,20 @@ class ClobEventMakerExecutionAdapter(
         if (response.code() == 404) {
             return Result.failure(EventMakerOrderNotFoundException(orderId))
         }
-        if (!response.isSuccessful || response.body() == null) {
+        val body = response.body()
+        if (!response.isSuccessful || body == null) {
             return Result.failure(IllegalStateException("cancel_order_failed_http_${response.code()}"))
+        }
+        val canceled = body.canceled
+            ?: return Result.failure(EventMakerUnknownOrderStateException("cancel_response_invalid:canceled_missing"))
+        val notCanceled = body.notCanceled.orEmpty()
+        val rejected = notCanceled.entries.firstOrNull { it.key.equals(orderId, ignoreCase = true) }
+        if (rejected != null) {
+            return Result.failure(EventMakerPreflightRejectedException("cancel_not_confirmed:${rejected.value}"))
+        }
+        val canceledMatches = canceled.count { it.equals(orderId, ignoreCase = true) }
+        if (canceledMatches != 1 || canceled.size != 1 || notCanceled.isNotEmpty()) {
+            return Result.failure(EventMakerUnknownOrderStateException("cancel_response_invalid:unexpected_result"))
         }
         return Result.success(Unit)
     }
@@ -287,9 +328,8 @@ class ClobEventMakerExecutionAdapter(
 
     companion object {
         private const val MAX_ACTIVE_ORDER_PAGES = 100
-        private val KNOWN_ORDER_STATUSES = setOf(
-            "LIVE", "OPEN", "MATCHED", "FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED"
-        )
+        private const val INITIAL_CURSOR = "MA=="
+        private const val END_CURSOR = "LTE="
     }
 
     private data class AccountContext(

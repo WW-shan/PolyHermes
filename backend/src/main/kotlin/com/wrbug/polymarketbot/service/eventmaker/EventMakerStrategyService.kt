@@ -369,6 +369,8 @@ class EventMakerStrategyService(
             executionPort,
             initialRealizedPnl = realizedPnlBaseline
         )
+        engine.resetDailyPnlBaseline(states)
+        dailyBaselineDay = currentDayKey()
         engine.registerRestoredOrders(states, accountId)
         currentEngine = engine
 
@@ -665,8 +667,8 @@ class EventMakerStrategyService(
                 ?: throw IllegalStateException("orphan_inventory_invalid:${saved.conditionId}")
             val orderId = saved.activeOrderId?.takeIf { it.isNotBlank() }
             if (orderId != null) {
-                executionPort.cancel(accountId, orderId).getOrElse {
-                    throw IllegalStateException("orphan_order_cancel_failed:$orderId:${it.message}", it)
+                executionPort.cancel(accountId, orderId).onFailure { error ->
+                    logger.warn("Orphan cancel was not confirmed as accepted; verifying order state instead: orderId=$orderId error=${error.message}")
                 }
                 confirmCanceledWithoutFill(accountId, saved, orderId)
             }
@@ -692,7 +694,7 @@ class EventMakerStrategyService(
                 if (snapshot.matchedShares > BigDecimal.ZERO || persistedMatched > BigDecimal.ZERO) {
                     throw IllegalStateException("orphan_order_has_fill:$orderId:${snapshot.matchedShares}")
                 }
-                if (snapshot.status.uppercase() in CANCELLED_ORDER_STATUSES) return
+                if (EventMakerOrderStatuses.isCanceledTerminal(snapshot.status)) return
                 lastFailure = "status=${snapshot.status}"
             } else {
                 lastFailure = result.exceptionOrNull()?.message ?: "unknown"
@@ -787,7 +789,7 @@ class EventMakerStrategyService(
         val today = currentDayKey()
         if (today != dailyBaselineDay) {
             dailyBaselineDay = today
-            engine.dailyPnlBaseline = engine.initialRealizedPnl + states.sumOf { it.realizedPnl }
+            engine.resetDailyPnlBaseline(states)
             logger.info("Event maker daily loss budget reset for day=$today")
         }
     }
@@ -815,8 +817,5 @@ class EventMakerStrategyService(
         private const val LIVE_PERSIST_INTERVAL_MS = 5_000L
         private const val ORPHAN_CONFIRM_ATTEMPTS = 3
         private const val ORPHAN_CONFIRM_DELAY_MS = 250L
-        private val CANCELLED_ORDER_STATUSES = setOf(
-            "CANCELLED", "CANCELED", "EXPIRED", "REJECTED"
-        )
     }
 }

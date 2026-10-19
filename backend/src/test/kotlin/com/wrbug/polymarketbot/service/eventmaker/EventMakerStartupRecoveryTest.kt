@@ -34,6 +34,30 @@ class EventMakerStartupRecoveryTest {
     }
 
     @Test
+    fun `already terminal orphan is accepted even if cancel reports not confirmed`() = runTest {
+        val port = RecoveryExecutionPort().apply {
+            cancelFailure = IllegalStateException("cancel_not_confirmed:already canceled")
+            statusAfterCancel = "CANCELED"
+        }
+        val service = service(port)
+        val persisted = state(
+            market(
+                conditionId = "orphan",
+                inventory = "0",
+                activeOrderId = "order-1",
+                matched = "0"
+            )
+        )
+
+        service.cancelOrphanedOrders(persisted, emptySet(), 7L)
+
+        assertEquals(1, port.cancelCount)
+        assertEquals(1, port.getOrderCount)
+        assertEquals("CANCELED", port.lastStatus)
+    }
+
+
+    @Test
     fun `orphan inventory fails closed`() = runTest {
         val port = RecoveryExecutionPort()
         val service = service(port)
@@ -154,6 +178,7 @@ class EventMakerStartupRecoveryTest {
         var lastStatus: String? = null
         var matchedShares: BigDecimal = BigDecimal.ZERO
         var statusAfterCancel: String = "CANCELLED"
+        var cancelFailure: Throwable? = null
 
         override suspend fun validateAccount(accountId: Long): Result<Unit> = Result.success(Unit)
 

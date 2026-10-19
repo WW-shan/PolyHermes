@@ -69,6 +69,11 @@ class EventMakerLiveState(
     fun reconcile(order: EventMakerLiveOrder, now: Long): LiveReconcileResult {
         val active = activeOrder ?: return LiveReconcileResult(emptyList(), null)
         if (active.orderId != order.orderId) return LiveReconcileResult(emptyList(), null)
+        if (EventMakerOrderStatuses.isMatchedTerminal(order.status) &&
+            order.matchedShares.compareTo(order.originalShares) != 0
+        ) {
+            throw IllegalStateException("matched_status_size_mismatch:${order.orderId}")
+        }
         val delta = (order.matchedShares - reconciledShares).max(BigDecimal.ZERO)
         val events = mutableListOf<String>()
         if (delta > BigDecimal.ZERO) {
@@ -399,8 +404,8 @@ class EventMakerLiveState(
         val matched = persisted.activeOrderMatchedShares?.toBigDecimalOrNull()
             ?.takeIf { it >= BigDecimal.ZERO && it <= original }
             ?: throw IllegalStateException("persisted_active_order_matched_invalid:${market.conditionId}")
-        val status = persisted.activeOrderStatus?.takeIf { it.isNotBlank() }
-            ?: throw IllegalStateException("persisted_active_order_status_missing:${market.conditionId}")
+        val status = persisted.activeOrderStatus?.takeIf { it.isNotBlank() && EventMakerOrderStatuses.isKnown(it) }
+            ?: throw IllegalStateException("persisted_active_order_status_invalid:${market.conditionId}")
         return EventMakerLiveOrder(
             orderId = orderId,
             side = side,
@@ -408,7 +413,9 @@ class EventMakerLiveState(
             originalShares = original,
             matchedShares = matched,
             status = status,
-            createdAt = persisted.activeOrderCreatedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            createdAt = persisted.activeOrderCreatedAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
+            tokenId = market.favoriteTokenId,
+            conditionId = market.conditionId
         )
     }
 
@@ -432,10 +439,8 @@ class EventMakerLiveState(
 
     private fun closeEnough(left: Double, right: Double): Boolean = kotlin.math.abs(left - right) <= 1e-7
 
-    private fun isTerminal(status: String): Boolean {
-        val normalized = status.uppercase()
-        return normalized in setOf("FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED")
-    }
+    private fun isTerminal(status: String): Boolean =
+        EventMakerOrderStatuses.isTerminal(status)
 
     private data class ReplayLedger(
         val inventoryShares: BigDecimal,

@@ -433,23 +433,6 @@ class PolymarketClobService(
     }
     
     /**
-     * 取消订单
-     */
-    suspend fun cancelOrder(orderId: String): Result<CancelOrderResponse> {
-        return try {
-            val response = clobApi.cancelOrder(orderId)
-            if (response.isSuccessful && response.body() != null) {
-                Result.success(response.body()!!)
-            } else {
-                Result.failure(Exception("取消订单失败: ${response.code()} ${response.message()}"))
-            }
-        } catch (e: Exception) {
-            logger.error("取消订单异常: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-    
-    /**
      * 获取交易记录
      * 注意：CLOB API 不支持 limit 参数，需要通过 next_cursor 分页
      */

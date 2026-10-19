@@ -118,7 +118,13 @@ data class EventMakerLiveOrder(
     val originalShares: BigDecimal,
     val matchedShares: BigDecimal,
     val status: String,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** CLOB asset id. Present on orders created by the adapter and used for lookup validation. */
+    val tokenId: String? = null,
+    /** CLOB condition id. Present on orders created by the adapter and used for lookup validation. */
+    val conditionId: String? = null,
+    /** Funder/maker address returned by the CLOB API. */
+    val makerAddress: String? = null
 )
 
 data class EventMakerPersistedState(

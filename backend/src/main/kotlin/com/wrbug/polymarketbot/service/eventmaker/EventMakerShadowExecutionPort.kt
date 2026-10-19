@@ -241,7 +241,10 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
             originalShares = originalShares,
             matchedShares = originalShares - remainingShares,
             status = status,
-            createdAt = createdAt
+            createdAt = createdAt,
+            tokenId = market.favoriteTokenId,
+            conditionId = market.conditionId,
+            makerAddress = "shadow"
         )
     }
 

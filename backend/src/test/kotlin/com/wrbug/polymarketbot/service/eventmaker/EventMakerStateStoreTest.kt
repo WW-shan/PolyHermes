@@ -15,6 +15,20 @@ class EventMakerStateStoreTest {
     lateinit var tempDir: Path
 
     @Test
+    fun `load accepts lower-case documented order statuses`() {
+        val store = EventMakerStateStore(tempDir.resolve("state.json").toString())
+        val state = persistedState()
+        val lowerCase = state.copy(
+            markets = state.markets.map { it.copy(activeOrderStatus = "canceled_market_resolved") }
+        )
+
+        store.save(lowerCase)
+
+        assertEquals(lowerCase, store.load())
+    }
+
+
+    @Test
     fun `save and load round trips live state`() {
         val store = EventMakerStateStore(tempDir.resolve("state.json").toString())
         val state = persistedState()

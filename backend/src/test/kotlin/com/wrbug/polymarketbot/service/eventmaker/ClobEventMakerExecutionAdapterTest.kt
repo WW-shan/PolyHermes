@@ -1,5 +1,7 @@
 package com.wrbug.polymarketbot.service.eventmaker
 
+import com.wrbug.polymarketbot.api.CancelOrderPayload
+import com.wrbug.polymarketbot.api.CancelOrdersResponse
 import com.wrbug.polymarketbot.api.GetActiveOrdersResponse
 import com.wrbug.polymarketbot.api.NegRiskResponse
 import com.wrbug.polymarketbot.api.NewOrderRequest
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import retrofit2.Response
+import retrofit2.http.DELETE
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.util.Optional
@@ -50,6 +53,36 @@ class ClobEventMakerExecutionAdapterTest {
         clobService,
         blockchainService
     )
+
+    @Test
+    fun `signing failure is returned as a preflight failure instead of escaping`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(blockchainService.getUsdcBalance("0xwallet", "0xproxy"))
+            .thenReturn(Result.success("100.00"))
+        Mockito.`when`(blockchainService.getUsdcAllowance("0xproxy", "0xexchange"))
+            .thenReturn(Result.success(BigInteger("1000000000")))
+        Mockito.`when`(
+            signing.createAndSignOrder(
+                privateKey = Mockito.anyString(),
+                makerAddress = Mockito.anyString(),
+                tokenId = Mockito.anyString(),
+                side = Mockito.anyString(),
+                price = Mockito.anyString(),
+                size = Mockito.anyString(),
+                signatureType = Mockito.anyInt(),
+                exchangeContract = Mockito.anyString(),
+                tickSize = Mockito.any(),
+                strictTick = Mockito.eq(true)
+            )
+        ).thenThrow(IllegalStateException("bad signature"))
+
+        val result = adapter.place(1L, market(), intent(EventMakerSide.BUY))
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message!!.startsWith("order_signing_failed"))
+        Mockito.verify(api, Mockito.never()).createOrder(anyRequest())
+    }
+
 
     @Test
     fun `buy order is post only GTC after funding preflight`() = runTest {
@@ -99,7 +132,7 @@ class ClobEventMakerExecutionAdapterTest {
     @Test
     fun `active order lookup paginates and deduplicates`() = runTest {
         stubAccountAndMarket()
-        Mockito.`when`(api.getActiveOrders(null, null, null, null)).thenReturn(
+        Mockito.`when`(api.getActiveOrders(null, null, null, "MA==")).thenReturn(
             Response.success(
                 GetActiveOrdersResponse(
                     data = listOf(orderResponse("order-1"), orderResponse("order-2")),
@@ -123,9 +156,24 @@ class ClobEventMakerExecutionAdapterTest {
     }
 
     @Test
+    fun `active order terminal cursor stops pagination`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(api.getActiveOrders(null, null, null, "MA==")).thenReturn(
+            Response.success(GetActiveOrdersResponse(listOf(orderResponse("order-1")), "LTE="))
+        )
+
+        val result = adapter.listOpenOrderIds(1L)
+
+        assertTrue(result.isSuccess)
+        assertEquals(setOf("order-1"), result.getOrThrow())
+        Mockito.verify(api, Mockito.never()).getActiveOrders(null, null, null, "LTE=")
+    }
+
+
+    @Test
     fun `repeated active order cursor fails closed`() = runTest {
         stubAccountAndMarket()
-        Mockito.`when`(api.getActiveOrders(null, null, null, null)).thenReturn(
+        Mockito.`when`(api.getActiveOrders(null, null, null, "MA==")).thenReturn(
             Response.success(GetActiveOrdersResponse(listOf(orderResponse("order-1")), "same"))
         )
         Mockito.`when`(api.getActiveOrders(null, null, null, "same")).thenReturn(
@@ -197,10 +245,124 @@ class ClobEventMakerExecutionAdapterTest {
         assertTrue(result.exceptionOrNull() is EventMakerUnknownOrderStateException)
     }
 
+
+
+    @Test
+    fun `successful placement without an order id is ambiguous`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(blockchainService.getUsdcBalance("0xwallet", "0xproxy"))
+            .thenReturn(Result.success("100.00"))
+        Mockito.`when`(blockchainService.getUsdcAllowance("0xproxy", "0xexchange"))
+            .thenReturn(Result.success(BigInteger("1000000000")))
+        Mockito.`when`(api.createOrder(anyRequest()))
+            .thenReturn(Response.success(NewOrderResponse(success = true, orderId = null, status = "LIVE")))
+
+        val result = adapter.place(1L, market(), intent(EventMakerSide.BUY))
+
+        assertTrue(result.exceptionOrNull() is EventMakerAmbiguousOrderException)
+    }
+
+    @Test
+    fun `rejected placement carrying an order id is ambiguous`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(blockchainService.getUsdcBalance("0xwallet", "0xproxy"))
+            .thenReturn(Result.success("100.00"))
+        Mockito.`when`(blockchainService.getUsdcAllowance("0xproxy", "0xexchange"))
+            .thenReturn(Result.success(BigInteger("1000000000")))
+        Mockito.`when`(api.createOrder(anyRequest()))
+            .thenReturn(Response.success(NewOrderResponse(success = false, orderId = "order-1", status = "")))
+
+        val result = adapter.place(1L, market(), intent(EventMakerSide.BUY))
+
+        assertTrue(result.exceptionOrNull() is EventMakerAmbiguousOrderException)
+    }
+
+    @Test
+    fun `cancel uses the documented endpoint and body and confirms the order id`() = runTest {
+        stubAccountAndMarket()
+        val payload = CancelOrderPayload(orderID = "order-1")
+        Mockito.`when`(api.cancelOrder(payload)).thenReturn(
+            Response.success(CancelOrdersResponse(canceled = listOf("order-1"), notCanceled = emptyMap()))
+        )
+
+        val result = adapter.cancel(1L, "order-1")
+
+        assertTrue(result.isSuccess)
+        Mockito.verify(api).cancelOrder(payload)
+        val method = PolymarketClobApi::class.java.methods.single { it.name == "cancelOrder" }
+        assertEquals(CancelOrderPayload::class.java, method.parameterTypes.first())
+        assertEquals("/order", method.getAnnotation(DELETE::class.java).value)
+    }
+
+    @Test
+    fun `cancel response with not_canceled is a failure`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(api.cancelOrder(CancelOrderPayload("order-1"))).thenReturn(
+            Response.success(
+                CancelOrdersResponse(
+                    canceled = emptyList(),
+                    notCanceled = mapOf("order-1" to "Order not found or already canceled")
+                )
+            )
+        )
+
+        val result = adapter.cancel(1L, "order-1")
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message!!.startsWith("cancel_not_confirmed"))
+    }
+
+    @Test
+    fun `cancel response without positive confirmation is rejected`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(api.cancelOrder(CancelOrderPayload("order-1"))).thenReturn(
+            Response.success(CancelOrdersResponse(canceled = null, notCanceled = emptyMap()))
+        )
+
+        val result = adapter.cancel(1L, "order-1")
+
+        assertTrue(result.exceptionOrNull() is EventMakerUnknownOrderStateException)
+    }
+
+    @Test
+    fun `documented terminal statuses are accepted`() = runTest {
+        stubAccountAndMarket()
+        for (status in listOf("CANCELED_MARKET_RESOLVED", "INVALID")) {
+            Mockito.`when`(api.getOrder("order-1")).thenReturn(Response.success(openOrder(status = status)))
+            val result = adapter.getOrder(1L, "order-1")
+            assertTrue(result.isSuccess, "status $status should be accepted: ${result.exceptionOrNull()?.message}")
+            assertEquals(status, result.getOrThrow().status)
+        }
+    }
+
+    @Test
+    fun `matched status with an unfilled remainder is rejected`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(api.getOrder("order-1")).thenReturn(
+            Response.success(openOrder(status = "MATCHED", matched = "0.00"))
+        )
+
+        val result = adapter.getOrder(1L, "order-1")
+
+        assertTrue(result.exceptionOrNull() is EventMakerUnknownOrderStateException)
+    }
+
+    @Test
+    fun `order snapshot from a different maker is rejected`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(api.getOrder("order-1")).thenReturn(
+            Response.success(openOrder(status = "LIVE", makerAddress = "0xother"))
+        )
+
+        val result = adapter.getOrder(1L, "order-1")
+
+        assertTrue(result.exceptionOrNull() is EventMakerUnknownOrderStateException)
+    }
+
     @Test
     fun `cancel 404 is surfaced and never treated as success`() = runTest {
         stubAccountAndMarket()
-        Mockito.`when`(api.cancelOrder("order-1")).thenReturn(Response.error(404, "".toResponseBody()))
+        Mockito.`when`(api.cancelOrder(CancelOrderPayload("order-1"))).thenReturn(Response.error(404, "".toResponseBody()))
 
         val result = adapter.cancel(1L, "order-1")
 
@@ -320,16 +482,20 @@ class ClobEventMakerExecutionAdapterTest {
         createdAt = "1"
     )
 
-    private fun openOrder(status: String) = OpenOrder(
+    private fun openOrder(
+        status: String,
+        matched: String = "0.00",
+        makerAddress: String = "0xproxy"
+    ) = OpenOrder(
         id = "order-1",
         status = status,
         owner = "api-key",
-        makerAddress = "0xproxy",
+        makerAddress = makerAddress,
         market = "condition",
         assetId = "token",
         side = "BUY",
         originalSize = "10.00",
-        sizeMatched = "0.00",
+        sizeMatched = matched,
         price = "0.96",
         outcome = "Yes",
         expiration = "0",

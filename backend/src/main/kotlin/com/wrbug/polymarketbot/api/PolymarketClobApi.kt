@@ -103,20 +103,20 @@ interface PolymarketClobApi {
     ): Response<GetActiveOrdersResponse>
     
     /**
-     * 取消订单
+     * Cancel a single order. The CLOB API expects DELETE /order with a JSON body.
      */
-    @DELETE("/orders/{orderId}")
+    @DELETE("/order")
     suspend fun cancelOrder(
-        @Path("orderId") orderId: String
-    ): Response<CancelOrderResponse>
-    
+        @Body request: CancelOrderPayload
+    ): Response<CancelOrdersResponse>
+
     /**
-     * 批量取消订单
+     * Cancel up to 1000 orders. The CLOB API expects DELETE /orders with a JSON array.
      */
-    @DELETE("/orders/batch")
+    @DELETE("/orders")
     suspend fun cancelOrdersBatch(
-        @Body request: CancelOrdersBatchRequest
-    ): Response<CancelOrdersBatchResponse>
+        @Body orderIds: List<String>
+    ): Response<CancelOrdersResponse>
     
     /**
      * 获取交易记录
@@ -319,8 +319,9 @@ data class NewOrderResponse(
     }
 }
 
-data class CancelOrdersBatchRequest(
-    val orderIds: List<String>
+data class CancelOrderPayload(
+    @SerializedName("orderID")
+    val orderID: String
 )
 
 data class OrderbookResponse(
@@ -397,14 +398,10 @@ data class OpenOrder(
     val createdAt: Long                          // unix timestamp when the order was created
 )
 
-data class CancelOrderResponse(
-    val orderId: String,
-    val status: String
-)
-
-data class CancelOrdersBatchResponse(
-    val cancelled: List<String>,
-    val failed: List<String>
+data class CancelOrdersResponse(
+    val canceled: List<String>? = null,
+    @SerializedName("not_canceled")
+    val notCanceled: Map<String, String>? = null
 )
 
 data class TradeResponse(

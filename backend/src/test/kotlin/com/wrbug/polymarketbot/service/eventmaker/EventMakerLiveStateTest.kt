@@ -10,6 +10,17 @@ class EventMakerLiveStateTest {
     private val state = EventMakerLiveState(market(), EventMakerConfig())
 
     @Test
+    fun `matched status with an unfilled remainder fails closed`() {
+        val invalid = order("buy-1", EventMakerSide.BUY, "0.96", "10.00", "5.00", "MATCHED")
+        state.onOrderPlaced(invalid)
+
+        val error = assertThrows(IllegalStateException::class.java) { state.reconcile(invalid, 1_000) }
+
+        assertEquals(true, error.message!!.startsWith("matched_status_size_mismatch"))
+    }
+
+
+    @Test
     fun `buy fill enters long and sell fill completes cycle`() {
         val buy = order("buy-1", EventMakerSide.BUY, "0.96", "10.00", "10.00", "FILLED")
         state.onOrderPlaced(buy)
