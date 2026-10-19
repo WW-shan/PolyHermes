@@ -523,8 +523,20 @@ cd D:\Project\PolyHermes\backend
 | ID | 验收项 | 状态 | 证据 |
 |---|---|---|---|
 | SHADOW-E9 | 多轮 requote 后持续重挂 | 已完成 | 02:21–02:35 `shadow-4/5/6` 依次挂单并撤销 |
-| SHADOW-E10 | 高队列限制不被放宽 | 已完成 | `shadow-6` queue 485.03；02:56 撤销；0 fill |
+| SHADOW-E10 | 高队列 + q20 确认不降门槛 | 已完成 | `shadow-6` queue 485.03；02:56 撤销；0 fill；fill factor 保持 20 |
 | SHADOW-E11 | 真实 Shadow fill | 未完成 | 累计 6 次挂单、6 次撤单，仍 0 fill |
 
 - 当前 FLAT、activeOrders=0、fills=0、cycles=0、inventory=0。
 - `logIssues=0`、`stderrBytes=0`。
+### 03:10 0 fill 根因复算
+
+- `shadow-5` 存活窗口内仅有 1 笔可穿越 SELL，共 215.00 股；消耗 queue 20.03 后剩 194.97。
+- q20 需要 25.74 × 20 = 514.80 股确认成交，因此未 fill。
+- 其余五笔订单存活窗口内没有可穿越的 SELL 公开成交。
+- 结论：当前 0 fill 是保守成交模型的预期结果，不支持放宽门槛。
+### 03:15 成交缺口复核自动化
+
+- 新增 `scripts/analyze-event-maker-shadow-fills.ps1` 并接入 `audit-event-maker-shadow.ps1`。
+- v6 `fill-analysis.json`：6 orders、1 crossing order、0 model-fill orders、0 actual-fill orders。
+- `shadow-5`：crossing 215.00，queue 20.03，eligible 194.97，required 514.80。
+- 模型应成交而 state 未成交时，审计将直接失败。

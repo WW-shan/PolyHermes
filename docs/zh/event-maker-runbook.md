@@ -553,3 +553,21 @@ schema v3 新增日亏损锚点；schema v4 新增 settlement 账本与赎回状
 Live 启动新增 Builder API Key 前置检查。未配置时直接拒绝，不允许先建仓。
 
 当前 schema 为 v4。v2/v3/未知版本会被明确拒绝；上线前必须核对 `settlements`、`cycles`、`fills` 和账户实际持仓。
+## 12. Shadow 成交缺口复核
+
+Shadow 结束后除了 `audit-event-maker-shadow.ps1`，可单独复核订单为什么成交或未成交：
+
+```powershell
+.\scripts\analyze-event-maker-shadow-fills.ps1 `
+  -OutputDir "backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020" `
+  -WriteReport
+```
+
+脚本会从 `events.jsonl` 重建订单存活窗口，从 `trades.csv` 统计反向可穿越成交，计算：
+
+- 淘汰 queue 后可成交股数 `eligibleShares`；
+- q20 要求的确认股数 `requiredShares`；
+- 模型是否应成交 `modelFill`；
+- state 中的实际成交股数。
+
+`audit-event-maker-shadow.ps1` 已自动执行该复核。若模型应成交但 state 无成交，审计失败；若模型和实际均未成交，则 0 fill 是可解释结果，不得据此放宽门槛。

@@ -534,7 +534,7 @@ cd D:\Project\PolyHermes\backend
 | SHADOW-E7 | 正式候选真实 fill/cycle | 未完成 | 当前 0 fill、0 cycle；继续等待 |
 | SHADOW-E8 | 价格回归后第三次重挂 | 已完成 | 01:21 bid 回到 0.972；`shadow-3` BUY 0.972 / 25.72，queue 5.0；未放宽门槛 |
 | SHADOW-E9 | 多轮 requote 后持续重挂 | 已完成 | 02:21–02:35 依次挂 `shadow-4` 0.970/25.77、`shadow-5` 0.971/25.74、`shadow-6` 0.970/25.77 |
-| SHADOW-E10 | 高队列时不越级追价 | 已完成 | `shadow-6` queue 485.03，02:56 requote 撤销；0 fill，未放宽队列限制 |
+| SHADOW-E10 | 高队列 + q20 确认仍不降门槛 | 已完成 | `shadow-6` queue 485.03；02:56 撤销；0 fill，`shadowFillVolumeFactor` 保持 20 |
 
 - v6 运行期间 `logIssues=0`、`stderrBytes=0`。
 - 未放宽价格带、活动门槛、post-only、队列或亏损限制。
@@ -565,4 +565,10 @@ cd D:\Project\PolyHermes\backend
 
 - v6 累计 6 次挂单、6 次 requote 撤单，当前 FLAT、0 fill、0 cycle、0 inventory。
 - `logIssues=0`、`stderrBytes=0`；未放宽价格带、活动门槛、post-only、队列或亏损限制。
-- `shadow-6` 的 queue 已接近正式上限 500 股，但仍在门槛内，且最终未成交；不能扩大队列容忍度来追求 fill。
+- 正式启动参数为 `maxQueueAheadShares=100000`、`shadowFillVolumeFactor=20`；`shadow-6` queue 485.03 仍未成交，不能降低 q20 成交确认量来追求 fill。
+### 10.23 2026-10-20 03:10 v6 0 fill 复算结论
+
+- 六笔订单中只有 `shadow-5` 在存活期内遇到可穿越 SELL：215.00 股。
+- 队列消耗 20.03 后剩 194.97 股；q20 需要 25.74 × 20 = 514.80 股，因此仍未成交。
+- 其余五笔订单没有可穿越 SELL 成交。
+- 结论：0 fill 与正式保守成交模型一致；不得降低 `shadowFillVolumeFactor`、放宽价格带或追价来伪造成交。

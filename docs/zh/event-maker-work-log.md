@@ -1240,4 +1240,17 @@
 - 02:30 `shadow-5` BUY 0.971 / 25.74，queue 20.03；02:35 requote 撤销。
 - 02:35 `shadow-6` BUY 0.970 / 25.77，queue 485.03；02:56 requote 撤销。
 - 累计 6 次挂单、6 次 requote 撤单；当前 FLAT、0 fill、0 cycle、0 inventory。
-- 未放宽正式门槛；`shadow-6` 接近队列上限仍未成交，说明不能用放宽队列替代真实 evidence。
+- 未放宽正式门槛；正式配置为 `shadowFillVolumeFactor=20`，`shadow-6` 在 queue 485.03 下仍未达到保守成交确认量，不能靠降低 factor 伪造成交。
+### 03:10 v6 0 fill 的直接原因核验
+
+- 以公开成交逐笔复算六笔 Shadow 订单的存活窗口。
+- 只有 `shadow-5` 在存活期内出现 1 笔可穿越 SELL：215.00 股；先消耗 queue 20.03 后剩 194.97 股。
+- 正式 `shadowFillVolumeFactor=20`，`shadow-5` 需要累计 `25.74 × 20 = 514.80` 股才确认成交，194.97 < 514.80，因此 0 fill。
+- 其他五笔订单在存活窗口内没有价格可穿越且方向为 SELL 的公开成交。
+- 结论：0 fill 与 q20 保守成交模型一致，不是执行器漏记；不能用降低 factor、放宽价格带或追价来伪造 fill。
+### 03:15 Shadow 成交缺口复核脚本
+
+- 新增 `scripts/analyze-event-maker-shadow-fills.ps1`，从 events 和 trades 重建订单存活窗口、queue 消耗、q20 确认量和实际 fill。
+- `audit-event-maker-shadow.ps1` 已自动调用该脚本；模型应成交但 state 无成交时审计失败。
+- v6 复算结果：6 笔订单只有 `shadow-5` 出现可穿越 SELL 215.00 股；queue 20.03 后剩 194.97，q20 需要 514.80，故模型与实际均为 0 fill。
+- 报告：`backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/fill-analysis.json`。

@@ -48,7 +48,21 @@ foreach ($row in $markoutRows) {
     $markoutsByHorizon[$horizon]++
 }
 
+$fillAnalysisScript = Join-Path $PSScriptRoot "analyze-event-maker-shadow-fills.ps1"
+$fillAnalysisFile = Join-Path $OutputDir "fill-analysis.json"
+$fillVolumeFactor = if ($null -ne $execution.fillVolumeFactor) { [double]$execution.fillVolumeFactor } else { -1 }
+& $fillAnalysisScript -OutputDir $OutputDir -FillVolumeFactor $fillVolumeFactor -WriteReport | Out-Null
+$fillAnalysis = Get-Content -LiteralPath $fillAnalysisFile -Raw -Encoding UTF8 | ConvertFrom-Json
+$modelFillOrders = [int]$fillAnalysis.summary.ordersMeetingModelFill
+$actualFilledOrders = [int]$fillAnalysis.summary.actualFilledOrders
+
 $failures = [System.Collections.Generic.List[string]]::new()
+$warnings = [System.Collections.Generic.List[string]]::new()
+if ($modelFillOrders -gt $actualFilledOrders) {
+    $failures.Add("fillModelMismatch:modelFillOrders=$modelFillOrders actualFilledOrders=$actualFilledOrders")
+} elseif ($modelFillOrders -ne $actualFilledOrders) {
+    $warnings.Add("fillModelCountMismatch:modelFillOrders=$modelFillOrders actualFilledOrders=$actualFilledOrders")
+}
 $warnings = [System.Collections.Generic.List[string]]::new()
 $stateRealizedPnl = 0.0
 $stateCompletedCycles = 0
@@ -224,6 +238,8 @@ $audit = [ordered]@{
     activeOrders = $execution.activeOrders
     crossingOrders = $summary.crossingOrders
     crossingTrades = $summary.crossingTrades
+    modelFillOrders = $modelFillOrders
+    actualFilledOrders = $actualFilledOrders
     queueConsumedShares = $summary.queueConsumedShares
     duplicateTradeRows = $duplicateTradeRows
     markoutsByHorizon = $markoutsByHorizon
