@@ -1,5 +1,6 @@
 package com.wrbug.polymarketbot.service.eventmaker
 
+import com.wrbug.polymarketbot.research.livepaper.LiveTradePrint
 import com.wrbug.polymarketbot.research.livepaper.MarketBook
 import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
@@ -58,6 +59,8 @@ class EventMakerLiveEngine(
     private val reconcileFailures = ConcurrentHashMap<String, Int>()
     private val placementBackoffUntil = ConcurrentHashMap<String, Long>()
     private val cancelBackoffUntil = ConcurrentHashMap<String, Long>()
+    private val adverseFlowGuard = EventMakerAdverseFlowGuard(config)
+    private val flowSuppressedMarkets = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile
     var haltedReason: String? = null
@@ -86,6 +89,15 @@ class EventMakerLiveEngine(
         }
     }
 
+    /** Feed every unique public print before the next quote tick. */
+    fun onTrade(trade: LiveTradePrint) {
+        adverseFlowGuard.record(trade)
+    }
+
+    fun flowGuardEnabled(): Boolean = adverseFlowGuard.enabled
+
+    fun resetFlowGuard() = adverseFlowGuard.reset()
+
     suspend fun quote(
         states: List<EventMakerLiveState>,
         books: Map<String, MarketBook>,
@@ -100,6 +112,9 @@ class EventMakerLiveEngine(
                 val book = books[state.market.favoriteTokenId] ?: state.lastBook
                 val tick = BigDecimal.valueOf(state.market.tickSize)
                 val bookFresh = book != null && now - book.updatedAt <= config.staleBookSeconds * 1000L
+                val adverseFlow = active.side == EventMakerSide.BUY &&
+                    adverseFlowGuard.blocks(state.market.favoriteTokenId, now)
+                if (adverseFlow) flowSuppressedMarkets.add(state.market.conditionId)
                 val desired = if (bookFresh) {
                     when (active.side) {
                         EventMakerSide.BUY -> quotePlanner.planBuy(config, book!!, tick, now)
@@ -120,11 +135,13 @@ class EventMakerLiveEngine(
                     now - book.updatedAt > config.activeOrderStaleBookSeconds * 1000L
                 val priceChanged = bookFresh && (desired == null || desired.price.compareTo(active.price) != 0)
                 val maxAgeReached = ageMs >= config.maxOrderAgeSeconds * 1000L
-                val shouldCancel = activeBookStale ||
+                val shouldCancel = adverseFlow ||
+                    activeBookStale ||
                     maxAgeReached ||
                     (ageMs >= config.requoteSeconds * 1000L && priceChanged)
                 if (shouldCancel && now >= (cancelBackoffUntil[active.orderId] ?: 0L)) {
                     val reason = when {
+                        adverseFlow -> "adverse_flow"
                         activeBookStale -> "stale_book"
                         maxAgeReached -> "max_age"
                         else -> "requote"
@@ -139,6 +156,18 @@ class EventMakerLiveEngine(
                     }
                 }
                 continue
+            }
+
+            if (state.phase == EventMakerPhase.FLAT) {
+                if (adverseFlowGuard.blocks(state.market.favoriteTokenId, now)) {
+                    if (flowSuppressedMarkets.add(state.market.conditionId)) {
+                        result = result.merge(
+                            EventMakerEngineResult(errors = listOf("flow_guard_blocked:${state.market.conditionId}"))
+                        )
+                    }
+                    continue
+                }
+                flowSuppressedMarkets.remove(state.market.conditionId)
             }
 
             val intent = when (state.phase) {

@@ -274,6 +274,125 @@ class EventMakerBacktestEngineTest {
         assertEquals(MakerExitType.SELL, result.cycles.single().exitType)
     }
 
+    @Test
+    fun `adverse sell flow withdraws a resting buy before it can fill`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0, "BUY"),
+                trade(9_100, 0, 0.975, 70.0, "SELL"),
+                trade(9_110, 0, 0.975, 140.0, "SELL")
+            )
+        )
+        val config = baseConfig().copy(flowGuardWindowSeconds = 600)
+
+        val result = engine.simulateMarket(market, config)
+
+        assertTrue(result.eligible)
+        assertFalse(result.filled, "the falling favorite must not accumulate through adverse sell flow")
+        assertEquals(1, result.flowGuardTriggers)
+    }
+
+    @Test
+    fun `healthy two-sided flow still allows a fill`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0, "BUY"),
+                trade(9_100, 0, 0.975, 70.0, "BUY"),
+                trade(9_110, 0, 0.975, 210.0, "SELL")
+            )
+        )
+        val config = baseConfig().copy(flowGuardWindowSeconds = 600)
+
+        val result = engine.simulateMarket(market, config)
+
+        assertTrue(result.filled)
+        assertEquals(0, result.flowGuardTriggers)
+        assertEquals(0.975, result.cycles.single().entryPrice, 0.000001)
+    }
+
+    @Test
+    fun `disabled flow guard preserves legacy fills`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0, "BUY"),
+                trade(9_100, 0, 0.975, 70.0, "SELL"),
+                trade(9_110, 0, 0.975, 140.0, "SELL")
+            )
+        )
+        val config = baseConfig()
+
+        val result = engine.simulateMarket(market, config)
+
+        assertTrue(result.filled)
+        assertEquals(0, result.flowGuardTriggers)
+    }
+
+    @Test
+    fun `flow and price-drop thresholds are inclusive at the boundary`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_080, 0, 0.980, 30.0, "BUY"),
+                trade(9_100, 0, 0.975, 70.0, "SELL"),
+                trade(9_110, 0, 0.975, 140.0, "SELL")
+            )
+        )
+        val config = baseConfig().copy(
+            flowGuardWindowSeconds = 600,
+            flowGuardMaxSignedFlow = -0.4,
+            flowGuardMinPriceDropCents = 0.5
+        )
+
+        val result = engine.simulateMarket(market, config)
+
+        assertFalse(result.filled)
+        assertEquals(1, result.flowGuardTriggers)
+    }
+
+    @Test
+    fun `flow guard ignores prints without a known taker side`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_100, 0, 0.975, 210.0)
+            )
+        )
+        val config = baseConfig().copy(flowGuardWindowSeconds = 600)
+
+        val result = engine.simulateMarket(market, config)
+
+        assertFalse(result.filled)
+        assertEquals(0, result.flowGuardTriggers)
+    }
+
+    @Test
+    fun `flow guard requotes after adverse flow rolls out of the window`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_099, 0, 0.980, 30.0, "BUY"),
+                trade(9_100, 0, 0.974, 70.0, "SELL"),
+                trade(9_110, 0, 0.974, 140.0, "SELL"),
+                trade(9_200, 0, 0.977, 70.0, "BUY"),
+                trade(9_210, 0, 0.972, 70.0, "SELL"),
+                trade(9_220, 0, 0.972, 140.0, "SELL")
+            )
+        )
+        val config = baseConfig().copy(flowGuardWindowSeconds = 100)
+
+        val result = engine.simulateMarket(market, config)
+
+        assertTrue(result.filled, "a recovered flow window must allow a new quote")
+        assertEquals(1, result.flowGuardTriggers)
+        assertEquals(0.972, result.cycles.single().entryPrice, 0.000001)
+    }
+
     private fun baseConfig(maxCycles: Int = 1) = EventMakerConfig(
         name = "test",
         entryHorizonSeconds = 1_000,

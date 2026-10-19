@@ -906,3 +906,84 @@
 - 两臂已用本轮代码重启：主臂 Java PID `25924`（wrapper `20468`，spread=2）；实验臂 Java PID `25556`（wrapper `22844`，spread=1）。均处于严格条件等待，输出目录已更新 `watch-process.json`。
 - 当前未授权真实下单；没有产生任何 LIVE 订单。
 - 结论：执行链路新增的已知结构性问题已修复，但策略尾部风险仍未约束，**不能因此宣布可实盘**。
+
+## 2026-10-19 18:00-19:20 逆势流 Guard、全量回测与 Shadow 冒烟
+
+### 目标与前置状态
+
+- 目标：约束三笔结算归零暴露，并把风控接入回测、REST、CLI、Shadow 和 Live 共用引擎。
+- 前置：两臂已停止；Spring 冒烟实例 PID `24064`；所有执行适配器修复已提交。
+- 约束：不跟单目标地址；不使用 mock/Shadow 结果冒充真实实盘；未知订单状态继续 fail-closed。
+
+### 实现
+
+- 新增 `EventMakerAdverseFlowGuard.kt`：按 favorite token 维护滚动成交，计算 signed taker flow 与首尾价格变化；窗口默认 3,600 秒，flow <= -0.4 且跌幅 >= 0.5 美分时触发。
+- `EventMakerConfig` / REST DTO / Gradle 属性增加 `flowGuardWindowSeconds`、`flowGuardMaxSignedFlow`、`flowGuardMinPriceDropCents`。
+- `EventMakerLiveEngine`：
+  - 唯一成交先送入 Guard；
+  - BUY 挂单遇到逆势流时撤单，撤单使用既有最终快照对账路径；
+  - Guard 解除前不新增 BUY；
+  - SELL 退出不被阻塞。
+- Spring/Shadow 启动时用最近公共成交预热 Guard；CLI 任务支持 `shadowFlowGuard*` 和 `researchFlowGuard*` 参数。
+- 回测在判断已挂 BUY 是否继续存活时只使用当前打印之前的信息，避免同笔成交未来函数；新增 `flowGuardTriggers` 和 CSV 列。
+- 新增 `scripts/compare-event-maker-flow-guard.ps1`、`scripts/start-event-maker-shadow.ps1`。
+- 修复 `LivePaperWsClientReconnectTest` 对同步列表的无锁迭代导致的 `ConcurrentModificationException`。
+
+### 测试与验证
+
+- Guard 单元测试：边界、正常双向流、未知方向、窗口过期、禁用开关。
+- LiveEngine：逆势流撤 BUY，Guard 期间不重新下单。
+- 回测：Buy 阻止、正常流成交、历史预热窗口、恢复报价。
+- 全量：`101 suites / 525 tests / 0 failures / 0 errors / 2 skipped`。
+- 命令：`.\gradlew.bat test --console=plain`。
+
+### 回测结果
+
+100 市场对照（Guard 3,600 秒）：
+
+- 跨配置回合 3,955 -> 2,239。
+- 正 PnL 配置 570 -> 744。
+- 单市场亏损 <= -99 的配置 288 -> 0。
+- 配置平均 ROI -5.317% -> +0.948%，中位数 +0.527% -> +0.899%。
+
+全量 4,189 市场、864 配置：
+
+- 跨配置回合 134,216 -> 96,105。
+- 正 PnL 配置 101 -> 138。
+- 单市场亏损 <= -99 的配置 864 -> 845。
+- 配置平均 ROI -3.041% -> -2.563%，中位数 -2.147% -> -2.164%。
+- 主配置 `p0.97-0.99_off0.5_spread2.0_q1.0_c3_r0`：PnL +224.37 -> +275.66，结算亏损 3 -> 2，测试 ROI +0.560% -> +0.397%。
+
+尾部因果核对：
+
+- China-Vietnam：成交前 1h flow -0.746、跌幅 0.815 美分，Guard 成功阻止。
+- Iran May 25：原始入场可触发，但 Guard 改变报价时点后于更早的 1779741514 成交，当时前置 flow +0.126，仍亏 100。
+- US–Iran Aug 31：成交前 flow +0.991；卖压与成交在同一笔 1,022.7 股 SELL 中，无法因果拦截，仍亏 100。
+
+证据：
+
+- `docs/zh/event-maker-flow-guard-tail-audit-2026-10-19.md`
+- `docs/zh/event-maker-flow-guard-full-2026-10-19.md`
+- `docs/zh/event-maker-flow-guard-100m-2026-10-19.md`
+- `docs/zh/event-maker-flow-guard-600s-100m-2026-10-19.md`
+- `backend/build/research/event-maker-flowguard-full-v2-20261019-*`
+
+### Shadow 冒烟
+
+- 严格 0.97–0.99 价格带当前仍无报价市场，连续 3 轮均为 `price_out_of_range`；没有放宽正式两臂条件。
+- 独立宽价格带执行链路冒烟：1 个市场、5 分钟、201 笔唯一成交、690 次盘口更新、1 次报价、1 次停止撤单、0 fill、0 错误。
+- `scripts/audit-event-maker-shadow.ps1` 返回 `passed=true`，`activeOrders=0`、`duplicateTradeRows=0`。
+- 证据：`backend/build/research/event-maker-shadow-flowguard-smoke-wide-20261019/`。
+
+### 当前进程
+
+- 主臂 wrapper PID `11600`，Shadow Java PID `26308`，spread=2，输出 `backend/build/research/event-maker-shadow-guard-main-v2-20261019/`。
+- 实验臂 wrapper PID `25864`，Shadow Java PID `22788`，spread=1，输出 `backend/build/research/event-maker-shadow-guard-spread1-v2-20261019/`。
+- 正式参数首轮：主臂 qualified=2/activityPassed=0/selected=0；实验臂 qualified=2/activityPassed=0/selected=0；两臂 `logIssues=0`、`stderrBytes=0`。
+- 轮询：`.\scripts\check-event-maker-watch.ps1 -OutputDir <目录>`；运行期间禁止编译和测试。
+
+### 结论与下一步
+
+- Guard 应保留，但只挡住三笔历史归零中的一笔；全量中位数 ROI 未改善，845/864 配置仍有单市场归零。
+- 当前仍不能实盘，不能标记目标完成。
+- 唯一剩余的真实 Live 阻断条件是用户授权与账户参数；在此之前继续 Shadow 收集 fill/markout/PnL 证据。

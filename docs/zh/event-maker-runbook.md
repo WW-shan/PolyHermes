@@ -71,6 +71,9 @@ cd D:\Project\PolyHermes\backend
   "-PshadowMaxOrderAgeSeconds=1800" `
   "-PshadowStaleBookSeconds=300" `
   "-PshadowActiveOrderStaleSeconds=1800" `
+  "-PshadowFlowGuardWindowSeconds=3600" `
+  "-PshadowFlowGuardMaxSignedFlow=-0.4" `
+  "-PshadowFlowGuardMinPriceDropCents=0.5" `
   "-PshadowOrderNotional=25" `
   "-PshadowFillVolumeFactor=1" `
   "-PshadowOutput=build/research/event-maker-shadow-passive" `
@@ -108,6 +111,9 @@ cd D:\Project\PolyHermes\backend
 | `shadowMaxOrderAgeSeconds` | 订单最大存活时间，到时强制重挂 |
 | `shadowStaleBookSeconds` | 新报价允许的最大盘口年龄 |
 | `shadowActiveOrderStaleSeconds` | 已有挂单允许的最大盘口静默时间 |
+| `shadowFlowGuardWindowSeconds` | 逆势流 Guard 滚动窗口；0 关闭，默认 3600 |
+| `shadowFlowGuardMaxSignedFlow` | 触发 Guard 的最大 signed flow，默认 -0.4 |
+| `shadowFlowGuardMinPriceDropCents` | 触发 Guard 的最小价格跌幅（美分），默认 0.5 |
 | `shadowOrderNotional` | 单市场订单名义金额 |
 | `shadowFillVolumeFactor` | 队列清空后，累计需要多少倍订单股数的反向成交才成交；0 为旧乐观模式，1 为保守基准，10/50 为深队列压力测试 |
 | `shadowOutput` | 输出目录 |
@@ -205,6 +211,9 @@ Content-Type: application/json
   "exitImproveTicks": 0,
   "requoteSeconds": 300,
   "maxOrderAgeSeconds": 1800,
+  "flowGuardWindowSeconds": 3600,
+  "flowGuardMaxSignedFlow": -0.4,
+  "flowGuardMinPriceDropCents": 0.5,
   "orderNotional": 25.0,
   "maxQueueAheadShares": 100000.0,
   "shadowFillVolumeFactor": 1.0,

@@ -31,6 +31,61 @@ class EventMakerBacktestEngine(
         var eligibleVolume: Double = 0.0
     )
 
+    /**
+     * Prefix-sum view over the favorite token's prints. A quote guard is evaluated
+     * many times per market, so recomputing the trailing window by scanning every
+     * print would make the full parameter grid unnecessarily expensive.
+     */
+    private class FlowGuardHistory(private val trades: List<EventMakerTrade>) {
+        private val buyPrefix = DoubleArray(trades.size + 1)
+        private val sellPrefix = DoubleArray(trades.size + 1)
+
+        init {
+            for (index in trades.indices) {
+                val trade = trades[index]
+                buyPrefix[index + 1] = buyPrefix[index] + if (trade.takerIsBuy) trade.size else 0.0
+                sellPrefix[index + 1] = sellPrefix[index] + if (trade.takerIsSell) trade.size else 0.0
+            }
+        }
+
+        fun blocks(config: EventMakerConfig, timestamp: Long): Boolean {
+            if (config.flowGuardWindowSeconds <= 0 || trades.isEmpty()) return false
+            val from = lowerBound((timestamp - config.flowGuardWindowSeconds).coerceAtLeast(0L))
+            val to = upperBound(timestamp)
+            if (from >= to) return false
+
+            val buyVolume = buyPrefix[to] - buyPrefix[from]
+            val sellVolume = sellPrefix[to] - sellPrefix[from]
+            val knownVolume = buyVolume + sellVolume
+            if (knownVolume <= 1e-12) return false
+
+            val signedFlow = (buyVolume - sellVolume) / knownVolume
+            val priceDropCents = (trades[from].price - trades[to - 1].price) * 100.0
+            return signedFlow <= config.flowGuardMaxSignedFlow + 1e-9 &&
+                priceDropCents + 1e-9 >= config.flowGuardMinPriceDropCents
+        }
+
+        private fun lowerBound(target: Long): Int {
+            var low = 0
+            var high = trades.size
+            while (low < high) {
+                val mid = (low + high) ushr 1
+                if (trades[mid].timestamp < target) low = mid + 1 else high = mid
+            }
+            return low
+        }
+
+        private fun upperBound(target: Long): Int {
+            var low = 0
+            var high = trades.size
+            while (low < high) {
+                val mid = (low + high) ushr 1
+                if (trades[mid].timestamp <= target) low = mid + 1 else high = mid
+            }
+            return low
+        }
+    }
+
     fun run(markets: List<EventMakerMarket>, config: EventMakerConfig): Pair<EventMakerSummary, List<EventMakerMarketResult>> {
         val results = markets.map { simulateMarket(it, config) }
         return summarize(config, results) to results
@@ -58,13 +113,15 @@ class EventMakerBacktestEngine(
         val tick = market.tickSize.takeIf { it > 0.0 } ?: 0.001
         val entryOffset = config.entryOffsetCents / 100.0
         val exitSpread = config.exitSpreadCents / 100.0
-        val trades = market.trades
+        val favoriteTrades = market.trades
             .asSequence()
             .filter { it.outcomeIndex == favoriteIndex }
-            .filter { it.timestamp > entryTimestamp && it.timestamp < market.closedTimestamp }
+            .filter { it.timestamp < market.closedTimestamp }
             .filter { it.price > 0.0 && it.price < 1.0 && it.size > 0.0 }
             .sortedBy { it.timestamp }
             .toList()
+        val flowGuardHistory = FlowGuardHistory(favoriteTrades)
+        val trades = favoriteTrades.filter { it.timestamp > entryTimestamp }
 
         if (trades.isEmpty()) {
             return emptyResult(market, referencePrice, favoriteIndex, won, eligible = true)
@@ -75,12 +132,26 @@ class EventMakerBacktestEngine(
         var buyOrder: BuyOrder? = null
         var sellPrice: Double? = null
         var sellEligibleVolume = 0.0
+        var flowGuardWasBlocked = false
+        var flowGuardTriggers = 0
+
+        fun flowGuardBlocks(timestamp: Long): Boolean {
+            val blocked = flowGuardHistory.blocks(config, timestamp)
+            if (blocked && !flowGuardWasBlocked) flowGuardTriggers++
+            flowGuardWasBlocked = blocked
+            return blocked
+        }
 
         fun placeBuy(atPrice: Double, timestamp: Long) {
             // Mirror the live selector: only quote when the trailing window on the
             // quoted token shows enough two-sided activity. Without this the
             // backtest fills in markets the Shadow/Live path would never select.
-            if (!passesActivityGate(config, trades, timestamp)) return
+            // The adverse-flow guard withdraws an existing quote as well: a stale
+            // resting BUY must not be filled after sell pressure breaks the market.
+            if (!passesActivityGate(config, trades, timestamp) || flowGuardBlocks(timestamp)) {
+                buyOrder = null
+                return
+            }
             val limit = roundDownToTick(max(0.001, atPrice - entryOffset), tick)
             buyOrder = BuyOrder(
                 limitPrice = limit,
@@ -101,6 +172,18 @@ class EventMakerBacktestEngine(
                 val currentOrder = buyOrder
                 if (currentOrder == null) {
                     if (trade.price >= config.minPrice && trade.price < config.maxPrice) placeBuy(trade.price, trade.timestamp)
+                    continue
+                }
+
+                // Sell-side taker flow plus a falling favorite is the common
+                // precursor of the settlement losses found in the tail study.
+                // Cancel before evaluating a fill so the guard is not merely a
+                // post-hoc filter over an order that would already have filled.
+                // The order was already resting when this print arrived. Decide whether
+                // it survives using only information available before the print, so a
+                // same-print fill cannot be filtered with hindsight.
+                if (flowGuardBlocks(trade.timestamp - 1L)) {
+                    buyOrder = null
                     continue
                 }
 
@@ -222,7 +305,8 @@ class EventMakerBacktestEngine(
             holdBaselinePnl = baselinePnl,
             holdBaselineRoi = baselinePnl / config.orderNotional,
             holdBaselineDeployed = config.orderNotional,
-            maxAdverseExcursion = enrichedCycles.minOfOrNull { it.maxAdverseExcursion } ?: 0.0
+            maxAdverseExcursion = enrichedCycles.minOfOrNull { it.maxAdverseExcursion } ?: 0.0,
+            flowGuardTriggers = flowGuardTriggers
         )
     }
 
@@ -359,7 +443,8 @@ class EventMakerBacktestEngine(
             maxAdverseExcursion = cycles.minOfOrNull { it.maxAdverseExcursion } ?: 0.0,
             averageTimeToFillSeconds = if (cycles.isEmpty()) 0.0 else cycles.sumOf { it.timeToFillSeconds }.toDouble() / cycles.size,
             settledLosses = settledLosses,
-            breakEvenLossRate = breakEvenLossRate
+            breakEvenLossRate = breakEvenLossRate,
+            flowGuardTriggers = results.sumOf { it.flowGuardTriggers }
         )
     }
 

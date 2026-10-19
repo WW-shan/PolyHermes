@@ -21,7 +21,7 @@ fun main(args: Array<String>) {
     println(
         "from=${options.from} to=${options.to} minVolume=${options.minVolume} " +
             "maxMarkets=${options.maxMarkets} entryHorizonSeconds=${options.entryHorizonSeconds} " +
-            "activityGate=${options.activityGate}"
+            "activityGate=${options.activityGate} flowGuard=${options.flowGuard}"
     )
     if (options.proxy != null) println("proxy=${options.proxy}")
 
@@ -41,7 +41,7 @@ fun main(args: Array<String>) {
     require(markets.isNotEmpty()) { "No eligible markets returned" }
 
     val engine = EventMakerBacktestEngine()
-    val configs = buildGrid(options.entryHorizonSeconds, options.activityGate)
+    val configs = buildGrid(options.entryHorizonSeconds, options.activityGate, options.flowGuard)
     println("configs=${configs.size}; simulating ${markets.size} markets")
     val summaries = configs.map { engine.run(markets, it).first }
     writeSummaryCsv(options.output.resolveSibling(options.output.fileName.toString() + "-summary.csv"), summaries)
@@ -104,7 +104,11 @@ fun main(args: Array<String>) {
         .forEach { printSummary("robust", it) }
 }
 
-private fun buildGrid(entryHorizonSeconds: Long, activityGate: ActivityGate): List<EventMakerConfig> {
+private fun buildGrid(
+    entryHorizonSeconds: Long,
+    activityGate: ActivityGate,
+    flowGuard: FlowGuardSettings
+): List<EventMakerConfig> {
     val bands = listOf(
         0.95 to 0.97,
         0.97 to 0.99,
@@ -141,7 +145,10 @@ private fun buildGrid(entryHorizonSeconds: Long, activityGate: ActivityGate): Li
                                 minRecentTradesPerSide30m = activityGate.minRecentTradesPerSide30m,
                                 minRecentTrades2h = activityGate.minRecentTrades2h,
                                 minRecentNotional2h = activityGate.minRecentNotional2h,
-                                minRecentTradesPerSide2h = activityGate.minRecentTradesPerSide2h
+                                minRecentTradesPerSide2h = activityGate.minRecentTradesPerSide2h,
+                                flowGuardWindowSeconds = flowGuard.windowSeconds,
+                                flowGuardMaxSignedFlow = flowGuard.maxSignedFlow,
+                                flowGuardMinPriceDropCents = flowGuard.minPriceDropCents
                             )
                         }
                     }
@@ -156,17 +163,20 @@ private fun writeSummaryCsv(path: Path, summaries: List<EventMakerSummary>) {
     Files.createDirectories(path.parent)
     val header = listOf(
         "config", "min_price", "max_price", "entry_offset_cents", "exit_spread_cents", "queue_factor", "requote_seconds", "max_cycles",
+        "flow_guard_window_seconds", "flow_guard_max_signed_flow", "flow_guard_min_price_drop_cents",
         "total_markets", "eligible_markets", "filled_markets", "fill_rate", "total_cycles", "sold_cycles", "settled_cycles",
         "win_rate", "deployed_notional", "total_pnl", "total_roi", "avg_pnl_per_filled_market", "worst_market_pnl",
-        "max_drawdown", "avg_holding_seconds", "hold_baseline_roi", "profitable_filled_markets", "total_fees", "train_pnl", "train_roi", "train_filled_markets", "train_cycles", "test_pnl", "test_roi", "test_filled_markets", "test_cycles", "max_adverse_excursion", "average_time_to_fill_seconds", "settled_losses", "break_even_loss_rate"
+        "max_drawdown", "avg_holding_seconds", "hold_baseline_roi", "profitable_filled_markets", "total_fees", "train_pnl", "train_roi", "train_filled_markets", "train_cycles", "test_pnl", "test_roi", "test_filled_markets", "test_cycles", "max_adverse_excursion", "average_time_to_fill_seconds", "settled_losses", "break_even_loss_rate", "flow_guard_triggers"
     ).joinToString(",")
     val lines = summaries.sortedByDescending { it.totalRoi }.map { s ->
         listOf(
             s.config.name, s.config.minPrice, s.config.maxPrice, s.config.entryOffsetCents, s.config.exitSpreadCents,
-            s.config.queueFactor, s.config.requoteSeconds, s.config.maxCycles, s.totalMarkets, s.eligibleMarkets, s.filledMarkets, s.fillRate,
+            s.config.queueFactor, s.config.requoteSeconds, s.config.maxCycles,
+            s.config.flowGuardWindowSeconds, s.config.flowGuardMaxSignedFlow, s.config.flowGuardMinPriceDropCents,
+            s.totalMarkets, s.eligibleMarkets, s.filledMarkets, s.fillRate,
             s.totalCycles, s.soldCycles, s.settledCycles, s.winRate, s.deployedNotional, s.totalPnl, s.totalRoi,
             s.averagePnlPerFilledMarket, s.worstMarketPnl, s.maxDrawdown, s.averageHoldingSeconds,
-            s.holdBaselineRoi, s.profitableFilledMarkets, s.totalFees, s.trainPnl, s.trainRoi, s.trainFilledMarkets, s.trainCycles, s.testPnl, s.testRoi, s.testFilledMarkets, s.testCycles, s.maxAdverseExcursion, s.averageTimeToFillSeconds, s.settledLosses, s.breakEvenLossRate
+            s.holdBaselineRoi, s.profitableFilledMarkets, s.totalFees, s.trainPnl, s.trainRoi, s.trainFilledMarkets, s.trainCycles, s.testPnl, s.testRoi, s.testFilledMarkets, s.testCycles, s.maxAdverseExcursion, s.averageTimeToFillSeconds, s.settledLosses, s.breakEvenLossRate, s.flowGuardTriggers
         ).joinToString(",") { csvCell(it) }
     }
     Files.write(path, listOf(header) + lines, StandardCharsets.UTF_8)
@@ -175,12 +185,12 @@ private fun writeSummaryCsv(path: Path, summaries: List<EventMakerSummary>) {
 
 private fun writeFeeSensitivityCsv(path: Path, summaries: List<EventMakerSummary>) {
     Files.createDirectories(path.parent)
-    val header = "maker_fee_bps,filled_markets,total_cycles,sold_cycles,settled_cycles,settled_losses,total_fees,total_pnl,total_roi,train_roi,test_roi,worst_market_pnl,break_even_loss_rate"
+    val header = "maker_fee_bps,filled_markets,total_cycles,sold_cycles,settled_cycles,settled_losses,total_fees,total_pnl,total_roi,train_roi,test_roi,worst_market_pnl,break_even_loss_rate,flow_guard_triggers"
     val lines = summaries.map { s ->
         listOf(
             (s.config.makerFeeRate * 10_000).toInt(), s.filledMarkets, s.totalCycles, s.soldCycles,
             s.settledCycles, s.settledLosses, s.totalFees, s.totalPnl, s.totalRoi, s.trainRoi,
-            s.testRoi, s.worstMarketPnl, s.breakEvenLossRate
+            s.testRoi, s.worstMarketPnl, s.breakEvenLossRate, s.flowGuardTriggers
         ).joinToString(",") { csvCell(it) }
     }
     Files.write(path, listOf(header) + lines, StandardCharsets.UTF_8)
@@ -220,7 +230,7 @@ private fun printSummary(prefix: String, s: EventMakerSummary) {
     println(
         String.format(
             Locale.US,
-            "%s %-46s eligible=%d filled=%d cycles=%d sold=%d settled=%d win=%.1f%% pnl=%.2f roi=%.2f%% dd=%.2f holdRoi=%.2f%% mae=%.2f fillH=%.2f tailLoss=%d breakEven=%.2f%% train=(%d,%d,%.2f%%) test=(%d,%d,%.2f%%)",
+            "%s %-46s eligible=%d filled=%d cycles=%d sold=%d settled=%d win=%.1f%% pnl=%.2f roi=%.2f%% dd=%.2f holdRoi=%.2f%% mae=%.2f fillH=%.2f tailLoss=%d guard=%d breakEven=%.2f%% train=(%d,%d,%.2f%%) test=(%d,%d,%.2f%%)",
             prefix,
             s.config.name,
             s.eligibleMarkets,
@@ -236,6 +246,7 @@ private fun printSummary(prefix: String, s: EventMakerSummary) {
             s.maxAdverseExcursion,
             s.averageTimeToFillSeconds / 3600.0,
             s.settledLosses,
+            s.flowGuardTriggers,
             s.breakEvenLossRate * 100.0,
             s.trainFilledMarkets,
             s.trainCycles,
@@ -252,6 +263,14 @@ private fun csvCell(value: Any?): String {
     return if (text.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) {
         "\"" + text.replace("\"", "\"\"") + "\""
     } else text
+}
+
+private data class FlowGuardSettings(
+    val windowSeconds: Long,
+    val maxSignedFlow: Double,
+    val minPriceDropCents: Double
+) {
+    override fun toString(): String = "window=${windowSeconds}s,maxFlow=${maxSignedFlow},minDrop=${minPriceDropCents}c"
 }
 
 private data class ActivityGate(
@@ -272,6 +291,7 @@ private data class CliOptions(
     val concurrency: Int,
     val entryHorizonSeconds: Long,
     val activityGate: ActivityGate,
+    val flowGuard: FlowGuardSettings,
     val output: Path
 ) {
     companion object {
@@ -288,6 +308,11 @@ private data class CliOptions(
                 to = LocalDate.parse(option("to") ?: "2026-10-01"),
                 concurrency = option("concurrency")?.toIntOrNull() ?: 6,
                 entryHorizonSeconds = option("entry-horizon-seconds")?.toLongOrNull() ?: 86_400L,
+                flowGuard = FlowGuardSettings(
+                    windowSeconds = option("flow-guard-window-seconds")?.toLongOrNull() ?: 0L,
+                    maxSignedFlow = option("flow-guard-max-signed-flow")?.toDoubleOrNull() ?: -0.4,
+                    minPriceDropCents = option("flow-guard-min-price-drop-cents")?.toDoubleOrNull() ?: 0.5
+                ),
                 activityGate = ActivityGate(
                     minRecentTrades30m = option("min-recent-trades")?.toIntOrNull() ?: 0,
                     minRecentNotional30m = option("min-recent-notional")?.toDoubleOrNull() ?: 0.0,

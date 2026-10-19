@@ -241,6 +241,7 @@ class EventMakerStrategyService(
         shadowExecutionPort.reset()
         shadowExecutionPort.configureFillModel(config.shadowFillVolumeFactor)
         val engine = EventMakerLiveEngine(config, quotePlanner, riskPolicy, shadowExecutionPort)
+        primeFlowGuard(engine, client, discovered)
         currentEngine = engine
         val seenTrades = linkedMapOf<String, Boolean>()
         var trades = 0L
@@ -297,6 +298,7 @@ class EventMakerStrategyService(
                             val trade = event.trade
                             if (seenTrades.put(trade.key, true) == null) {
                                 trades++
+                                engine.onTrade(trade)
                                 shadowExecutionPort.onTrade(trade)
                             } else {
                                 // Duplicate print: nothing changed, so skip the engine
@@ -370,6 +372,7 @@ class EventMakerStrategyService(
             initialRealizedPnl = realizedPnlBaseline
         )
         engine.resetDailyPnlBaseline(states)
+        primeFlowGuard(engine, client, discovered)
         dailyBaselineDay = currentDayKey()
         engine.registerRestoredOrders(states, accountId)
         currentEngine = engine
@@ -450,6 +453,7 @@ class EventMakerStrategyService(
                             val trade = event.trade
                             if (seenTrades.put(trade.key, true) == null) {
                                 trades++
+                                engine.onTrade(trade)
                             } else {
                                 duplicateTrade = true
                             }
@@ -510,6 +514,19 @@ class EventMakerStrategyService(
      * spent. The CLI path has always waited (a strict filter can legitimately see no
      * candidate for hours); without this the REST path died on the first empty scan.
      */
+    private suspend fun primeFlowGuard(
+        engine: EventMakerLiveEngine,
+        client: LivePaperDataClient,
+        markets: List<com.wrbug.polymarketbot.research.livepaper.LivePaperMarket>
+    ) {
+        if (!engine.flowGuardEnabled()) return
+        markets.forEach { market ->
+            runCatching { client.getRecentTrades(market) }
+                .getOrDefault(emptyList())
+                .forEach(engine::onTrade)
+        }
+    }
+
     private suspend fun prepareMarkets(
         config: EventMakerConfig,
         client: LivePaperDataClient

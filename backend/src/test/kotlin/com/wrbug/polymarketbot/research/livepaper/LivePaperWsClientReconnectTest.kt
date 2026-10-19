@@ -66,26 +66,42 @@ class LivePaperWsClientReconnectTest {
 
         assertTrue(firstSubscribe.await(10, TimeUnit.SECONDS), "initial subscription never happened")
         // Abruptly drop the server side of the connection to force the client to reconnect.
-        openSockets.forEach { socket -> runCatching { socket.close() } }
+        val socketsToClose = synchronized(openSockets) { openSockets.toList() }
+        socketsToClose.forEach { socket -> runCatching { socket.close() } }
 
+        val didReconnect = secondOpen.await(15, TimeUnit.SECONDS)
+        val statusesAfterReconnect = synchronized(statuses) { statuses.toList() }
+        val subscriptionsAfterReconnect = synchronized(subscriptions) { subscriptions.toList() }
         assertTrue(
-            secondOpen.await(15, TimeUnit.SECONDS),
-            "client did not reconnect after the drop; statuses=$statuses subscriptions=$subscriptions"
+            didReconnect,
+            "client did not reconnect after the drop; statuses=$statusesAfterReconnect subscriptions=$subscriptionsAfterReconnect"
         )
+
         // The server-side accept can race the client-side onOpen callback, so wait
         // briefly for the client to report its second open and its resubscription.
+        fun statusSnapshot() = synchronized(statuses) { statuses.toList() }
+        fun subscriptionSnapshot() = synchronized(subscriptions) { subscriptions.toList() }
+
         val deadline = System.currentTimeMillis() + 10_000L
         while (System.currentTimeMillis() < deadline &&
-            (statuses.count { it.startsWith("WS_OPEN") } < 2 || subscriptions.isEmpty())
+            (statusSnapshot().count { it.startsWith("WS_OPEN") } < 2 || subscriptionSnapshot().isEmpty())
         ) {
             Thread.sleep(50)
         }
+        val finalSubscriptions = subscriptionSnapshot()
         assertTrue(
-            subscriptions.any { it.contains("MARKET") && it.contains("token-1") },
-            "subscription payload missing market/token: $subscriptions"
+            finalSubscriptions.any { it.contains("MARKET") && it.contains("token-1") },
+            "subscription payload missing market/token: $finalSubscriptions"
         )
-        assertTrue(statuses.any { it.startsWith("WS_FAILURE") || it.startsWith("WS_CLOSED") }, "no drop status: $statuses")
-        assertTrue(statuses.count { it.startsWith("WS_OPEN") } >= 2, "expected a second WS_OPEN: $statuses")
+        val finalStatuses = statusSnapshot()
+        assertTrue(
+            finalStatuses.any { it.startsWith("WS_FAILURE") || it.startsWith("WS_CLOSED") },
+            "no drop status: $finalStatuses"
+        )
+        assertTrue(
+            finalStatuses.count { it.startsWith("WS_OPEN") } >= 2,
+            "expected a second WS_OPEN: $finalStatuses"
+        )
     }
 
     private class TestWsServer(

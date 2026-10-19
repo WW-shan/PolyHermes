@@ -2,6 +2,7 @@ package com.wrbug.polymarketbot.service.eventmaker
 
 import com.wrbug.polymarketbot.research.livepaper.BookLevel
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
+import com.wrbug.polymarketbot.research.livepaper.LiveTradePrint
 import com.wrbug.polymarketbot.research.livepaper.MarketBook
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -454,6 +455,31 @@ class EventMakerLiveEngineTest {
         assertEquals(2, port.placeCount)
     }
 
+
+    @Test
+    fun `adverse flow cancels a resting buy and suppresses replacement`() = runTest {
+        val now = System.currentTimeMillis()
+        val guardedConfig = config.copy(flowGuardWindowSeconds = 600)
+        val state = EventMakerLiveState(market, guardedConfig)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(guardedConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, now))
+        val placed = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+        assertEquals(1, placed.placed.size)
+
+        engine.onTrade(
+            LiveTradePrint("condition", "token", now + 1_000L, "BUY", 0.980, 30.0, "test", "0xbuy")
+        )
+        engine.onTrade(
+            LiveTradePrint("condition", "token", now + 2_000L, "SELL", 0.975, 70.0, "test", "0xsell")
+        )
+        val canceled = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now + 3_000L)
+
+        assertEquals("adverse_flow", canceled.canceled.single().reason)
+        assertNull(state.activeOrder)
+        val blocked = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now + 4_000L)
+        assertTrue(blocked.placed.isEmpty())
+    }
 
     @Test
     fun `quote does not perform order lookups`() = runTest {

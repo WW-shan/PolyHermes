@@ -44,6 +44,16 @@ data class EventMakerConfig(
     val exitSpreadCents: Double = 1.0,
     val queueFactor: Double = 2.0,
     val requoteSeconds: Long = 300,
+
+    /**
+     * Optional adverse-selection guard. Before quoting/filling, compute the signed
+     * taker flow and price change on the favorite token in this trailing window.
+     * The guard blocks the quote when flow <= maxSignedFlow and the price dropped at
+     * least minPriceDropCents. A zero window disables it.
+     */
+    val flowGuardWindowSeconds: Long = 0,
+    val flowGuardMaxSignedFlow: Double = -0.4,
+    val flowGuardMinPriceDropCents: Double = 0.5,
     val orderNotional: Double = 100.0,
     val maxCycles: Int = 1,
     val makerFeeRate: Double = 0.0,
@@ -71,6 +81,9 @@ data class EventMakerConfig(
         require(orderNotional > 0.0) { "orderNotional must be positive" }
         require(maxCycles >= 1) { "maxCycles must be at least 1" }
         require(makerFeeRate >= 0.0) { "makerFeeRate must be non-negative" }
+        require(flowGuardWindowSeconds >= 0) { "flowGuardWindowSeconds must be non-negative" }
+        require(flowGuardMaxSignedFlow in -1.0..1.0) { "flowGuardMaxSignedFlow must be in [-1, 1]" }
+        require(flowGuardMinPriceDropCents >= 0.0) { "flowGuardMinPriceDropCents must be non-negative" }
         require(minRecentTrades30m >= 0 && minRecentTrades2h >= 0) { "activity trade counts must be non-negative" }
         require(minRecentTradesPerSide30m >= 0 && minRecentTradesPerSide2h >= 0) { "activity per-side counts must be non-negative" }
         require(minRecentNotional30m >= 0.0 && minRecentNotional2h >= 0.0) { "activity notional must be non-negative" }
@@ -114,7 +127,9 @@ data class EventMakerMarketResult(
     val holdBaselinePnl: Double,
     val holdBaselineRoi: Double,
     val holdBaselineDeployed: Double,
-    val maxAdverseExcursion: Double = 0.0
+    val maxAdverseExcursion: Double = 0.0,
+    /** Number of separate adverse-flow episodes that withdrew or suppressed a BUY quote. */
+    val flowGuardTriggers: Int = 0
 ) {
     val filled: Boolean get() = cycles.isNotEmpty()
 }
@@ -155,5 +170,6 @@ data class EventMakerSummary(
     val maxAdverseExcursion: Double = 0.0,
     val averageTimeToFillSeconds: Double = 0.0,
     val settledLosses: Int = 0,
-    val breakEvenLossRate: Double = 0.0
+    val breakEvenLossRate: Double = 0.0,
+    val flowGuardTriggers: Int = 0
 )

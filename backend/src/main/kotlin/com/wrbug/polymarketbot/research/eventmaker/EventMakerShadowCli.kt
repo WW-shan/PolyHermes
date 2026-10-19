@@ -70,6 +70,9 @@ private data class ShadowOptions(
     val exitSpreadCents: Double,
     val requoteSeconds: Long,
     val maxOrderAgeSeconds: Long,
+    val flowGuardWindowSeconds: Long,
+    val flowGuardMaxSignedFlow: Double,
+    val flowGuardMinPriceDropCents: Double,
     val staleBookSeconds: Long,
     val activeOrderStaleBookSeconds: Long,
     val orderNotional: Double,
@@ -164,6 +167,9 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     val pollSeconds = option("poll-seconds")?.toLongOrNull() ?: 3L
     val requoteSeconds = option("requote-seconds")?.toLongOrNull() ?: 120L
     val maxOrderAgeSeconds = option("max-order-age-seconds")?.toLongOrNull() ?: 3600L
+    val flowGuardWindowSeconds = option("flow-guard-window-seconds")?.toLongOrNull() ?: 3600L
+    val flowGuardMaxSignedFlow = option("flow-guard-max-signed-flow")?.toDoubleOrNull() ?: -0.4
+    val flowGuardMinPriceDropCents = option("flow-guard-min-price-drop-cents")?.toDoubleOrNull() ?: 0.5
     val staleBookSeconds = option("stale-book-seconds")?.toLongOrNull() ?: 30L
     val activeOrderStaleBookSeconds = option("active-order-stale-seconds")?.toLongOrNull() ?: 600L
     val orderNotional = option("order-notional")?.toDoubleOrNull() ?: 25.0
@@ -178,6 +184,9 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     require(pollSeconds > 0)
     require(requoteSeconds > 0)
     require(maxOrderAgeSeconds >= requoteSeconds)
+    require(flowGuardWindowSeconds >= 0)
+    require(flowGuardMaxSignedFlow in -1.0..1.0)
+    require(flowGuardMinPriceDropCents >= 0.0)
     require(staleBookSeconds > 0)
     require(activeOrderStaleBookSeconds >= staleBookSeconds)
     require(orderNotional > 0.0)
@@ -217,6 +226,9 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
         exitSpreadCents = option("exit-spread-cents")?.toDoubleOrNull() ?: 1.0,
         requoteSeconds = requoteSeconds,
         maxOrderAgeSeconds = maxOrderAgeSeconds,
+        flowGuardWindowSeconds = flowGuardWindowSeconds,
+        flowGuardMaxSignedFlow = flowGuardMaxSignedFlow,
+        flowGuardMinPriceDropCents = flowGuardMinPriceDropCents,
         staleBookSeconds = staleBookSeconds,
         activeOrderStaleBookSeconds = activeOrderStaleBookSeconds,
         orderNotional = orderNotional,
@@ -470,6 +482,9 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             maxCyclesPerMarket = 3,
             requoteSeconds = options.requoteSeconds,
             maxOrderAgeSeconds = options.maxOrderAgeSeconds,
+            flowGuardWindowSeconds = options.flowGuardWindowSeconds,
+            flowGuardMaxSignedFlow = options.flowGuardMaxSignedFlow,
+            flowGuardMinPriceDropCents = options.flowGuardMinPriceDropCents,
             staleBookSeconds = options.staleBookSeconds,
             activeOrderStaleBookSeconds = options.activeOrderStaleBookSeconds
         )
@@ -479,6 +494,9 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         shadowExecution.reset()
         shadowExecution.configureFillModel(options.fillVolumeFactor)
         val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), shadowExecution)
+        if (options.flowGuardWindowSeconds > 0) {
+            discovered.forEach { market -> dataClient.getRecentTrades(market).forEach(engine::onTrade) }
+        }
         discovered.forEach { market -> books[market.favoriteTokenId]?.let { states.first { s -> s.market.conditionId == market.conditionId }.onBook(it) } }
         val startedAt = System.currentTimeMillis()
         val deadline = startedAt + options.minutes * 60_000L
@@ -527,7 +545,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                             val current = books[change.tokenId] ?: MarketBook(change.tokenId, emptyList(), emptyList(), change.timestamp)
                             applyBook(current.applyPriceChange(change), states, discovered)
                         }
-                        is LiveFeedEvent.Trade -> duplicateTrade = applyTrade(feed.trade)
+                        is LiveFeedEvent.Trade -> duplicateTrade = applyTrade(feed.trade, engine)
                         is LiveFeedEvent.Unknown -> writeEvent(mapOf("type" to "unknown", "eventType" to feed.eventType))
                     }
                     is ShadowEvent.Tick -> Unit
@@ -654,7 +672,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
     }
 
     /** Returns true when the print was already seen (no new information). */
-    private fun applyTrade(trade: LiveTradePrint): Boolean {
+    private fun applyTrade(trade: LiveTradePrint, engine: EventMakerLiveEngine): Boolean {
         if (seenTrades.put(trade.key, true) != null) {
             duplicateTradeEvents++
             return true
@@ -665,6 +683,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         // Flush per trade: a long unattended run must leave a complete,
         // line-aligned trade log even if the process is killed mid-run.
         tradesWriter.flush()
+        engine.onTrade(trade)
         shadowExecution.onTrade(trade).forEach { fill ->
             MARKOUT_HORIZONS_SECONDS.forEach { horizonSeconds ->
                 pendingMarkouts += PendingMarkout(

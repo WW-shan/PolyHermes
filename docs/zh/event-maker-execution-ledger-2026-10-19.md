@@ -338,3 +338,35 @@ cd D:\Project\PolyHermes\backend
 - 本轮没有真实 Live 下单；仍缺用户授权、`accountId`、资金上限、时间窗口和市场范围。
 
 恢复规则：若继续 Shadow，先看对应 `watch-process.json` 与 `stdout.log`；运行期间禁止编译/测试。若进入 Live，必须先确认上述快照/撤单路径在真实账户上通过小资金 smoke，再讨论扩大资金。
+
+### 18:00-19:20 逆势流 Guard 与尾部因果审计
+
+| 项目 | 结果 |
+|---|---|
+| Guard 默认参数 | 3,600 秒；signed flow <= -0.4；价格跌幅 >= 0.5 美分 |
+| 触发行为 | 撤 BUY、Guard 期间禁止新 BUY；SELL 退出不受影响 |
+| 回测无未来函数 | 已挂订单仅使用当前打印之前的成交判断，避免同笔成交事后过滤 |
+| 全量测试 | 101 suites / 525 tests / 0 failures / 0 errors / 2 skipped |
+| 全量 A/B | 4,189 市场、864 配置；回合 134,216 -> 96,105；正 PnL 配置 101 -> 138 |
+| 尾部结果 | 单市场亏损 <= -99 的配置 864 -> 845；主配置结算亏损 3 -> 2 |
+| 历史三笔归零 | China-Vietnam 被拦截；Iran May 25 和 US–Iran Aug 31 仍各亏 100 |
+| 主配置 | `p0.97-0.99_off0.5_spread2.0_q1.0_c3_r0` PnL +224.37 -> +275.66，测试 ROI +0.560% -> +0.397% |
+| Shadow 冒烟 | 5 分钟、1 市场、201 唯一成交、1 报价、1 撤单、0 fill、0 错误，审计 passed=true |
+| 完整报告 | `docs/zh/event-maker-flow-guard-tail-audit-2026-10-19.md` |
+
+当前 Shadow 两臂：
+
+| 臂 | wrapper PID | Java PID | spread | 输出 |
+|---|---:|---:|---:|---|
+| 主臂 | 11600 | 26308 | 2 | `backend/build/research/event-maker-shadow-guard-main-v2-20261019/` |
+| 实验臂 | 25864 | 22788 | 1 | `backend/build/research/event-maker-shadow-guard-spread1-v2-20261019/` |
+
+正式参数首轮两臂均 qualified=2、activityPassed=0、selected=0；拒绝原因为 `recent_trades_2h_below_min` / `recent_trades_30m_below_min`；均 `logIssues=0`、`stderrBytes=0`。运行期间禁止编译/测试。
+
+恢复与验证：
+
+1. `.\scripts\check-event-maker-watch.ps1 -OutputDir <目录>`
+2. 结束后运行 `.\scripts\audit-event-maker-shadow.ps1 -OutputDir <目录>`
+3. 对比报告用 `.\scripts\compare-event-maker-flow-guard.ps1 -Baseline <前缀> -Guard <前缀>`
+
+结论：Guard 是部分尾部防御，不是完整解决方案；当前不能实盘。真实 Live smoke 仍缺 `accountId`、资金上限、明确下单授权、时间窗口和市场范围。

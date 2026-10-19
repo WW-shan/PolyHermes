@@ -40,6 +40,14 @@ data class EventMakerConfig(
     val exitImproveTicks: Int = 1,
     val requoteSeconds: Long = 120,
     val maxOrderAgeSeconds: Long = 3600,
+    /**
+     * Causal adverse-flow guard. It blocks/cancels BUY quotes when the favorite
+     * token has net taker SELL flow and a material price drop in this trailing
+     * window. A zero window disables the guard.
+     */
+    val flowGuardWindowSeconds: Long = 3600,
+    val flowGuardMaxSignedFlow: Double = -0.4,
+    val flowGuardMinPriceDropCents: Double = 0.5,
     val orderNotional: Double = 25.0,
     val maxQueueAheadShares: Double = 500.0,
     val shadowFillVolumeFactor: Double = 1.0,
@@ -73,6 +81,9 @@ data class EventMakerConfig(
         require(exitImproveTicks >= 0)
         require(requoteSeconds > 0)
         require(maxOrderAgeSeconds >= requoteSeconds)
+        require(flowGuardWindowSeconds >= 0)
+        require(flowGuardMaxSignedFlow in -1.0..1.0)
+        require(flowGuardMinPriceDropCents >= 0.0)
         require(orderNotional > 0.0)
         require(maxQueueAheadShares >= 0.0)
         require(shadowFillVolumeFactor >= 0.0)

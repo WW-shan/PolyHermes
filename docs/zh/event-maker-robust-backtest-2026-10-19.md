@@ -364,3 +364,25 @@ Politics 内部再按价格桶拆分时，训练期 `0.97-0.98` 为 -0.302%，�
 - 回测结果足以支持继续做 Shadow 研究，不足以支持真实资金。
 - 费用、队列、时间聚类和参数搜索多重比较都会显著侵蚀当前约 0.5%～1% 的 ROI。
 - 必须等到严格条件下的真实盘口 Shadow 产生可解释的 fill/cycle/markout/PnL，再讨论 Live smoke。
+## 14. 逆势流 Guard 复核（2026-10-19 19:20）
+
+新增事件层 Guard：favorite token 近 3,600 秒 signed taker flow <= -0.4 且价格跌幅 >= 0.5 美分时，撤销/阻止 BUY。回测只使用当前成交打印之前的信息判断订单能否继续存活，避免未来函数。
+
+全量 4,189 市场、864 配置复核：
+
+- 回合数 134,216 -> 96,105。
+- 正 PnL 配置 101 -> 138。
+- 单市场亏损 <= -99 的配置 864 -> 845。
+- 配置平均 ROI -3.041% -> -2.563%，中位数 -2.147% -> -2.164%。
+- 主配置 `p0.97-0.99_off0.5_spread2.0_q1.0_c3_r0` PnL +224.37 -> +275.66，结算亏损 3 -> 2，测试 ROI +0.560% -> +0.397%。
+
+三笔历史归零中，Guard 拦截 China-Vietnam；Iran May 25 因 Guard 改变报价时点而在逆势信号出现前成交；US–Iran Aug 31 的卖压与成交在同一笔打印中，无法因果拦截。
+
+详细证据：
+
+- [逆势流 Guard 与尾部风险审计](event-maker-flow-guard-tail-audit-2026-10-19.md)
+- `docs/zh/event-maker-flow-guard-full-2026-10-19.md`
+- `backend/build/research/event-maker-flowguard-full-v2-20261019-summary.csv`
+- `backend/build/research/event-maker-flowguard-full-v2-20261019-robust-cycles.csv`
+
+结论不变：Guard 是有效的部分防御，但不能消除不可预测的第一笔大额卖单风险，当前不能实盘。
