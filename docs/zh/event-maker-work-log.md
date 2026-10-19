@@ -671,3 +671,12 @@
 - 首次检查：attempt=1，qualified=7、activityPassed=0、selected=0；拒绝原因 `recent_trades_30m_below_min=5`、`recent_trades_2h_below_min=1`、`recent_notional_30m_below_min=1`；`logIssues=0`、`stderrBytes=0`，状态 waiting。
 - `scripts/check-event-maker-watch.ps1` 默认目录已切到 v4。
 - 运行期间禁止编译、测试或重写 classpath。
+### 09:28 启动一档价差独立实验臂（只读）
+
+- 背景：正式主臂要求 `minSpreadTicks=2`，历史上唯一通过活动过滤的市场因价差 1 tick 被拒；计划中已把“一档价差 + 0.5 美分偏移”列为必须单独记录的实验臂。
+- 做法：不改代码、不重编译。从运行中的主臂 JavaExec 命令行提取 classpath，直接用同一份已编译类启动第二个只读 Shadow。
+- 主臂（正式）：PID `15340/21804`，`minSpreadTicks=2`，输出 `event-maker-shadow-watch-v4-20261019/`。
+- 实验臂（独立）：Java PID `26508`，唯一变量 `minSpreadTicks=1`，其余参数与主臂完全一致；输出 `event-maker-shadow-experiment-spread1-20261019/`。
+- 实验臂首轮：qualified=7、activityPassed=0、selected=0，拒绝原因与主臂一致；说明当前空窗是活动门槛，不是价差门槛。
+- 规则：实验臂结果单独存档，不混入正式验证，不用于宣称策略可实盘；两臂共享只读公共数据，均不签名、不下单。
+- 运行期间仍然禁止编译、测试或任何重写 classpath 的任务。
