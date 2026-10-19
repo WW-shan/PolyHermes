@@ -114,3 +114,8 @@ cd D:\Project\PolyHermes-markout-fix\backend
 ```
 
 产物位于被 Git 忽略的 `backend/build/research/`；仓库只提交结论、命令和筛选口径。
+
+- 八窗口文件：`event-maker-gated-markoutfix-horizon-{12h,1d,2d,3d,4d,5d,6d,7d}-20261020-*`
+- 带门槛 provenance 列（`min_recent_trades_30m` 等）的 1d 复跑：`event-maker-provenance-smoke-20261020-*`，数字与上表 1d 完全一致。
+- markout 复算：`event-maker-markout-recheck-1d-focus-20261020.json`、`event-maker-markout-recheck-1d-robust-20261020.json`
+- 止损研究：`event-maker-stoploss-study-278-baseline-20261020.json`、`event-maker-stoploss-study-1d-focus-20261020.json`
