@@ -718,3 +718,16 @@
 - 提交并推送：`b2846a8 fix: flush shadow trade log per trade and persist state on snapshot ticks`（`9c09780..b2846a8 main -> main`）。
 - 两臂已用新代码重启：主臂 Java PID `21704`（wrapper 20276）；实验臂 Java PID `14376`（wrapper 26188）。
 - 说明：15 分钟 flush 冒烟因活动门槛真实波动超时（9 轮无活动通过），未产生 fill；不通过放宽门槛制造成交。
+
+### 12:2x-12:40 WS 断线重连缺陷修复（真实缺陷，受控实验验证）
+
+- 背景：补 WS 网络层测试时发现验收矩阵声称的“断线恢复”只覆盖引擎级订单对账，WebSocket 客户端自身的重连逻辑零测试。
+- 缺陷：`LivePaperWsClient` 未实现 `onClosing` 回执。服务器主动关闭连接时，OkHttp 会等满 60 秒关闭超时才会触发 `onClosed`，期间无盘口/成交推送，实盘中 Polymarket 重启 WS 即形成约 60 秒行情盲区。
+- 修复：新增 `onClosing` 处理，立即回执关闭帧，使 `onClosed` 与重连立即发生；`wsUrl`/`reconnectDelayMs` 改为可注入以便测试。
+- 受控实验：先移除 `onClosing` → 测试失败（客户端不重连）；恢复后 → 测试通过。证明修复必要且有效。
+- 新增 `LivePaperWsClientReconnectTest`：真实 Java-WebSocket 服务端 + OkHttp 客户端，断言订阅载荷、掉线状态、二次 WS_OPEN 与重订阅；连跑 3 次稳定通过。
+- 排查中的一次误报：首版测试的 `TestWsServer.onMessage` 覆盖方法递归调用自身导致 StackOverflowError 并杀死测试服务端，已修正为 `messageHandler` 委托。
+- 全量测试：100 suites / 483 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`ca2c461 fix: reconnect market websocket promptly on server-initiated close`（`db2c3b1..ca2c461 main -> main`）。
+- 两臂已用含该修复的代码重启：主臂 Java PID `12916`（wrapper 4476）；实验臂 Java PID `16788`（wrapper 18916）。重启前两臂各 34 轮、无 fill、无错误。
+- 说明：重启原因是两臂启动（11:59）早于本轮编译（12:33），避免 classpath 污染；不是放宽门槛。
