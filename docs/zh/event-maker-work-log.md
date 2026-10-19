@@ -689,3 +689,23 @@
 - 两臂首轮均为 qualified=7、activityPassed=0、selected=0；拒绝原因 `recent_trades_30m_below_min=5`、`recent_trades_2h_below_min=1`、`recent_notional_30m_below_min=1`；stderr 为空。
 - `scripts/check-event-maker-watch.ps1` 默认目录已切到 v5。
 - 说明：延长的是观察窗口，不是放宽策略门槛；价格带、活动门槛、价差、成交因子、post-only 约束全部未变。
+### 10:0x 两臂重启（12h 等待 + 12h Shadow，直接 java -cp）
+
+- 动作：用 v4 目录保存的 classpath 直接以 java.exe -cp 启动，不经过 Gradle，避免任何重编译；两臂参数与 09:32 计划一致。
+- 主臂：Java PID `19092`（wrapper 26604），`minSpreadTicks=2`，输出 `backend/build/research/event-maker-shadow-watch-v5-20261019/`。
+- 实验臂：Java PID `20972`（wrapper 25812），唯一变量 `minSpreadTicks=1`，输出 `backend/build/research/event-maker-shadow-experiment-spread1-v2-20261019/`。
+- 两臂首轮：qualified=7、activityPassed=0、selected=0；拒绝原因 `recent_trades_30m_below_min=6`、`recent_trades_2h_below_min=1`；stderr 为空；状态 waiting。
+- 说明：等待期只读公共数据，不签名、不下单；运行期间禁止编译/测试。
+
+### 10:2x REST 冒烟发现并修复两个实盘安全缺陷
+
+- 缺陷 1：`POST /api/event-maker/stop` 实测超过 60 秒未返回。根因是 `stop()` 先 `cancelAndJoin()`，而运行中的 discovery/trade poll 卡在 OkHttp 同步调用里（callTimeout 60s），期间不会执行撤单。违反“一键停止”验收标准。
+- 修复 1：`LivePaperDataClient` 记录在途 Call，`close()` 先 `call.cancel()` 中断阻塞请求并把客户端置为不可用；`EventMakerStrategyService.stop()` 先关闭 WS/数据客户端、取消 runScope，再等待 run job 完成 NonCancellable 的撤单与持久化清理。
+- 修复 1b：`runLive`/`runShadow` 的 finally 清理包在 `withContext(NonCancellable)` 中，确保被取消时仍会撤单、对账、持久化。
+- 缺陷 2：Spring REST 路径的 `event-maker.proxy-url` 默认为空，直连 Polymarket 导致 `Gamma keyset discovery failed ... Connect timed out`。
+- 修复 2：`effectiveProxyUrl()` 在未显式配置时回退到数据库系统代理（`ProxyConfigProvider`，仅 HTTP/已启用/有 host+port）；显式配置优先。
+- 新增测试 `EventMakerStrategyStopTest`：stop 中断在途 discovery（<10s，实测 46ms）、系统代理回退、显式代理优先。
+- 全量回归：98 suites / 478 tests / 0 failures / 0 errors / 2 skipped。
+- 提交并推送：`69649e5 fix: make event maker stop abort in-flight network calls and honor system proxy`（`1191da0..69649e5 main -> main`）。
+- REST 复验：带 `--event-maker.proxy-url=http://127.0.0.1:10808` 重启 Spring 后，discovery 正常（qualified=6、activityPassed=1），`stop` 实测 20ms 返回。
+- 两臂已用新代码重启：主臂 Java PID `26412`（spread=2，等待中，拒绝原因 `spread_below_min=1`）；实验臂 Java PID `17596`（spread=1，已选中 1 个市场进入 Shadow，WS_OPEN）。

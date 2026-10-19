@@ -285,3 +285,17 @@ cd D:\Project\PolyHermes\backend
 - 全量测试：97 suites / 475 tests / 0 failures / 0 errors / 2 skipped。
 - 已提交并推送 `596504e fix: harden event maker live state recovery`（`6bd6850..596504e main -> main`）。
 - 当前无 Shadow/Backtest 进程。下一步：重启新代码等待任务 → 分析 Shadow evidence → 处理真实 Live smoke 阻塞项。
+### 10:2x-10:40 REST 冒烟、stop 修复与两臂重启（69649e5）
+
+| 项目 | 值 |
+|---|---|
+| MySQL | Docker 容器 `polyhermes-mysql`（mysql:8.2，127.0.0.1:3306，库 polyhermes） |
+| Spring | java PID `22676`，dev profile，端口 8000，`--event-maker.proxy-url=http://127.0.0.1:10808` |
+| Flyway | 50 条迁移全部成功，31 张表 |
+| REST 验证 | 登录 → start SHADOW → status → stop 全链路通过；stop 实测 20ms（修复前 >60s 超时） |
+| 修复提交 | `69649e5 fix: make event maker stop abort in-flight network calls and honor system proxy`（已推送） |
+| 全量测试 | 98 suites / 478 tests / 0 failures / 0 errors / 2 skipped |
+| 主臂 | Java PID `26412`（wrapper 4640），spread=2，输出 `event-maker-shadow-watch-v5-20261019/`，等待中（`spread_below_min=1`） |
+| 实验臂 | Java PID `17596`（wrapper 19668），spread=1，输出 `event-maker-shadow-experiment-spread1-v2-20261019/`，已选中 1 个市场、WS_OPEN、挂出 Shadow 买单 25.74 @0.971 |
+
+恢复规则：先看 `watch-process.json` 与 `stdout.log`；实验臂若产生 fill/cycle，运行 `.\scripts\audit-event-maker-shadow.ps1 -OutputDir <目录>`。运行期间禁止编译/测试。

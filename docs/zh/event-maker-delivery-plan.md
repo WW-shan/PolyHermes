@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**Live 状态恢复/账户级对账已加固，97 suites / 475 tests 通过；已提交 596504e，v4 等待+Shadow 运行中**<br>
-> 最后更新：2026-10-19 09:01 +08:00<br>
+> 当前状态：**Live 状态恢复/账户级对账已加固；stop 可在途中断网络调用、REST 路径支持系统代理回退；98 suites / 478 tests 通过；已提交 69649e5，两臂等待+Shadow 运行中**<br>
+> 最后更新：2026-10-19 10:40 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -43,7 +43,9 @@
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
 | 新干净长测 | v2 等待 12 轮无活动通过市场，已因安全修复停止；提交后重启 | `event-maker-shadow-watch-v2-20261019/`；不降低价格带 |
-| 全量测试 | 97 suites / 475 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| 全量测试 | 98 suites / 478 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| 一键停止 | stop 先中断在途 OkHttp 调用再撤单；REST 实测 20ms 返回 | `EventMakerStrategyStopTest`、`69649e5` |
+| REST 代理回退 | 未显式配置时回退数据库系统代理；显式配置优先 | `EventMakerStrategyStopTest`、`69649e5` |
 | Live 端到端测试 | 引擎级 mock/恢复/账户级对账已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
 
 ## 3. 目标架构
@@ -125,7 +127,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [x] 完整候选池 4,187 市场、864 配置回测完成。
 - [x] 训练期唯一选参、费用压力、队列压力、MAE 和 markout 分析完成。
 - [x] Shadow 长测运行完成（旧基线稳定性通过；策略成交 edge 未通过）。
-- [ ] 保守成交因子下 Shadow 产生足够 fill，且 markout/PnL/尾部风险可解释。
+- [ ] 保守成交因子下 Shadow 产生足够 fill，且 markout/PnL/尾部风险可解释。（实验臂已首次选中真实市场并挂出 Shadow 买单，等待成交）
 - [x] Live mock 端到端测试通过（引擎级 mock 流程）。
 - [ ] 实际小资金 live smoke 通过（需要用户账户和显式授权）。
 - [x] 更新策略文档、运行手册和故障处理手册。
@@ -147,9 +149,9 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | Live 断线恢复 | 重连和对账测试 | 已完成（引擎恢复/未知状态测试） |
 | 一键停止 | 停止后无活跃订单、无新报价 | 已完成（引擎撤单测试） |
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
-| Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；v2 等待 12 轮无市场后因安全修复停止，待重启 |
+| Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；v5 主臂/一档实验臂已用 69649e5 重启；实验臂已选中真实市场并挂单 |
 | 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；q50 与 50bps 均转负 |
-| 全量回归 | 97 suites / 475 tests / 0 failures / 0 errors / 2 skipped | 已完成 |
+| 全量回归 | 98 suites / 478 tests / 0 failures / 0 errors / 2 skipped | 已完成 |
 | 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
