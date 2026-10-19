@@ -900,8 +900,9 @@
 
 - 全量：`100 suites / 513 tests / 0 failures / 0 errors / 2 skipped`。
 - 代码提交：`05277a3 fix: harden live CLOB execution and order recovery`；文档提交：`37474ec docs: record live CLOB execution audit`；已推送 `1c9664c..37474ec main -> main`。
-- Spring 冒烟：PID `10360`，`/api/system/health=200`；REST `SHADOW start → status → stop` 全链路通过。
+- Spring 冒烟：PID `24064`，`/api/system/health=200`；REST `SHADOW start → status → stop` 全链路通过。
 - 冒烟市场：`US x Iran ceasefire continues through October 22?`；日志出现 `BUY 0.95 shares=1.05` 的 Shadow 报价；`stop` 实测 `95ms`，无错误。
+- 最新代码重启后二次 REST 冒烟：Spring PID `24064`、health=200、start/status/stop 均成功，`stop=16ms`，未产生订单。
 - 两臂已用本轮代码重启：主臂 Java PID `25924`（wrapper `20468`，spread=2）；实验臂 Java PID `25556`（wrapper `22844`，spread=1）。均处于严格条件等待，输出目录已更新 `watch-process.json`。
 - 当前未授权真实下单；没有产生任何 LIVE 订单。
 - 结论：执行链路新增的已知结构性问题已修复，但策略尾部风险仍未约束，**不能因此宣布可实盘**。

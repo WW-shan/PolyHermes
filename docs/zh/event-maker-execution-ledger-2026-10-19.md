@@ -331,7 +331,8 @@ cd D:\Project\PolyHermes\backend
 
 - 全量测试：`100 suites / 513 tests / 0 failures / 0 errors / 2 skipped`。
 - 提交并推送：`05277a3 fix: harden live CLOB execution and order recovery`、`37474ec docs: record live CLOB execution audit`（`1c9664c..37474ec main -> main`）。
-- Spring：PID `10360`，dev profile，端口 8000，健康检查 200。
+- Spring：PID `24064`，dev profile，端口 8000，健康检查 200。
+- 最新代码重启后二次 REST 冒烟：start/status/stop 成功，`stop=16ms`，未产生订单。
 - REST SHADOW 冒烟：start → status → stop 成功；选中 `US x Iran ceasefire continues through October 22?`，Shadow 报价 `BUY 0.95 shares=1.05`；stop `95ms`，无错误。
 - 两臂已用本轮代码重启：主臂 Java PID `25924`（wrapper `20468`，spread=2）；实验臂 Java PID `25556`（wrapper `22844`，spread=1）；`watch-process.json` 已更新。
 - 本轮没有真实 Live 下单；仍缺用户授权、`accountId`、资金上限、时间窗口和市场范围。
