@@ -1299,3 +1299,9 @@
 - 新增逐单校验：模型 `modelFill=true` 时实际成交股数必须等于订单原始股数；实际超过订单股数或模型未成交却实际成交分别失败/告警。
 - 合成 fixture 验证：模型 full、实际 0 时输出 `fillModelShareMismatch` 且审计退出 1；fixture 已删除。
 - v6 继续运行，未改变 q20、价格带或任何正式门槛。
+### 05:10 已赎回状态必须带交易哈希
+
+- 状态校验原先允许 `REDEEMED` 结算没有交易哈希，重启后无法审计链上赎回。
+- 现在 `EventMakerStateStore` 对 `REDEEMED && transactionHash.isNullOrBlank()` fail-closed。
+- 新增 `EventMakerStateStoreTest` 反例并跑通全量：103 suites / 561 tests / 0 failures / 0 errors / 2 skipped。
+- v6 继续运行，未触碰其构建产物。

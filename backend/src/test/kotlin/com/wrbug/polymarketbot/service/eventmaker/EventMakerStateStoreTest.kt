@@ -131,6 +131,22 @@ class EventMakerStateStoreTest {
         assertEquals("event_maker_state_invalid:settlement_with_inventory:condition", error.message)
     }
 
+    @Test
+    fun `save rejects redeemed settlement without transaction hash`() {
+        val store = EventMakerStateStore(tempDir.resolve("state.json").toString())
+        val settled = settledMarket()
+        val invalidSettlement = settled.settlements!!.single().copy(transactionHash = null)
+        val invalid = persistedState().copy(
+            markets = listOf(settled.copy(settlements = listOf(invalidSettlement)))
+        )
+
+        val error = assertThrows(IllegalStateException::class.java) { store.save(invalid) }
+
+        assertEquals(
+            "event_maker_state_invalid:settlement_values_invalid:condition:settlement:condition:2000",
+            error.message
+        )
+    }
     private fun settledMarket(): EventMakerPersistedMarket {
         val settlement = EventMakerSettlementRecord(
             marketId = "condition",

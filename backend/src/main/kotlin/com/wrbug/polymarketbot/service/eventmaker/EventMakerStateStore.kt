@@ -137,7 +137,9 @@ class EventMakerStateStore(
                 settlement.settledAt < settlement.entryAt ||
                 settlement.outcomeIndex < 0 ||
                 settlement.pnl.isNaN() || settlement.pnl.isInfinite() ||
-                settlement.redemptionStatus !in EventMakerRedemptionStatus.entries
+                settlement.redemptionStatus !in EventMakerRedemptionStatus.entries ||
+                (settlement.redemptionStatus == EventMakerRedemptionStatus.REDEEMED &&
+                    settlement.transactionHash.isNullOrBlank())
             ) {
                 invalid("settlement_values_invalid:${market.conditionId}:${settlement.cycleExitOrderId}")
             }

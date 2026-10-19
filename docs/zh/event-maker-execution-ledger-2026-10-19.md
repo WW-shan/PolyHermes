@@ -591,3 +591,11 @@ cd D:\Project\PolyHermes\backend
 | AUDIT-9 | 实际成交股数越界 fail-closed | 已完成 | 逐单 `actualFillShares` 范围校验 |
 
 - 审计增强不改变 Shadow/Live 策略参数；v6 仍按正式 q20 运行。
+### 05:10 已赎回状态必须带交易哈希
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| STATE-1 | REDEEMED 必须有 transactionHash | 已完成 | `EventMakerStateStoreTest` 反例 |
+| TEST-14 | 隔离 worktree 全量回归 | 已完成 | 103 suites / 561 tests / 0 failures / 0 errors / 2 skipped |
+
+- 该规则保证重启后所有已赎回记录都有链上交易可追溯。
