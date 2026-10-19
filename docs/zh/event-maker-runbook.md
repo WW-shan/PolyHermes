@@ -235,8 +235,11 @@ cd D:\Project\PolyHermes
 - `execution-diagnostics.json` 的 `activeOrders=0`；
 - `haltedReason` 为空且 `lastErrors` 为空；
 - `trades.csv` 中同一 transaction hash/token/side/size 没有重复行；
+- `events.jsonl` 的 placed/canceled 数量与 summary 的 quotesPlaced/cancels 一致；
+- 每个已挂订单都出现在 `execution-diagnostics.json`，且不存在重复 orderId；
 - 有 fill 时 markout 是否写出；
-- 未平库存作为 warning 报告。
+- 未平库存作为 warning 报告；
+- `events.jsonl` 缺失或为空只作为 warning，兼容旧运行产物。
 
 结果写入同目录 `shadow-audit.json`；`failures` 非空时脚本非零退出。
 ## 5. Spring REST 控制

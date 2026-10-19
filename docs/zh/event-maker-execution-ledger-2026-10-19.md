@@ -414,3 +414,5 @@ cd D:\Project\PolyHermes\backend
 
 - 23:06 修复监控脚本状态语义：state=running 现在表示已选中市场并处于挂单/库存阶段；state=discovering 表示已建立 state 文件但尚未选中市场。
 - 当前实跑：markets=1、activeOrders=1、fills=0、cycles=0、inventoryShares=0、phase=BUY_PENDING；shadow-1 因 requote 撤单，shadow-2 BUY 0.975 / 25.64 shares。
+
+- 23:13 审计脚本增加事件一致性：events placed/canceled 与 summary、diagnostics 交叉核对；通过临时 fixture 的正向和负向测试。

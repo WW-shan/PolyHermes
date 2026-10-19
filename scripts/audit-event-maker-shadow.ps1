@@ -143,8 +143,42 @@ if ([int]$summary.fills -ne $stateFills) {
 if ([int]$summary.completedCycles -ne $stateCycles) {
     $failures.Add("summary.completedCycles=$($summary.completedCycles) stateCycles=$stateCycles")
 }
+$eventFile = Join-Path $OutputDir "events.jsonl"
+$eventRows = @()
+if (Test-Path -LiteralPath $eventFile) {
+    $eventRows = @(Get-Content -LiteralPath $eventFile -Encoding UTF8 | Where-Object { $_.Trim().Length -gt 0 } | ForEach-Object { $_ | ConvertFrom-Json })
+}
+$engineEvents = @($eventRows | Where-Object { $_.type -eq 'engine' })
+$placedEvents = @($engineEvents | ForEach-Object { @($_.placed) })
+$canceledEvents = @($engineEvents | ForEach-Object { @($_.canceled) })
+$placedOrderIds = @($placedEvents | ForEach-Object { [string]$_.order.orderId })
+$canceledOrderIds = @($canceledEvents | ForEach-Object { [string]$_.orderId })
+$diagnosticOrderIds = @($execution.orders | ForEach-Object { [string]$_.orderId })
+
 if ($duplicateTradeRows -ne 0) {
     $failures.Add("duplicateTradeRows=$duplicateTradeRows")
+}
+if ($eventRows.Count -eq 0) {
+    $warnings.Add("events.jsonl missing or empty")
+} else {
+    if ($placedEvents.Count -ne [int]$summary.quotesPlaced) {
+        $failures.Add("events.placed=$($placedEvents.Count) summary.quotesPlaced=$($summary.quotesPlaced)")
+    }
+    if ($canceledEvents.Count -ne [int]$summary.cancels) {
+        $failures.Add("events.canceled=$($canceledEvents.Count) summary.cancels=$($summary.cancels)")
+    }
+    $duplicatePlacedOrders = @($placedOrderIds | Group-Object | Where-Object { $_.Count -gt 1 })
+    if ($duplicatePlacedOrders.Count -gt 0) {
+        $failures.Add("duplicatePlacedOrderIds=$($duplicatePlacedOrders.Name -join ',')")
+    }
+    $missingDiagnostics = @($placedOrderIds | Where-Object { $_ -notin $diagnosticOrderIds })
+    if ($missingDiagnostics.Count -gt 0) {
+        $failures.Add("placedOrdersMissingDiagnostics=$($missingDiagnostics -join ',')")
+    }
+    $unknownCancelIds = @($canceledOrderIds | Where-Object { $_ -notin $placedOrderIds })
+    if ($unknownCancelIds.Count -gt 0) {
+        $failures.Add("canceledOrdersNotPlaced=$($unknownCancelIds -join ',')")
+    }
 }
 if ([double]$summary.openInventoryShares -ne 0.0) {
     $warnings.Add("openInventoryShares=$($summary.openInventoryShares)")

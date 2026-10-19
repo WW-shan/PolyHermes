@@ -1120,3 +1120,10 @@
 - 现已读取 state.json：有市场时输出 state=running，并显示 activeOrders、fills、cycles、inventoryShares、phases；有 state 文件但无市场时输出 state=discovering。
 - 当前实跑输出：state=running markets=1 activeOrders=1 fills=0 cycles=0 inventoryShares=0 phases=BUY_PENDING。
 - Shadow 于 22:59 完成一次真实 Shadow 重挂：取消 shadow-1（reason=requote），新挂 shadow-2 BUY 0.975 / 25.64 shares。
+
+### 23:13 Shadow 审计增强
+
+- `audit-event-maker-shadow.ps1` 新增 `events.jsonl` 与 summary/execution diagnostics 的一致性检查。
+- 检查项：quotesPlaced、cancels、重复 orderId、已挂订单缺失 diagnostics、撤销未挂订单。
+- 用临时 fixture 验证：匹配场景 `passed=true`；将 summary.quotesPlaced 改为 3 后审计按预期报 `events.placed=2 summary.quotesPlaced=3` 并非零退出。
+- fixture 已清理，未进入仓库。
