@@ -252,21 +252,22 @@ Content-Type: application/json
 
 {
   "mode": "SHADOW",
-  "maxMarkets": 3,
-  "minVolume24hr": 20000,
+  "maxMarkets": 18,
+  "minVolume24hr": 100000,
   "minRecentTrades30m": 3,
   "minRecentNotional30m": 50,
   "minRecentTradesPerSide30m": 1,
   "minRecentTrades2h": 20,
   "minRecentNotional2h": 500,
   "minRecentTradesPerSide2h": 3,
-  "minRemainingMinutes": 120,
+  "minRemainingMinutes": 720,
+  "maxRemainingMinutes": 10080,
   "allowNegRisk": true,
   "minPrice": 0.97,
   "maxPrice": 0.99,
   "improveTicks": 0,
-  "entryOffsetCents": 0.5,
-  "exitSpreadCents": 2.0,
+  "entryOffsetCents": 0.0,
+  "exitSpreadCents": 1.0,
   "exitImproveTicks": 0,
   "requoteSeconds": 300,
   "maxOrderAgeSeconds": 1800,
@@ -275,11 +276,11 @@ Content-Type: application/json
   "flowGuardMinPriceDropCents": 0.5,
   "orderNotional": 25.0,
   "maxQueueAheadShares": 100000.0,
-  "shadowFillVolumeFactor": 1.0,
+  "shadowFillVolumeFactor": 20.0,
   "minSpreadTicks": 2,
   "maxTotalInventoryNotional": 100.0,
   "maxDailyLoss": 5.0,
-  "maxCyclesPerMarket": 3,
+  "maxCyclesPerMarket": 1,
   "staleBookSeconds": 300,
   "activeOrderStaleBookSeconds": 1800,
   "liveTradingEnabled": false
@@ -330,17 +331,45 @@ POST /api/event-maker/stop
 - 账户全部正数持仓的 conditionId 和数量与状态库存完全一致；
 - 同一 condition 不得出现多个正数持仓资产。
 
-推荐使用专用账户。复制交易或其他策略留下的订单/持仓会让 Event Maker 拒绝启动，这是刻意 fail-closed。Live 请求示例：
+推荐使用专用账户。复制交易或其他策略留下的订单/持仓会让 Event Maker 拒绝启动，这是刻意 fail-closed。以下是“单市场最小 smoke”示例，不是可直接放宽参数的生产配置；必须由用户提供 `accountId`、资金上限、时间窗口、市场范围并明确授权后再执行：
 
 ```json
 {
   "mode": "LIVE",
   "accountId": 1,
   "liveTradingEnabled": true,
-  "maxMarkets": 2,
-  "orderNotional": 10.0,
-  "maxTotalInventoryNotional": 20.0,
-  "maxDailyLoss": 2.0
+  "maxMarkets": 1,
+  "minVolume24hr": 100000,
+  "minRecentTrades30m": 3,
+  "minRecentNotional30m": 50,
+  "minRecentTradesPerSide30m": 1,
+  "minRecentTrades2h": 20,
+  "minRecentNotional2h": 500,
+  "minRecentTradesPerSide2h": 3,
+  "minRemainingMinutes": 720,
+  "maxRemainingMinutes": 10080,
+  "allowNegRisk": true,
+  "minPrice": 0.97,
+  "maxPrice": 0.99,
+  "improveTicks": 0,
+  "entryOffsetCents": 0.0,
+  "exitSpreadCents": 1.0,
+  "exitImproveTicks": 0,
+  "requoteSeconds": 300,
+  "maxOrderAgeSeconds": 1800,
+  "flowGuardWindowSeconds": 3600,
+  "flowGuardMaxSignedFlow": -0.4,
+  "flowGuardMinPriceDropCents": 0.5,
+  "orderNotional": 25.0,
+  "maxQueueAheadShares": 100000.0,
+  "shadowFillVolumeFactor": 20.0,
+  "minSpreadTicks": 2,
+  "maxTotalInventoryNotional": 25.0,
+  "maxDailyLoss": 5.0,
+  "maxCyclesPerMarket": 1,
+  "reconcileSeconds": 2,
+  "staleBookSeconds": 300,
+  "activeOrderStaleBookSeconds": 1800
 }
 ```
 

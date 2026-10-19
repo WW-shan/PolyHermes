@@ -1178,3 +1178,7 @@
 - wrapper PID `3076`，Java PID `23220`，启动 `2026-10-20 00:21:30 +08:00`。
 - 首轮 qualified=1、activityPassed=0、selected=0；原因 `recent_trades_30m_below_min=1`。
 - 当前 waiting，日志 0 异常，stderr 为空；门槛不变。
+### 00:30 运行手册参数对齐
+
+- Shadow 请求示例更新为正式候选：price 0.97–0.99、activity 30m/2h 门槛、remaining 720–10080m、entryOffset 0、exitSpread 1c、fillFactor 20、maxCycles 1、orderNotional 25。
+- Live 示例改为单市场最小 smoke 参数，明确不是放宽门槛；`maxMarkets=1`、`maxTotalInventoryNotional=25`、`maxDailyLoss=5`，并要求用户先提供账户、资金、时间窗口、市场范围和明确授权。
