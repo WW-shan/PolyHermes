@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 561 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已八次挂单并八次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
-> 最后更新：2026-10-20 05:10 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 562 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已八次挂单并八次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 最后更新：2026-10-20 05:25 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -38,7 +38,7 @@
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | 全量 103 suites / 561 tests 通过；新增日锚点、时钟回拨、无买盘估值、结算账本和状态 schema 回归 |
+| 策略核心单元测试 | 已完成 | 全量 103 suites / 562 tests 通过；新增日锚点、时钟回拨、无买盘估值、结算账本和状态 schema 回归 |
 | Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
 | Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
@@ -47,7 +47,7 @@
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
 | 新干净长测 | v2 等待 12 轮无活动通过市场，已因安全修复停止；提交后重启 | `event-maker-shadow-watch-v2-20261019/`；不降低价格带 |
-| 全量测试 | 103 suites / 561 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| 全量测试 | 103 suites / 562 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
 | 一键停止 | stop 先中断在途 OkHttp 调用再撤单；REST 实测 20ms 返回 | `EventMakerStrategyStopTest`、`69649e5` |
 | REST 代理回退 | 未显式配置时回退数据库系统代理；显式配置优先 | `EventMakerStrategyStopTest`、`69649e5` |
 | Live 端到端测试 | 引擎级 mock/恢复/账户级对账已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
@@ -627,3 +627,8 @@ cd D:\Project\PolyHermes\backend
 - 新增 `EventMakerStateStoreTest` 反例：已赎回结算缺失哈希时保存失败，错误为 `settlement_values_invalid`。
 - 隔离 worktree 全量回归：103 suites / 561 tests / 0 failures / 0 errors / 2 skipped。
 - 这保证重启后不会出现“本地认为已赎回、但没有链上交易可审计”的状态。
+### 10.31 2026-10-20 05:25 累计 PnL 不得低于市场 PnL 总和
+
+- `EventMakerStateStore` 现在拒绝 `cumulativeRealizedPnl < sum(markets.realizedPnl)` 的状态，避免恢复基线变成负数并污染日亏损预算。
+- 新增 `EventMakerStateStoreTest` 反例：累计 PnL = -1、市场 PnL = +0.4 时保存失败，错误为 `cumulative_pnl_below_markets`。
+- 隔离 worktree 全量回归：103 suites / 562 tests / 0 failures / 0 errors / 2 skipped。

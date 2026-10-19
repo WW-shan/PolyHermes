@@ -599,3 +599,11 @@ cd D:\Project\PolyHermes\backend
 | TEST-14 | 隔离 worktree 全量回归 | 已完成 | 103 suites / 561 tests / 0 failures / 0 errors / 2 skipped |
 
 - 该规则保证重启后所有已赎回记录都有链上交易可追溯。
+### 05:25 累计 PnL 一致性
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| STATE-2 | cumulativeRealizedPnl 不得低于市场 PnL 总和 | 已完成 | `EventMakerStateStoreTest` 反例 |
+| TEST-15 | 隔离 worktree 全量回归 | 已完成 | 103 suites / 562 tests / 0 failures / 0 errors / 2 skipped |
+
+- 恢复基线不会因损坏状态变成负数，日亏损预算保持可信。

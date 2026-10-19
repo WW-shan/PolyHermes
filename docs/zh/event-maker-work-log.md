@@ -1305,3 +1305,10 @@
 - 现在 `EventMakerStateStore` 对 `REDEEMED && transactionHash.isNullOrBlank()` fail-closed。
 - 新增 `EventMakerStateStoreTest` 反例并跑通全量：103 suites / 561 tests / 0 failures / 0 errors / 2 skipped。
 - v6 继续运行，未触碰其构建产物。
+
+### 05:25 累计 PnL 不得低于市场 PnL 总和
+
+- 发现状态校验没有检查 `cumulativeRealizedPnl` 与各市场 `realizedPnl` 总和的关系；不一致会污染恢复基线和日亏损预算。
+- 新增 fail-closed 校验 `cumulativeRealizedPnl + 1e-6 >= sum(markets.realizedPnl)`。
+- 新增 `EventMakerStateStoreTest` 反例并跑通全量：103 suites / 562 tests / 0 failures / 0 errors / 2 skipped。
+- v6 继续运行，未触碰其构建产物。

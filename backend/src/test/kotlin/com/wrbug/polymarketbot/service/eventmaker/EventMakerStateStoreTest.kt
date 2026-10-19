@@ -147,6 +147,18 @@ class EventMakerStateStoreTest {
             error.message
         )
     }
+    @Test
+    fun `save rejects cumulative pnl below market realized pnl`() {
+        val store = EventMakerStateStore(tempDir.resolve("state.json").toString())
+        val invalid = persistedState().copy(
+            cumulativeRealizedPnl = -1.0,
+            markets = listOf(settledMarket())
+        )
+
+        val error = assertThrows(IllegalStateException::class.java) { store.save(invalid) }
+
+        assertEquals("event_maker_state_invalid:cumulative_pnl_below_markets", error.message)
+    }
     private fun settledMarket(): EventMakerPersistedMarket {
         val settlement = EventMakerSettlementRecord(
             marketId = "condition",
