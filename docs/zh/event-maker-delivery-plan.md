@@ -353,7 +353,7 @@ cd D:\Project\PolyHermes\backend
 | EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID `25556`（wrapper `22844`），`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
 - 最新两臂进程状态以 10.9 节为准；旧行中的 PID 是历史检查点。
-- 当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动，使用提交 `e321f4a` 的最终代码。首轮 qualified=2、activityPassed=0、selected=0，原因 `recent_trades_30m_below_min=2`；当前 `state=waiting`、`logIssues=0`、`stderrBytes=0`。v2–v5 与实验臂仅作为缺陷发现和执行链路证据。
+- 当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）。截至 01:24 为 BUY_PENDING、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
 
 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
 - 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。
@@ -419,7 +419,7 @@ cd D:\Project\PolyHermes\backend
 | OOS-2 | 全窗口配置交集 | 已完成 | 864 配置中仅 2 个通过；正式候选最差窗口 ROI 最高 |
 | GUARD-8 | 同数据同执行模型 A/B | 已完成 | 无 Guard 测试 -0.39% + 1 次归零；Guard +1.058% + 0 归零 |
 | TEST-5 | 全量回归 | 已完成 | 103 suites / 538 tests / 0 failures / 0 errors / 2 skipped |
-| SHADOW-3 | 正式候选 Shadow 长测 | v6 运行中 | wrapper `1252` / Java `22320`，00:53 启动；输出 `event-maker-safe-candidate-shadow-main-v6-20261020/`；当前 waiting |
+| SHADOW-3 | 正式候选 Shadow 长测 | v6 运行中 | 已挂 3 次 Shadow BUY、2 次 requote 撤单；01:21 重挂 `shadow-3` BUY 0.972 / 25.72，queue 5.0；当前 BUY_PENDING、0 fill |
 | LIVE-A13 | 日亏损跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；同日重启沿用，跨日重锚；8 条新增回归 |
 | LIVE-1 | 真实小资金 Live smoke | 未执行 | 缺账户、资金、明确授权、时间窗口、市场范围 |
 
@@ -431,7 +431,7 @@ cd D:\Project\PolyHermes\backend
 - 24h 费用：50bps +0.069%，100bps -0.914%。
 - 尾部统计：93 个零亏损回合，rule-of-three 95% 上界 3.23%，仍高于 1.041% 盈亏平衡线；约需 289 个零亏损独立回合。
 
-当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动，使用提交 `e321f4a` 的最终代码。首轮 qualified=2、activityPassed=0、selected=0，原因 `recent_trades_30m_below_min=2`；当前 `state=waiting`、`logIssues=0`、`stderrBytes=0`。v2–v5 与实验臂仅作为缺陷发现和执行链路证据。
+当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）。截至 01:24 为 BUY_PENDING、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
 
 下一执行顺序：
 
@@ -524,3 +524,16 @@ cd D:\Project\PolyHermes\backend
 - wrapper PID `1252`，Shadow Java PID `22320`，监控 PID `8120`，启动时间 `2026-10-20 00:53:09 +08:00`。
 - 首轮 qualified=2、activityPassed=0、selected=0；原因 `recent_trades_30m_below_min=2`。
 - 当前 waiting、logIssues=0、stderrBytes=0；门槛不变。此后不再改代码，等待 Shadow 结果。
+### 10.20 2026-10-20 01:20 v6 正式 Shadow 执行链路
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| SHADOW-E4 | 正式候选首次真实盘口挂单 | 已完成 | `shadow-1` BUY 0.972 / 25.72，queue 15.05 |
+| SHADOW-E5 | 正式候选 requote 撤单与重挂 | 已完成 | `shadow-2` BUY 0.971 / 25.74，queue 65.04；两次 requote 撤单 |
+| SHADOW-E6 | 价格跌出区间后不追单 | 已完成 | 当前 bid 0.966 < minPrice 0.97，状态 FLAT |
+| SHADOW-E7 | 正式候选真实 fill/cycle | 未完成 | 当前 0 fill、0 cycle；继续等待 |
+| SHADOW-E8 | 价格回归后第三次重挂 | 已完成 | 01:21 bid 回到 0.972；`shadow-3` BUY 0.972 / 25.72，queue 5.0；未放宽门槛 |
+
+- v6 运行期间 `logIssues=0`、`stderrBytes=0`。
+- 未放宽价格带、活动门槛、post-only、队列或亏损限制。
+- 只有出现真实 Shadow fill、SELL/SETTLE cycle 和 markout 后，才可进入下一步 Live 授权讨论。

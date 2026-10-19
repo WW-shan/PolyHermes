@@ -1203,3 +1203,15 @@
 - 数据集：`event-maker-full-v2-7d-20261019-dataset.json.gz`，49,553,423 bytes，SHA-256 `9B8A3F84A3CA47A135ACBE277E018021EC4A2C22DCC7B953E635F07238624424`。
 - 八窗口 summary 各 864 配置；参数邻域 1,008；无 Guard 对照 864。
 - 按正式筛选口径复算，八窗口交集为 2 个配置，与候选报告一致。
+### 01:20 v6 正式候选挂单与重挂
+
+- 01:01 选中 Israel x Iran，bid 0.972 / ask 0.975、3 ticks、queue 15.05。
+- shadow-1：BUY 0.972 / 25.72，LIVE；01:08 因 requote 撤销。
+- shadow-2：BUY 0.971 / 25.74，queue 65.04；01:13 因 requote 撤销。
+- 当前 bid 0.966 低于 minPrice 0.97，状态 FLAT，不追单；0 fill、0 cycle、0 inventory。
+- logIssues=0、stderrBytes=0；门槛不变。
+### 01:24 v6 第三次重挂
+
+- bid 回到 0.972 后挂 shadow-3 BUY 0.972 / 25.72，queue 5.0。
+- 当前 BUY_PENDING、0 fill、0 cycle、0 inventory。
+- 未放宽价格带、活动门槛、post-only、队列或亏损限制。
