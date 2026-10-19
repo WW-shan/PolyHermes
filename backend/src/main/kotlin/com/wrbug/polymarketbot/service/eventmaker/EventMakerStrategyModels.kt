@@ -139,11 +139,15 @@ data class EventMakerLiveOrder(
 )
 
 data class EventMakerPersistedState(
-    val version: Int = 2,
+    val version: Int = 3,
     val mode: String,
     val accountId: Long?,
     val startedAt: Long?,
     val cumulativeRealizedPnl: Double = 0.0,
+    /** UTC epoch day whose daily loss budget [dailyPnlBaseline] belongs to. */
+    val dailyPnlDay: Long? = null,
+    /** Cumulative realized PnL at the start of [dailyPnlDay]. */
+    val dailyPnlBaseline: Double? = null,
     val markets: List<EventMakerPersistedMarket>
 )
 

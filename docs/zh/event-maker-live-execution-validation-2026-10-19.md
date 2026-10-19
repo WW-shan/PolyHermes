@@ -90,6 +90,7 @@ backend/data/event-maker-state.json
 
 - `conditionId`、`favoriteTokenId`；
 - 状态级 `cumulativeRealizedPnl`，跨进程保留已完成市场的已实现 PnL；
+- UTC 日亏损锚点 `dailyPnlDay` / `dailyPnlBaseline`，保证同日重启不重置 `maxDailyLoss`；
 - 活跃订单 ID、方向、价格、原始数量、已成交数量、状态、创建时间；
 - `inventoryShares`、`entryPrice`、`entryAt`；
 - `realizedPnl`、`completedCycles`；
@@ -138,11 +139,11 @@ cd D:\Project\PolyHermes\backend
 .\gradlew.bat test --console=plain
 ```
 
-当前结果（2026-10-19 09:00）：
+当前结果（2026-10-19 23:30，schema v3 日亏损锚点后）：
 
 ```text
-eventmaker/research eventmaker：94 tests，0 failures
-全量：97 suites / 475 tests，0 failures，0 errors，2 skipped
+全量：103 suites / 536 tests，0 failures，0 errors，2 skipped
+定向：DailyPnlBudget / StateStore / LiveEngine / StrategyServiceSafety / StartupRecovery 通过
 ```
 
 ## 8. 剩余风险
@@ -153,5 +154,5 @@ eventmaker/research eventmaker：94 tests，0 failures
 4. 当前账户级校验要求使用专用账户；复制交易或其他策略的活跃订单/持仓会导致 Event Maker 拒绝启动，这是刻意 fail-closed。
 5. 公共成交模拟无法完全还原真实队列位置，Shadow fill 只能作为近似。
 6. 尚未验证真实 maker fee、rebate、流动性奖励和结算/赎回流程。
-7. `maxDailyLoss` 使用跨进程累计已实现 PnL 加当前浮亏，不是自然日重置口径；这是更保守的限制，但需要真实 smoke 验证。
+7. `maxDailyLoss` 已按 UTC 日持久化锚点：同日重启不重置，跨日重锚；schema v2 状态会被拒绝，仍需真实 smoke 验证升级和对账流程。
 8. 实际小资金 smoke 需要用户提供账户并明确授权。

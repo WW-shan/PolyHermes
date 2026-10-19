@@ -76,6 +76,15 @@ class EventMakerStateStore(
             if (state.cumulativeRealizedPnl.isNaN() || state.cumulativeRealizedPnl.isInfinite()) {
                 invalid("cumulative_realized_pnl_invalid")
             }
+            if (state.dailyPnlDay == null || state.dailyPnlDay < 0L) {
+                invalid("daily_pnl_day_invalid")
+            }
+            if (state.dailyPnlBaseline == null ||
+                state.dailyPnlBaseline.isNaN() ||
+                state.dailyPnlBaseline.isInfinite()
+            ) {
+                invalid("daily_pnl_baseline_invalid")
+            }
             val markets = state.markets
             val duplicateIds = markets.groupingBy { it.conditionId }.eachCount().filterValues { it > 1 }.keys
             if (duplicateIds.isNotEmpty()) invalid("duplicate_condition:${duplicateIds.joinToString(",")}")
@@ -136,7 +145,7 @@ class EventMakerStateStore(
     private fun targetPath(): Path = Paths.get(stateFile).toAbsolutePath().normalize()
 
     companion object {
-        const val CURRENT_VERSION = 2
+        const val CURRENT_VERSION = 3
         private val MODES = setOf(EventMakerMode.SHADOW.name, EventMakerMode.LIVE.name)
         private val PHASES = EventMakerPhase.entries.map { it.name }.toSet()
         private val ORDER_SIDES = EventMakerSide.entries.map { it.name }.toSet()

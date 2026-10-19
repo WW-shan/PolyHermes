@@ -1,13 +1,13 @@
 # Event Maker 运行手册与故障处理
 
-> 更新时间：2026-10-19 +08:00  
+> 更新时间：2026-10-19 23:30 +08:00<br>
 > 适用代码：`backend/src/main/kotlin/com/wrbug/polymarketbot/service/eventmaker/`  
 > 计划与验收：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)  
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-19 10:40）：完整池回测最强训练期候选 ROI 约 +0.81%，cluster bootstrap 95% 区间包含 0；q50 和 50bps 费用下转负。keyset 候选发现已修复；一档价差实验臂已首次选中真实市场并挂出 Shadow 买单，等待成交。Live 恢复新增账户级活跃订单/持仓对账、favorite token 校验、逐笔 fill 重放和停止终态确认；`stop` 现在会先中断在途 OkHttp 调用再撤单（REST 实测 20ms 返回），未显式配置时回退数据库系统代理；全量 98 suites / 478 tests 通过。当前仍不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md)、[稳健性交叉核验](event-maker-robustness-crosscheck-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-19 23:30）：正式候选通过 12h–7d 八窗口回测；24h 为 93 cycles、0 结算亏损、ROI +1.052%，但尾部风险上界仍不足。全量 103 suites / 536 tests 通过。日亏损预算已改为持久化 UTC 日锚点：同日重启沿用、跨 UTC 日重锚，旧 v2 状态 fail-closed；v2 Shadow 因发现该缺口而中止（0 fill、无真实订单），待用最终代码重启 v3 Shadow。当前仍不应实盘、不应跟单。证据见 [候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
@@ -322,8 +322,9 @@ POST /api/event-maker/stop
 - 卖出时 CTF 库存和 exchange 授权足够；
 - 订单价格在 tick 上，数量不低于最小订单量；
 - 所有订单 `postOnly=true`、`orderType=GTC`；
-- 状态文件可解析且版本受支持；
+- 状态文件可解析且版本受支持（当前 schema v3）；
 - 状态文件账户与本次 `accountId` 一致；
+- 状态文件包含 UTC 日亏损锚点 `dailyPnlDay` / `dailyPnlBaseline`，且 baseline 为有限值；
 - 状态文件包含 `conditionId` 和 `favoriteTokenId`；
 - 账户全部活跃订单都在状态文件中有登记；
 - 账户全部正数持仓的 conditionId 和数量与状态库存完全一致；
@@ -363,10 +364,11 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 - 活跃订单 ID、方向、价格、原始数量、已成交数量、状态、创建时间；
 - 当前库存、入场价、入场时间；
 - 状态级 `cumulativeRealizedPnl`、当前市场已实现 PnL 和已完成回合；
+- 日亏损锚点 `dailyPnlDay`（UTC epoch day）和 `dailyPnlBaseline`（该日开始的累计已实现 PnL）；
 - 逐笔 fill 和逐回合 cycle；
 - 当前入场订单 ID 和份额。
 
-状态文件不包含私钥或 API 凭证。写入使用临时文件 + 原子替换。读取时会拒绝损坏 JSON、未知版本、错账户状态、缺失 favorite token、重复 condition 和非法订单快照；恢复时会重放逐笔 fill，核对库存、已实现 PnL、完成回合数和 cycle 记录。
+状态文件不包含私钥或 API 凭证。写入使用临时文件 + 原子替换。当前 schema 为 v3；读取时会拒绝 v2/未知版本、损坏 JSON、错账户状态、缺失日亏损锚点、缺失 favorite token、重复 condition 和非法订单快照。恢复时会重放逐笔 fill，核对库存、已实现 PnL、完成回合数和 cycle 记录。
 
 ## 8. 故障处理
 
@@ -411,12 +413,14 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 
 ### 8.4 日亏损触发
 
-行为：停止报价，并在退出清理中尝试撤销所有活跃订单。
+行为：当“今日已实现 PnL + 当前浮亏”达到 `-maxDailyLoss` 时停止报价，并在退出清理中尝试撤销所有活跃订单。
+
+日界使用 UTC。`dailyPnlDay` 和 `dailyPnlBaseline` 会持久化：同一 UTC 日内重启继续扣减当天已经发生的亏损，只有跨 UTC 日才把基线重锚到当时的累计已实现 PnL。缺失或非有限锚点会让状态校验失败。
 
 处理：
 
 1. 检查 `summary` 或 `lastError=daily_loss_limit`；
-2. 核对 realized/unrealized PnL；
+2. 核对 UTC 日锚点、realized/unrealized PnL；
 3. 不调高上限来掩盖异常；
 4. 复盘后再决定是否重启。
 
@@ -462,6 +466,16 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 
 `LivePaperWsClient` 会自动重连。订单状态轮询不依赖 WebSocket。如果断线期间出现订单状态异常，按 8.2 处理。
 
+### 8.9 状态 schema 版本升级
+
+当前 schema v3 新增了日亏损锚点。v2 状态会被明确拒绝，避免升级或重启时无依据地遗忘当天亏损。处理方式：
+
+1. 先停止 LIVE，查询账户活跃订单和正数持仓；
+2. 核对 `event-maker-state.json` 的 `cumulativeRealizedPnl`、fills 和 cycles；
+3. 若有未平订单/持仓，先完成人工对账，不能直接删状态；
+4. 只有在确认账户无订单、无持仓且旧状态无需保留后，才归档旧状态并重新启动；
+5. 不得把“版本不支持”当成自动清仓或重置日亏损预算的许可。
+
 ## 9. 实盘上线门槛
 
 除了账户、资金和用户授权外，策略本身还必须同时满足：
@@ -486,7 +500,7 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 - 50bps 双边 maker fee 下，训练期选参配置总 ROI 为 -0.18%，2 美分价差不足以承受该费用。
 - 已实现回测最大回撤约 146.49 USDC；单次结算亏损 -100 USDC，约等于 52 次平均盈利。
 - Cluster bootstrap 和自然月聚类区间均包含 0，当前约 +0.5%～+1% 的 ROI 不能视为统计显著。
-- `maxDailyLoss` 使用跨进程累计已实现 PnL 加当前浮亏，不是自然日重置口径；这更保守，但仍需真实 smoke 验证。
+- `maxDailyLoss` 按 UTC 日统计并持久化锚点，同日重启不会重置；仍需真实小资金 smoke 验证账户级实现与 UTC 日界是否符合实际运营口径。
 - 账户级启动对账要求使用专用账户；外部订单或持仓会阻止 LIVE 启动。
 - 尚未使用真实账户执行小资金 LIVE smoke。
 - 历史回测使用的是成交打印和队列近似，不是完整 L2 队列重建。

@@ -1127,3 +1127,18 @@
 - 检查项：quotesPlaced、cancels、重复 orderId、已挂订单缺失 diagnostics、撤销未挂订单。
 - 用临时 fixture 验证：匹配场景 `passed=true`；将 summary.quotesPlaced 改为 3 后审计按预期报 `events.placed=2 summary.quotesPlaced=3` 并非零退出。
 - fixture 已清理，未进入仓库。
+
+### 23:20-23:30 日亏损跨重启修复与 v2 Shadow 中止
+
+- 审计发现：`5483d02` 只保证单进程内跨 UTC 日重置，但同日重启时 `resetDailyPnlBaseline(states)` 会把基线设为当前累计 PnL，导致当天已发生亏损被遗忘，可能绕过 `maxDailyLoss`。
+- 修复：
+  - 新增 `EventMakerDailyPnlBudget`：`currentDay` 使用 UTC epoch day；`resolve` 在同日复用持久化 baseline，跨日或缺失时重锚到当前累计已实现 PnL。
+  - state schema 升到 v3，新增 `dailyPnlDay` 和 `dailyPnlBaseline`；缺失、负数 day 或非有限 baseline 均 fail-closed。
+  - 启动恢复改为使用持久化日锚点；对账任务、WS 报价 tick 和停止清理在应用成交之前移动日锚点，防止零点后第一笔亏损被误算入新日基线。
+  - 跨日重置后立即触发状态写入，避免崩溃窗口。
+- 测试：
+  - 新增 `EventMakerDailyPnlBudgetTest` 4 条：同日沿用、跨日重锚、缺失/非法锚点、非有限累计 PnL。
+  - `EventMakerStateStoreTest` 新增缺失日锚点和非有限 baseline 拒绝测试，并验证 v3 日锚点 round-trip。
+  - 全量：`103 suites / 536 tests / 0 failures / 0 errors / 2 skipped`。
+- v2 Shadow（PID 8300 / wrapper 5600）于 23:20 主动停止：运行 29m、1 个市场、2 次 Shadow 挂单、1 次 requote、0 fill、无真实订单。Gradle wrapper 因强制终止记录 exit -1；该目录不作为最终 Shadow 验收。
+- 下一步：提交本修复后，在新目录 `event-maker-safe-candidate-shadow-main-v3-20261019/` 用最终代码重启正式候选 Shadow。

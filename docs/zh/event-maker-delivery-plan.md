@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**数据快照缓存、抓取完整性、回测/Live 最大挂单年龄一致性修复完成；正式候选通过 12h–7d 八窗口回测，8 个窗口全部零结算亏损且训练/测试为正；全量测试 102 suites / 530 tests 通过；正式候选 Shadow 已启动并完成首轮选中，但仍不可实盘**<br>
-> 最后更新：2026-10-19 22:45 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 536 tests 通过；跨进程 UTC 日亏损锚点已修复。v2 正式候选 Shadow 因发现该风控缺口而中止（0 fill、无真实订单），待用最终代码重启 v3 Shadow。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 最后更新：2026-10-19 23:30 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -38,7 +38,7 @@
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | event-maker 定向 140 tests；全量 530 tests 通过 |
+| 策略核心单元测试 | 已完成 | 全量 103 suites / 536 tests 通过；新增日亏损锚点 4 tests 和状态 schema 2 tests |
 | Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
 | Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
@@ -47,7 +47,7 @@
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
 | 新干净长测 | v2 等待 12 轮无活动通过市场，已因安全修复停止；提交后重启 | `event-maker-shadow-watch-v2-20261019/`；不降低价格带 |
-| 全量测试 | 102 suites / 530 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| 全量测试 | 103 suites / 536 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
 | 一键停止 | stop 先中断在途 OkHttp 调用再撤单；REST 实测 20ms 返回 | `EventMakerStrategyStopTest`、`69649e5` |
 | REST 代理回退 | 未显式配置时回退数据库系统代理；显式配置优先 | `EventMakerStrategyStopTest`、`69649e5` |
 | Live 端到端测试 | 引擎级 mock/恢复/账户级对账已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
@@ -353,7 +353,7 @@ cd D:\Project\PolyHermes\backend
 | EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID `25556`（wrapper `22844`），`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
 - 最新两臂进程状态以 10.9 节为准；旧行中的 PID 是历史检查点。
-- 当前 Shadow：`backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/`，首轮选中 Israel x Iran 市场并挂 Shadow BUY `0.976` / `25.61` shares；无真实订单。`logIssues=0`、`stderrBytes=0`。
+- 当前 Shadow：v2 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` 是已主动中止的运行（29m、2 次挂单、1 次 requote、0 fill、无真实订单），不作为最终证据。最终代码将写入新的 v3 输出目录重新开始。
 
 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
 - 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。
@@ -418,8 +418,9 @@ cd D:\Project\PolyHermes\backend
 | OOS-1 | 12h–7d 八窗口 | 已完成 | 正式候选 8 窗口全零结算亏损、训练/测试为正 |
 | OOS-2 | 全窗口配置交集 | 已完成 | 864 配置中仅 2 个通过；正式候选最差窗口 ROI 最高 |
 | GUARD-8 | 同数据同执行模型 A/B | 已完成 | 无 Guard 测试 -0.39% + 1 次归零；Guard +1.058% + 0 归零 |
-| TEST-5 | 全量回归 | 已完成 | 102 suites / 530 tests / 0 failures / 0 errors / 2 skipped |
-| SHADOW-3 | 正式候选 Shadow 长测 | 运行中 | wrapper `5600` / Java `8300`；首轮 selected=1；输出 `event-maker-safe-candidate-shadow-main-v2-20261019/` |
+| TEST-5 | 全量回归 | 已完成 | 103 suites / 536 tests / 0 failures / 0 errors / 2 skipped |
+| SHADOW-3 | 正式候选 Shadow 长测 | v2 已中止，待 v3 重启 | v2 wrapper `5600` / Java `8300` 运行 29m，0 fill；发现日亏损重启缺口后主动停止，产物保留但不作为最终证据 |
+| LIVE-A13 | 日亏损跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；同日重启沿用，跨日重锚；6 条新增回归 |
 | LIVE-1 | 真实小资金 Live smoke | 未执行 | 缺账户、资金、明确授权、时间窗口、市场范围 |
 
 当前检查点：
@@ -430,7 +431,7 @@ cd D:\Project\PolyHermes\backend
 - 24h 费用：50bps +0.069%，100bps -0.914%。
 - 尾部统计：93 个零亏损回合，rule-of-three 95% 上界 3.23%，仍高于 1.041% 盈亏平衡线；约需 289 个零亏损独立回合。
 
-当前 Shadow：`backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/`，首轮选中 Israel x Iran 市场并挂 Shadow BUY `0.976` / `25.61` shares；无真实订单。`logIssues=0`、`stderrBytes=0`。
+当前 Shadow：v2 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` 是已主动中止的运行（29m、2 次挂单、1 次 requote、0 fill、无真实订单），不作为最终证据。最终代码将写入新的 v3 输出目录重新开始。
 
 下一执行顺序：
 
@@ -445,3 +446,17 @@ cd D:\Project\PolyHermes\backend
 - 推送：`9fd75e5..93e4ccc main -> main`。
 - 内容：数据快照/原子写入、严格抓取、回测最大挂单年龄一致性、8 窗口候选回测、参数邻域、Shadow 参数、全量 530 tests 和运行文档。
 - 提交后 Shadow 继续运行，运行期间不重新编译。
+### 10.12 2026-10-19 23:30 日亏损重启语义修复与 Shadow 重启
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| RISK-DAY-1 | 同日重启不得清零 `maxDailyLoss` | 已完成 | state v3 持久化 `dailyPnlDay` / `dailyPnlBaseline`；同日沿用锚点 |
+| RISK-DAY-2 | UTC 跨日必须重置日亏损预算 | 已完成 | `EventMakerDailyPnlBudget.resolve`；跨日重锚到当前累计已实现 PnL |
+| RISK-DAY-3 | 跨午夜成交不得被新日基线吞掉 | 已完成 | 对账、报价与停止清理在应用成交前同步日锚点；持久化只写已确定锚点 |
+| RISK-DAY-4 | 状态文件必须 fail-closed 校验日锚点 | 已完成 | v2 state 被拒；缺失/非有限 day/baseline 被拒 |
+| TEST-6 | 全量回归 | 已完成 | 103 suites / 536 tests / 0 failures / 0 errors / 2 skipped |
+
+- v2 Shadow 于 22:51 启动，23:20 主动停止；运行 29 分钟、1 个市场、2 次 Shadow 挂单、1 次 requote、0 fill、无真实订单。
+- 主动停止原因：发现同日重启会遗忘当天已实现亏损，可能在崩溃恢复后绕过日亏损上限。
+- 修复后必须重启 v3 Shadow；v2 产物只作为“发现缺陷”的过程证据，不能作为最终 Shadow 验收。
+- 真实 Live smoke 仍等待用户提供 `accountId`、资金上限、明确授权、时间窗口和市场范围。

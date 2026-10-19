@@ -74,7 +74,7 @@ class EventMakerStateStoreTest {
         val path = tempDir.resolve("state.json")
         Files.writeString(
             path,
-            """{"version":2,"mode":"LIVE","accountId":null,"markets":[],"startedAt":1000}"""
+            """{"version":3,"mode":"LIVE","accountId":null,"markets":[],"startedAt":1000}"""
         )
         val store = EventMakerStateStore(path.toString())
 
@@ -83,10 +83,37 @@ class EventMakerStateStoreTest {
         assertEquals("event_maker_state_invalid:live_account_missing", error.message)
     }
 
+    @Test
+    fun `load rejects live state without a daily pnl anchor`() {
+        val path = tempDir.resolve("state.json")
+        Files.writeString(
+            path,
+            """{"version":3,"mode":"LIVE","accountId":7,"markets":[],"startedAt":1000}"""
+        )
+        val store = EventMakerStateStore(path.toString())
+
+        val error = assertThrows(IllegalStateException::class.java) { store.load() }
+
+        assertEquals("event_maker_state_invalid:daily_pnl_day_invalid", error.message)
+    }
+
+    @Test
+    fun `save rejects non-finite daily pnl baseline`() {
+        val store = EventMakerStateStore(tempDir.resolve("state.json").toString())
+        val invalid = persistedState().copy(dailyPnlBaseline = Double.NaN)
+
+        val error = assertThrows(IllegalStateException::class.java) { store.save(invalid) }
+
+        assertEquals("event_maker_state_invalid:daily_pnl_baseline_invalid", error.message)
+    }
+
     private fun persistedState() = EventMakerPersistedState(
         mode = "LIVE",
         accountId = 7L,
         startedAt = 1_000L,
+        cumulativeRealizedPnl = 1.25,
+        dailyPnlDay = 20_000L,
+        dailyPnlBaseline = 0.75,
         markets = listOf(
             EventMakerPersistedMarket(
                 conditionId = "condition",

@@ -48,6 +48,8 @@ class EventMakerStrategyServiceSafetyTest {
                 mode = EventMakerMode.LIVE.name,
                 accountId = 99L,
                 startedAt = 1_000L,
+                dailyPnlDay = 20_000L,
+                dailyPnlBaseline = 0.0,
                 markets = emptyList()
             )
         )
@@ -140,6 +142,8 @@ class EventMakerStrategyServiceSafetyTest {
                 mode = EventMakerMode.LIVE.name,
                 accountId = 1L,
                 startedAt = 1_000L,
+                dailyPnlDay = 20_000L,
+                dailyPnlBaseline = 0.0,
                 markets = listOf(persistedMarket)
             )
         )
@@ -163,6 +167,8 @@ class EventMakerStrategyServiceSafetyTest {
             accountId = 1L,
             startedAt = 1_000L,
             cumulativeRealizedPnl = 1.25,
+            dailyPnlDay = 20_000L,
+            dailyPnlBaseline = 0.0,
             markets = emptyList()
         )
 

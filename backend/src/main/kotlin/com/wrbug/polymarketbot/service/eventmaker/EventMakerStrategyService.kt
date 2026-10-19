@@ -183,13 +183,16 @@ class EventMakerStrategyService(
         val stoppedMode = status.mode
         val stoppedStartedAt = status.startedAt
         if (engine != null && accountId != null && states.isNotEmpty()) {
+            // Cancel/reconcile may discover fills from the new UTC day. Capture the
+            // day boundary before those fills are applied.
+            rollDailyPnlBaseline(engine, states)
             val cancelResult = runBlocking { engine.cancelAll(states, accountId) }
             if (cancelResult.errors.isNotEmpty()) {
                 status = status.copy(lastError = cancelResult.errors.joinToString(";"))
             }
         }
-        if (stoppedMode == EventMakerMode.LIVE && accountId != null && states.isNotEmpty()) {
-            runCatching { persistLive(stoppedStartedAt, accountId, states) }
+        if (stoppedMode == EventMakerMode.LIVE && engine != null && accountId != null && states.isNotEmpty()) {
+            runCatching { persistLive(stoppedStartedAt, accountId, states, engine) }
                 .onFailure {
                     logger.warn("Failed to persist stopped event-maker state", it)
                     status = status.copy(lastError = "stop_state_persist_failed:${it.message}")
@@ -371,9 +374,15 @@ class EventMakerStrategyService(
             executionPort,
             initialRealizedPnl = realizedPnlBaseline
         )
-        engine.resetDailyPnlBaseline(states)
+        val restoredDailyAnchor = EventMakerDailyPnlBudget.resolve(
+            now = System.currentTimeMillis(),
+            persistedDay = persisted?.dailyPnlDay,
+            persistedBaseline = persisted?.dailyPnlBaseline,
+            totalRealizedPnl = engine.initialRealizedPnl + states.sumOf { it.realizedPnl }
+        )
+        engine.dailyPnlBaseline = restoredDailyAnchor.baseline
         primeFlowGuard(engine, client, discovered)
-        dailyBaselineDay = currentDayKey()
+        dailyBaselineDay = restoredDailyAnchor.day
         engine.registerRestoredOrders(states, accountId)
         currentEngine = engine
 
@@ -407,10 +416,13 @@ class EventMakerStrategyService(
             while (isActive) {
                 delay(config.reconcileSeconds * 1000L)
                 stateMutex.withLock {
+                    // Roll the daily anchor before order reconciliation can apply
+                    // the first fill of a new UTC day.
+                    rollDailyPnlBaseline(engine, states)
                     val result = runEngineTick(engine, states, books, accountId)
                     applyEngineResult(result)
                     updateStatus(states, books, trades, bookUpdates)
-                    persistLive(status.startedAt, accountId, states)
+                    persistLive(status.startedAt, accountId, states, engine)
                     lastPersistAt = System.currentTimeMillis()
                 }
             }
@@ -420,10 +432,11 @@ class EventMakerStrategyService(
         ensureNoUnmanagedPositions(accountId, persisted)
 
         stateMutex.withLock {
+            rollDailyPnlBaseline(engine, states)
             val initial = runEngineTick(engine, states, books, accountId)
             applyEngineResult(initial)
             updateStatus(states, books, trades, bookUpdates)
-            persistLive(status.startedAt, accountId, states)
+            persistLive(status.startedAt, accountId, states, engine)
         }
         try {
             for (event in channel) {
@@ -431,7 +444,11 @@ class EventMakerStrategyService(
                 var shouldStop = false
                 var stateChanged = false
                 var duplicateTrade = false
+                var dailyAnchorRolled: Boolean
                 stateMutex.withLock {
+                    // The anchor must move before quote/risk evaluation so a new
+                    // UTC day never quotes against yesterday's loss budget.
+                    dailyAnchorRolled = rollDailyPnlBaseline(engine, states)
                     when (event) {
                         is LiveFeedEvent.BookUpdated -> {
                             books[event.book.tokenId] = event.book
@@ -473,12 +490,11 @@ class EventMakerStrategyService(
                 }
                 updateStatus(states, books, trades, bookUpdates)
                 val now = System.currentTimeMillis()
-                if (stateChanged || now - lastPersistAt >= LIVE_PERSIST_INTERVAL_MS) {
-                    persistLive(status.startedAt, accountId, states)
+                if (stateChanged || dailyAnchorRolled || now - lastPersistAt >= LIVE_PERSIST_INTERVAL_MS) {
+                    persistLive(status.startedAt, accountId, states, engine)
                     lastPersistAt = now
                 }
                 if (shouldStop) break
-                rollDailyPnlBaseline(engine, states)
                 if (riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))) {
                     status = status.copy(lastError = "daily_loss_limit")
                     break
@@ -492,10 +508,11 @@ class EventMakerStrategyService(
             withContext(NonCancellable) {
                 try {
                     stateMutex.withLock {
+                        rollDailyPnlBaseline(engine, states)
                         val cleanup = engine.cancelAll(states, accountId)
                         applyEngineResult(cleanup)
                         updateStatus(states, books, trades, bookUpdates)
-                        persistLive(status.startedAt, accountId, states)
+                        persistLive(status.startedAt, accountId, states, engine)
                     }
                 } catch (e: Exception) {
                     logger.error("Failed to cancel and persist live event-maker state during shutdown", e)
@@ -793,7 +810,8 @@ class EventMakerStrategyService(
     }
 
     /** Rolling day key (UTC) used to scope the daily loss budget. */
-    private fun currentDayKey(now: Long = System.currentTimeMillis()): Long = now / 86_400_000L
+    private fun currentDayKey(now: Long = System.currentTimeMillis()): Long =
+        EventMakerDailyPnlBudget.currentDay(now)
 
     @Volatile
     private var dailyBaselineDay: Long = currentDayKey()
@@ -802,25 +820,42 @@ class EventMakerStrategyService(
      * Advances the engine's daily PnL baseline when the UTC day rolls over, so
      * `maxDailyLoss` measures today's loss instead of the whole run's loss.
      */
-    private fun rollDailyPnlBaseline(engine: EventMakerLiveEngine, states: List<EventMakerLiveState>) {
-        val today = currentDayKey()
-        if (today != dailyBaselineDay) {
-            dailyBaselineDay = today
-            engine.resetDailyPnlBaseline(states)
-            logger.info("Event maker daily loss budget reset for day=$today")
-        }
+    private fun rollDailyPnlBaseline(
+        engine: EventMakerLiveEngine,
+        states: List<EventMakerLiveState>,
+        now: Long = System.currentTimeMillis()
+    ): Boolean {
+        val totalRealizedPnl = engine.initialRealizedPnl + states.sumOf { it.realizedPnl }
+        val anchor = EventMakerDailyPnlBudget.resolve(
+            now = now,
+            persistedDay = dailyBaselineDay,
+            persistedBaseline = engine.dailyPnlBaseline,
+            totalRealizedPnl = totalRealizedPnl
+        )
+        if (anchor.day == dailyBaselineDay) return false
+        dailyBaselineDay = anchor.day
+        engine.dailyPnlBaseline = anchor.baseline
+        logger.info("Event maker daily loss budget reset for day=${anchor.day}")
+        return true
     }
 
     private fun dailyPnlSinceBaseline(engine: EventMakerLiveEngine, states: List<EventMakerLiveState>): Double =
         engine.initialRealizedPnl + states.sumOf { it.realizedPnl } + status.unrealizedPnl - engine.dailyPnlBaseline
 
-    private fun persistLive(startedAt: Long?, accountId: Long, states: List<EventMakerLiveState>) {
+    private fun persistLive(
+        startedAt: Long?,
+        accountId: Long,
+        states: List<EventMakerLiveState>,
+        engine: EventMakerLiveEngine
+    ) {
         stateStore.save(
             EventMakerPersistedState(
                 mode = EventMakerMode.LIVE.name,
                 accountId = accountId,
                 startedAt = startedAt,
                 cumulativeRealizedPnl = realizedPnlBaseline + states.sumOf { it.realizedPnl },
+                dailyPnlDay = dailyBaselineDay,
+                dailyPnlBaseline = engine.dailyPnlBaseline,
                 markets = states.map { it.toPersisted() }
             )
         )

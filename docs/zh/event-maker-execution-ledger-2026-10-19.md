@@ -1,6 +1,6 @@
 # Event Maker 执行台账（2026-10-19）
 
-> 最后更新：2026-10-19 22:52 +08:00
+> 最后更新：2026-10-19 23:30 +08:00
 > 目的：把目标、计划、实际动作、命令、结果、证据和恢复步骤持续写入仓库，避免依赖聊天记忆。
 > 当前状态：**进行中，不得标记完成**
 > 权威计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
@@ -29,7 +29,7 @@
 | ID | 任务 | 状态 | 验收证据 |
 |---|---|---|---|
 | DOC-1 | 建立可恢复执行台账，记录计划、动作和证据 | 已完成 | 本文件、计划、工作日志 |
-| OBS-1 | 干净长测真实盘口 Shadow | 运行中 | 正式候选首轮 selected=1；输出 `event-maker-safe-candidate-shadow-main-v2-20261019/` |
+| OBS-1 | 干净长测真实盘口 Shadow | 待 v3 重启 | v2 已中止且 0 fill；最终代码回归后使用 `event-maker-safe-candidate-shadow-main-v3-20261019/` |
 | DISC-1 | 修复 Gamma 市场发现分页与候选截断 | 已完成 | keyset 分页、价格带预筛、候选诊断、5 个测试 |
 | BT-1 | 审核 1,000 市场稳健回测样本、分布和异常 | 已完成 | 正式报告、full/full-v2 CSV |
 | BT-2 | 费用、队列和年份样本外敏感性测试 | 已完成 | `event-maker-queue-grid-full-v2-20261019-fee-sensitivity.csv`、正式报告 |
@@ -42,14 +42,15 @@
 | SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 475 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
 | GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
-| OBS-4 | 正式候选 Shadow 长测 | 运行中 | wrapper 5600 / Java 8300；开始 22:51；不降低门槛 |
+| OBS-4 | 正式候选 Shadow 长测 | v2 已中止，待 v3 重启 | v2 运行 29m、0 fill；发现日亏损重启缺口后主动停止 |
+| RISK-DAY-1 | 日亏损锚点跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；103 suites / 536 tests 通过 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
 ## 3. 最近后台进程与状态
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| 正式候选 Shadow | 5600 / 8300 | 22:51 | 等待最多 720m；选出后 Shadow 720m | `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` | 已选中 1 个市场并挂 Shadow BUY；`logIssues=0`、`stderrBytes=0` |
+| 正式候选 Shadow v2 | 5600 / 8300 | 22:51 | 23:20 主动中止 | `backend/build/research/event-maker-safe-candidate-shadow-main-v2-20261019/` | 29m、2 次挂单、1 次 requote、0 fill；发现日亏损重启缺口后停止，不作为最终证据 |
 | v5 等待+Shadow 主臂 | 25560 | 09:32 | 等待最多 720m；选出后 Shadow 720m | `backend/build/research/event-maker-shadow-watch-v5-20261019/` | waiting；严格参数；窗口按 time-to-fill 分布延长 |
 | 一档价差实验臂 | 15356 | 09:32 | 同上 | `backend/build/research/event-maker-shadow-experiment-spread1-v2-20261019/` | waiting；唯一变量 `minSpreadTicks=1`；不混入正式验证 |
 | v3 等待+Shadow 任务 | 6296 / 7788 | 09:06 | 09:10 已停止 | `backend/build/research/event-maker-shadow-watch-v3-20261019/` | 因持仓数量精确对账修复停止 |
@@ -416,3 +417,13 @@ cd D:\Project\PolyHermes\backend
 - 当前实跑：markets=1、activeOrders=1、fills=0、cycles=0、inventoryShares=0、phase=BUY_PENDING；shadow-1 因 requote 撤单，shadow-2 BUY 0.975 / 25.64 shares。
 
 - 23:13 审计脚本增加事件一致性：events placed/canceled 与 summary、diagnostics 交叉核对；通过临时 fixture 的正向和负向测试。
+
+### 23:30 日亏损跨重启修复与 v2 Shadow 中止
+
+- 审计发现 `maxDailyLoss` 虽已在单进程内按 UTC 日重置，但同日重启会把日预算基线重新设为当前累计 PnL，从而遗忘当天已发生亏损。
+- 已在 state schema v3 新增 `dailyPnlDay` 和 `dailyPnlBaseline`：同日重启沿用锚点，跨日重锚到当前累计已实现 PnL。
+- 对账任务、WS 报价 tick 和停止清理会在任何可能应用成交的操作之前同步日锚点，避免零点后的第一笔亏损被新日基线吞掉；持久化只写已确定锚点，缺失或非有限锚点 fail-closed。
+- 新增 `EventMakerDailyPnlBudgetTest` 4 条测试；`EventMakerStateStoreTest` 增加缺失锚点、非有限 baseline 和 v3 round-trip 覆盖。
+- 全量测试：103 suites / 536 tests / 0 failures / 0 errors / 2 skipped。
+- v2 Shadow PID 8300 / wrapper 5600 于 23:20 主动停止；运行 29m、2 次 Shadow 挂单、1 次 requote、0 fill、无真实订单。强制停止使 Gradle 记录 exit -1，v2 产物不作为最终验收。
+- 下一步：提交本修复，使用最终代码在新 v3 输出目录重启正式候选 Shadow。

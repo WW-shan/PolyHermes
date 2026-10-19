@@ -140,6 +140,8 @@ class EventMakerStartupRecoveryTest {
         mode = EventMakerMode.LIVE.name,
         accountId = 7L,
         startedAt = 1_000L,
+        dailyPnlDay = 20_000L,
+        dailyPnlBaseline = 0.0,
         markets = listOf(market)
     )
 
