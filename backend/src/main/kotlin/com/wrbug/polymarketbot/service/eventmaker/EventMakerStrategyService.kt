@@ -143,6 +143,13 @@ class EventMakerStrategyService(
             } catch (e: Exception) {
                 if (runId == generation.get()) {
                     logger.error("Event maker run failed: mode=${config.mode}", e)
+                    // A setup failure can happen before the mode-specific finally
+                    // block is installed. Close every run-owned resource and cancel
+                    // child jobs before publishing the failed status.
+                    runScope?.cancel()
+                    feedChannel?.close()
+                    wsClient?.close()
+                    dataClient?.close()
                     status = status.copy(
                         running = false,
                         stoppedAt = System.currentTimeMillis(),
@@ -396,8 +403,11 @@ class EventMakerStrategyService(
             onStatus = { logger.info("Event maker live WS: $it") }
         )
         wsClient = ws
-        ws.start()
-        val pollJob = runScope?.launch {
+        var pollJob: Job? = null
+        var reconcileJob: Job? = null
+        try {
+            ws.start()
+            pollJob = runScope?.launch {
             val lastSeen = mutableMapOf<String, Long>()
             while (isActive) {
                 delay(config.pollSeconds * 1000L)
@@ -412,7 +422,7 @@ class EventMakerStrategyService(
             }
         }
         var lastPersistAt = System.currentTimeMillis()
-        val reconcileJob = runScope?.launch {
+        reconcileJob = runScope?.launch {
             while (isActive) {
                 delay(config.reconcileSeconds * 1000L)
                 var closeFeed: Boolean
@@ -455,8 +465,7 @@ class EventMakerStrategyService(
             persistLive(status.startedAt, accountId, states, engine)
         }
         if (initialHalt) feedChannel?.close()
-        try {
-            for (event in channel) {
+        for (event in channel) {
                 if (runId != generation.get()) break
                 var shouldStop = false
                 var stateChanged = false

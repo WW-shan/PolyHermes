@@ -1164,3 +1164,10 @@
 - wrapper PID `21352`，Java PID `17312`，启动 `2026-10-20 00:03:45 +08:00`。
 - 首两轮 qualified=1、activityPassed=0、selected=0；原因 `sell_trades_30m_below_min=1` / `recent_trades_30m_below_min=1`。
 - 当前 waiting，日志 0 异常，stderr 为空；严格门槛不变。
+### 00:20 初始下单阶段清理边界
+
+- 发现 `runLive` 的旧 try/finally 从主事件循环才开始，而初始 reconcile/quote 已经可能真实下单；首次 `persistLive` 失败会绕过撤单清理。
+- 已把 try/finally 前移到 `ws.start()` 之前，覆盖 WS 启动、子任务、初始对账/下单、初始持久化和主循环。
+- 外层 run job 失败 catch 现在取消 runScope 并关闭 feed、WS、data client。
+- 全量测试：103 suites / 538 tests / 0 failures / 0 errors / 2 skipped。
+- v4 Shadow 运行约 15m，11 轮严格发现均 activityPassed=0、selected=0，随后主动停止；未产生 Shadow 订单或真实订单。
