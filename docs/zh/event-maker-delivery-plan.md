@@ -353,7 +353,7 @@ cd D:\Project\PolyHermes\backend
 | EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID `25556`（wrapper `22844`），`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
 - 最新两臂进程状态以 10.9 节为准；旧行中的 PID 是历史检查点。
-- 当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）；01:26 `shadow-3` 再次 requote 撤销。02:21 重挂 `shadow-4` BUY 0.970 / 25.77（queue 25.0），02:30 requote 后挂 `shadow-5` BUY 0.971 / 25.74（queue 20.03），02:35 requote 后挂 `shadow-6` BUY 0.970 / 25.77（queue 485.03），02:56 再次 requote 撤销。截至 03:05 为 FLAT、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
+- 当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）；01:26 `shadow-3` 再次 requote 撤销。02:21 重挂 `shadow-4` BUY 0.970 / 25.77（queue 25.0），02:30 requote 后挂 `shadow-5` BUY 0.971 / 25.74（queue 20.03），02:35 requote 后挂 `shadow-6` BUY 0.970 / 25.77（queue 485.03），02:56 再次 requote 撤销；03:23 挂 `shadow-7` BUY 0.973 / 25.69（queue 6.18），03:28 requote 撤销；03:45 挂 `shadow-8` BUY 0.970 / 25.77（queue 105.70），03:50 requote 撤销。截至 04:55 为 FLAT、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
 
 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
 - 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。
@@ -431,7 +431,7 @@ cd D:\Project\PolyHermes\backend
 - 24h 费用：50bps +0.069%，100bps -0.914%。
 - 尾部统计：93 个零亏损回合，rule-of-three 95% 上界 3.23%，仍高于 1.041% 盈亏平衡线；约需 289 个零亏损独立回合。
 
-当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）；01:26 `shadow-3` 再次 requote 撤销。02:21 重挂 `shadow-4` BUY 0.970 / 25.77（queue 25.0），02:30 requote 后挂 `shadow-5` BUY 0.971 / 25.74（queue 20.03），02:35 requote 后挂 `shadow-6` BUY 0.970 / 25.77（queue 485.03），02:56 再次 requote 撤销。截至 03:05 为 FLAT、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
+当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动。01:01 挂 `shadow-1` BUY 0.972 / 25.72（queue 15.05）；01:08 因 requote 撤销并挂 `shadow-2` BUY 0.971 / 25.74（queue 65.04）；01:13 再次 requote 撤销；01:21 bid 回到 0.972 后重挂 `shadow-3` BUY 0.972 / 25.72（queue 5.0）；01:26 `shadow-3` 再次 requote 撤销。02:21 重挂 `shadow-4` BUY 0.970 / 25.77（queue 25.0），02:30 requote 后挂 `shadow-5` BUY 0.971 / 25.74（queue 20.03），02:35 requote 后挂 `shadow-6` BUY 0.970 / 25.77（queue 485.03），02:56 再次 requote 撤销；03:23 挂 `shadow-7` BUY 0.973 / 25.69（queue 6.18），03:28 requote 撤销；03:45 挂 `shadow-8` BUY 0.970 / 25.77（queue 105.70），03:50 requote 撤销。截至 04:55 为 FLAT、0 fill、0 cycle。`logIssues=0`、`stderrBytes=0`。
 
 下一执行顺序：
 
