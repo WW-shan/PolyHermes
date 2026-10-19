@@ -2,7 +2,7 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 538 tests 通过；跨进程 UTC 日亏损锚点已修复。v2 正式候选 Shadow 因发现该风控缺口而中止（0 fill、无真实订单），v3 Shadow 已启动但在后续对账停机/无买盘估值审计后被主动停止；v4 Shadow 在后续审计发现初始下单阶段清理边界缺口后停止；v5 已选中市场但被 Guard 阻止挂单，实验中暴露审计误分类后停止；v6 待最终提交后重启。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 538 tests 通过；跨进程 UTC 日亏损锚点已修复。v2 正式候选 Shadow 因发现该风控缺口而中止（0 fill、无真实订单），v3 Shadow 已启动但在后续对账停机/无买盘估值审计后被主动停止；v4 Shadow 在后续审计发现初始下单阶段清理边界缺口后停止；v5 已选中市场但被 Guard 阻止挂单，实验暴露审计误分类；修复后 v6 已于 00:53 启动并严格等待。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
 > 最后更新：2026-10-19 23:30 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
@@ -353,7 +353,7 @@ cd D:\Project\PolyHermes\backend
 | EXP-1 | 一档价差独立实验臂（只读，不混入正式验证） | 运行中 | Java PID `25556`（wrapper `22844`），`minSpreadTicks=1`，输出 `event-maker-shadow-experiment-spread1-v2-20261019/` |
 
 - 最新两臂进程状态以 10.9 节为准；旧行中的 PID 是历史检查点。
-- 当前 Shadow：v5 在第 17 轮选中 Israel 市场（bid 0.970 / ask 0.975、5 ticks、队列 6.87 股），但随后连续被 adverse-flow Guard 阻止，未挂单。实验臂（唯一差异 minSpreadTicks=1）已产生 `shadow-1` BUY 0.972 / 25.72 股，并在 5 秒后因 adverse_flow 撤销，0 fill。实验暴露 `flow_guard_blocked` 被误记为 fatal lastErrors；修复后需启动 v6 正式 Shadow。
+- 当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动，使用提交 `e321f4a` 的最终代码。首轮 qualified=2、activityPassed=0、selected=0，原因 `recent_trades_30m_below_min=2`；当前 `state=waiting`、`logIssues=0`、`stderrBytes=0`。v2–v5 与实验臂仅作为缺陷发现和执行链路证据。
 
 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
 - 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。
@@ -419,7 +419,7 @@ cd D:\Project\PolyHermes\backend
 | OOS-2 | 全窗口配置交集 | 已完成 | 864 配置中仅 2 个通过；正式候选最差窗口 ROI 最高 |
 | GUARD-8 | 同数据同执行模型 A/B | 已完成 | 无 Guard 测试 -0.39% + 1 次归零；Guard +1.058% + 0 归零 |
 | TEST-5 | 全量回归 | 已完成 | 103 suites / 538 tests / 0 failures / 0 errors / 2 skipped |
-| SHADOW-3 | 正式候选 Shadow 长测 | v5 已中止，待 v6 | v5 已选中 Israel 市场但连续 flow guard 阻止；修复审计分类后重启 |
+| SHADOW-3 | 正式候选 Shadow 长测 | v6 运行中 | wrapper `1252` / Java `22320`，00:53 启动；输出 `event-maker-safe-candidate-shadow-main-v6-20261020/`；当前 waiting |
 | LIVE-A13 | 日亏损跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；同日重启沿用，跨日重锚；8 条新增回归 |
 | LIVE-1 | 真实小资金 Live smoke | 未执行 | 缺账户、资金、明确授权、时间窗口、市场范围 |
 
@@ -431,7 +431,7 @@ cd D:\Project\PolyHermes\backend
 - 24h 费用：50bps +0.069%，100bps -0.914%。
 - 尾部统计：93 个零亏损回合，rule-of-three 95% 上界 3.23%，仍高于 1.041% 盈亏平衡线；约需 289 个零亏损独立回合。
 
-当前 Shadow：v5 在第 17 轮选中 Israel 市场（bid 0.970 / ask 0.975、5 ticks、队列 6.87 股），但随后连续被 adverse-flow Guard 阻止，未挂单。实验臂（唯一差异 minSpreadTicks=1）已产生 `shadow-1` BUY 0.972 / 25.72 股，并在 5 秒后因 adverse_flow 撤销，0 fill。实验暴露 `flow_guard_blocked` 被误记为 fatal lastErrors；修复后需启动 v6 正式 Shadow。
+当前 Shadow：v6 目录 `backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/` 于 00:53 启动，使用提交 `e321f4a` 的最终代码。首轮 qualified=2、activityPassed=0、selected=0，原因 `recent_trades_30m_below_min=2`；当前 `state=waiting`、`logIssues=0`、`stderrBytes=0`。v2–v5 与实验臂仅作为缺陷发现和执行链路证据。
 
 下一执行顺序：
 
@@ -517,3 +517,10 @@ cd D:\Project\PolyHermes\backend
 - 实验臂仅将 `minSpreadTicks` 改为 1，不进入正式验收，也不得作为放宽正式门槛的理由。
 - v5 正式臂与实验臂均在 00:50 主动停止；v6 使用修复后的最终代码重启。
 - 实验臂期间出现 Data API/WS 短暂握手失败，随后自动重连并恢复正常；该外部瞬态不作为策略状态错误，但需在最终审计中单独记录。
+### 10.19 2026-10-20 00:54 v6 Shadow 启动
+
+- 提交 `e321f4a fix: separate expected shadow guard blocks from errors` 已推送。
+- v6 输出目录：`backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/`。
+- wrapper PID `1252`，Shadow Java PID `22320`，监控 PID `8120`，启动时间 `2026-10-20 00:53:09 +08:00`。
+- 首轮 qualified=2、activityPassed=0、selected=0；原因 `recent_trades_30m_below_min=2`。
+- 当前 waiting、logIssues=0、stderrBytes=0；门槛不变。此后不再改代码，等待 Shadow 结果。

@@ -1191,3 +1191,10 @@
 - `audit-event-maker-shadow.ps1` 只拒绝非预期 `lastErrors`；fixture 正向/负向均验证通过。
 - 全量测试：103 suites / 538 tests / 0 failures / 0 errors / 2 skipped。
 - v5 正式臂与实验臂于 00:50 主动停止；v6 待提交后启动。
+### 00:54 v6 Shadow 启动
+
+- 修复提交：`e321f4a fix: separate expected shadow guard blocks from errors`，已推送 `2c1162f..e321f4a`。
+- v6 输出：`backend/build/research/event-maker-safe-candidate-shadow-main-v6-20261020/`。
+- wrapper PID `1252`，Java PID `22320`，监控 PID `8120`，启动 `2026-10-20 00:53:09 +08:00`。
+- 首轮 qualified=2、activityPassed=0、selected=0；原因 `recent_trades_30m_below_min=2`。
+- 当前 waiting，日志 0 异常，stderr 为空；门槛不变，运行期间不再改代码。
