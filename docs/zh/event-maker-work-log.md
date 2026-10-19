@@ -645,4 +645,14 @@
 - conditionId 在账户持仓对账前统一小写，避免大小写差异造成误判。
 - 新增 realized PnL baseline 单元测试：已有累计 1.25、恢复市场 0.75 时，baseline 为 0.50，不重复计数。
 - 全量测试：97 suites / 474 tests / 0 failures / 0 errors / 2 skipped；eventmaker/research eventmaker 93 tests。
-- 当前无 Shadow/Backtest 进程；下一步为提交、推送、重启新代码等待+Shadow。
+- 提交：`596504e fix: harden event maker live state recovery`；推送：`6bd6850..596504e main -> main`。
+- 当前无 Shadow/Backtest 进程；下一步为重启新代码等待+Shadow。
+### 09:06 v3 干净等待 + Shadow 重启
+
+- 提交并推送：`596504e fix: harden event maker live state recovery`（`6bd6850..596504e`）。
+- 新后台任务：PowerShell 包装进程 PID `6296`，JavaExec PID `7788`；启动 `2026-10-19T09:06:26+08:00`。
+- 输出目录：`backend/build/research/event-maker-shadow-watch-v3-20261019/`。
+- 参数保持严格：等待最多 180 分钟、60 秒重试、选出后 Shadow 120 分钟；0.97～0.99、24h >=100,000、30m/2h 活动门槛、`minSpreadTicks=2`、成交因子 1。
+- 首次检查：attempt=1，`qualifiedMarkets=6`、`activityPassedMarkets=0`、`selectedMarkets=0`，拒绝原因 `recent_trades_30m_below_min=5`、`recent_notional_30m_below_min=1`；`logIssues=0`、`stderrBytes=0`，状态 waiting。
+- `scripts/check-event-maker-watch.ps1` 默认目录已切到 v3。
+- 运行期间禁止编译、测试或任何会重写 classpath 的任务。

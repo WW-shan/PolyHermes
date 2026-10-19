@@ -40,15 +40,16 @@
 | OBS-2 | 分析 Shadow 完成结果 | 部分完成 | 10min/1min 冒烟通过；旧 2h/12h 无效或已停止 |
 | SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 474 tests；Live 验证报告 |
 | BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
-| GIT-3 | 提交并推送本轮安全修复与文档 | 待执行 | 提交后回填 hash |
-| OBS-4 | 用新代码重启严格等待 + Shadow | 待执行 | 提交后启动；不降低门槛 |
+| GIT-3 | 提交并推送本轮安全修复与文档 | 已完成 | `596504e fix: harden event maker live state recovery`、`main -> main` |
+| OBS-4 | 用新代码重启严格等待 + Shadow | 运行中 | v3 PID 6296/7788；启动 09:06；不降低门槛 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
 ## 3. 最近后台进程与状态
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| v2 等待+Shadow 任务 | 7652 / 14836 | 08:05 | 08:18 已停止 | `backend/build/research/event-maker-shadow-watch-v2-20261019/` | 12 次发现均为 0 活动通过；因状态恢复安全修复停止；待提交后用新代码重启 |
+| v3 等待+Shadow 任务 | 6296 / 7788 | 09:06 | 等待最多 180m；选出后 Shadow 120m | `backend/build/research/event-maker-shadow-watch-v3-20261019/` | waiting；严格参数；attempt=1 时 0 活动通过 |
+| v2 等待+Shadow 任务 | 7652 / 14836 | 08:05 | 08:18 已停止 | `backend/build/research/event-maker-shadow-watch-v2-20261019/` | 12 次发现均为 0 活动通过；因安全修复停止 |
 | 旧被动入场 2h/12h | 旧会话 | 04:50 / 04:52 | 已结束 | `event-maker-shadow-passive-2c-*` | 历史记录；2h 收尾类冲突无效；12h 已停止；均 0 fill |
 
 轮询方式：运行 `.\scripts\check-event-maker-watch.ps1`；不要重复启动同一输出目录的 Shadow。
@@ -280,4 +281,5 @@ cd D:\Project\PolyHermes\backend
 - 风险预算计入未成交买单；协程作用域改为普通 Job，持久化/对账失败会终止整个 LIVE 运行。
 - 新增稳健性交叉核验脚本和报告；全部市场、训练、测试、自然月 cluster bootstrap 95% 区间均包含 0。
 - 全量测试：97 suites / 474 tests / 0 failures / 0 errors / 2 skipped。
-- 当前无 Shadow/Backtest 进程。下一步：提交推送 → 重启新代码等待任务 → 分析 Shadow evidence → 处理真实 Live smoke 阻塞项。
+- 已提交并推送 `596504e fix: harden event maker live state recovery`（`6bd6850..596504e main -> main`）。
+- 当前无 Shadow/Backtest 进程。下一步：重启新代码等待任务 → 分析 Shadow evidence → 处理真实 Live smoke 阻塞项。
