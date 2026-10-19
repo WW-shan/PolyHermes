@@ -108,10 +108,11 @@ data class EventMakerLiveOrder(
 )
 
 data class EventMakerPersistedState(
-    val version: Int = 1,
+    val version: Int = 2,
     val mode: String,
     val accountId: Long?,
     val startedAt: Long?,
+    val cumulativeRealizedPnl: Double = 0.0,
     val markets: List<EventMakerPersistedMarket>
 )
 
@@ -134,7 +135,8 @@ data class EventMakerPersistedMarket(
     val currentEntryOrderId: String? = null,
     val currentEntryShares: String? = null,
     val fills: List<EventMakerFillRecord>? = null,
-    val cycles: List<EventMakerCycleRecord>? = null
+    val cycles: List<EventMakerCycleRecord>? = null,
+    val favoriteTokenId: String? = null
 )
 
 data class EventMakerStatus(

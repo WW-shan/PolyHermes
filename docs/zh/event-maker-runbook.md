@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-19 07:26）：完整池回测最强训练期候选 ROI 约 +0.81%，q50 和 50bps 费用下转负。keyset 候选发现已修复并完成真实扫描；6 个价格预筛候选中仅 1 个通过活动过滤，但其价差为 1 tick，不满足 2 tick 门槛，因此当前无合格市场、尚未启动干净长测。当前不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-19 09:01）：完整池回测最强训练期候选 ROI 约 +0.81%，cluster bootstrap 95% 区间包含 0；q50 和 50bps 费用下转负。keyset 候选发现已修复；v2 等待任务 12 轮均无活动通过市场，已因状态恢复安全修复停止。Live 恢复新增账户级活跃订单/持仓对账、favorite token 校验、逐笔 fill 重放和停止终态确认；全量 97 suites / 474 tests 通过。当前仍不应实盘、不应跟单。证据见 [完整池回测报告](event-maker-robust-backtest-2026-10-19.md)、[稳健性交叉核验](event-maker-robustness-crosscheck-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
@@ -251,9 +251,15 @@ POST /api/event-maker/stop
 - 买入时 USDC 余额和授权额度足够；
 - 卖出时 CTF 库存和 exchange 授权足够；
 - 订单价格在 tick 上，数量不低于最小订单量；
-- 所有订单 `postOnly=true`、`orderType=GTC`。
+- 所有订单 `postOnly=true`、`orderType=GTC`；
+- 状态文件可解析且版本受支持；
+- 状态文件账户与本次 `accountId` 一致；
+- 状态文件包含 `conditionId` 和 `favoriteTokenId`；
+- 账户全部活跃订单都在状态文件中有登记；
+- 账户全部正数持仓 conditionId 与状态库存集合完全一致；
+- 同一 condition 不得出现多个正数持仓资产。
 
-Live 请求示例：
+推荐使用专用账户。复制交易或其他策略留下的订单/持仓会让 Event Maker 拒绝启动，这是刻意 fail-closed。Live 请求示例：
 
 ```json
 {
@@ -283,13 +289,14 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 
 状态文件包含：
 
+- `conditionId`、`favoriteTokenId`；
 - 活跃订单 ID、方向、价格、原始数量、已成交数量、状态、创建时间；
 - 当前库存、入场价、入场时间；
-- 已实现 PnL、已完成回合；
+- 状态级 `cumulativeRealizedPnl`、当前市场已实现 PnL 和已完成回合；
 - 逐笔 fill 和逐回合 cycle；
 - 当前入场订单 ID 和份额。
 
-状态文件不包含私钥或 API 凭证。写入使用临时文件 + 原子替换。
+状态文件不包含私钥或 API 凭证。写入使用临时文件 + 原子替换。读取时会拒绝损坏 JSON、未知版本、错账户状态、缺失 favorite token、重复 condition 和非法订单快照；恢复时会重放逐笔 fill，核对库存、已实现 PnL、完成回合数和 cycle 记录。
 
 ## 8. 故障处理
 
@@ -343,15 +350,45 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 3. 不调高上限来掩盖异常；
 4. 复盘后再决定是否重启。
 
-### 8.5 启动时发现孤儿订单
+### 8.5 启动时发现孤儿订单或孤儿持仓
 
-触发条件：持久化状态中有活跃订单，但该市场不在本次发现列表。
+触发条件：持久化状态中的市场不在本次发现列表。
 
-行为：启动前尝试撤销；撤单失败则拒绝启动。
+行为：
 
-处理：手动撤销并清理状态后再启动。
+- 有活跃订单：先撤销，再读取最终订单快照；
+- 确认终态且 matchedShares=0 才允许丢弃该订单；
+- 有持仓、撤单失败、出现成交或无法确认终态：拒绝启动。
 
-### 8.6 WebSocket 断线
+处理：手动核对并处理持仓；未对账前不要删除状态文件。
+
+### 8.6 账户级状态不匹配
+
+触发条件：账户存在未登记活跃订单、未登记正数持仓、状态库存不在链上，或同一 condition 有多个正数资产。
+
+行为：LIVE 拒绝启动。
+
+处理：
+
+1. 确认是否使用了专用账户；
+2. 手动撤销无关订单或转出/赎回无关持仓；
+3. 核对 `event-maker-state.json` 与账户实际状态；
+4. 不允许通过删除状态文件绕过未平仓持仓。
+
+### 8.7 停止时最终快照无法确认
+
+触发条件：撤单后的 `getOrder` 失败、订单仍活跃、快照字段不一致或部分成交记账失败。
+
+行为：保留 `activeOrder*` 和库存，写入错误，退出 LIVE。
+
+处理：
+
+1. 在 CLOB 查询订单终态和 matchedShares；
+2. 核对 fills/inventory；
+3. 未完成对账前不要重启 LIVE；
+4. 下次启动的账户级订单/持仓检查会继续阻止不一致状态。
+
+### 8.8 WebSocket 断线
 
 `LivePaperWsClient` 会自动重连。订单状态轮询不依赖 WebSocket。如果断线期间出现订单状态异常，按 8.2 处理。
 
@@ -378,6 +415,9 @@ $env:EVENT_MAKER_STATE_FILE = "D:\Project\PolyHermes\backend\data\event-maker-st
 - 队列因子从 1 提到 50，同族配置 ROI 从约 +0.92% 降到 -0.77%，深队列会带来 adverse selection。
 - 50bps 双边 maker fee 下，训练期选参配置总 ROI 为 -0.18%，2 美分价差不足以承受该费用。
 - 已实现回测最大回撤约 146.49 USDC；单次结算亏损 -100 USDC，约等于 52 次平均盈利。
+- Cluster bootstrap 和自然月聚类区间均包含 0，当前约 +0.5%～+1% 的 ROI 不能视为统计显著。
+- `maxDailyLoss` 使用跨进程累计已实现 PnL 加当前浮亏，不是自然日重置口径；这更保守，但仍需真实 smoke 验证。
+- 账户级启动对账要求使用专用账户；外部订单或持仓会阻止 LIVE 启动。
 - 尚未使用真实账户执行小资金 LIVE smoke。
 - 历史回测使用的是成交打印和队列近似，不是完整 L2 队列重建。
 - 公共成交不能完全代表真实队列位置，Shadow 的 fill 只能作为上界/近似。

@@ -48,6 +48,61 @@ class ClobEventMakerExecutionAdapter(
         )
     }
 
+    override suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>> {
+        val context = accountContext(accountId)
+            ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
+        val orderIds = linkedSetOf<String>()
+        var cursor: String? = null
+        repeat(MAX_ACTIVE_ORDER_PAGES) {
+            val response = try {
+                context.api.getActiveOrders(next_cursor = cursor)
+            } catch (e: Exception) {
+                logger.error("Event maker active order lookup failed: accountId=$accountId", e)
+                return Result.failure(IllegalStateException("active_orders_unavailable", e))
+            }
+            val body = response.body()
+            if (!response.isSuccessful || body == null) {
+                return Result.failure(IllegalStateException("active_orders_failed_http_${response.code()}"))
+            }
+            body.data.forEach { order ->
+                if (order.id.isBlank()) {
+                    return Result.failure(EventMakerUnknownOrderStateException("active_order_id_missing"))
+                }
+                orderIds += order.id
+            }
+            val next = body.next_cursor?.takeIf { it.isNotBlank() }
+            if (next == null) return Result.success(orderIds)
+            if (next == cursor) return Result.failure(IllegalStateException("active_orders_cursor_repeated:$next"))
+            cursor = next
+        }
+        return Result.failure(IllegalStateException("active_orders_pagination_limit"))
+    }
+
+    override suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>> {
+        val context = accountContext(accountId)
+            ?: return Result.failure(IllegalStateException("account_not_found_or_credentials_missing"))
+        val positions = blockchainService.getPositions(context.account.proxyAddress)
+            .getOrElse { return Result.failure(IllegalStateException("positions_unavailable:${it.message}", it)) }
+        val conditionIds = linkedSetOf<String>()
+        for (position in positions) {
+            val size = position.size
+            if (size == null) {
+                if ((position.currentValue ?: 0.0) > 0.0) {
+                    return Result.failure(EventMakerUnknownOrderStateException("position_size_missing"))
+                }
+                continue
+            }
+            if (size < 0.0) return Result.failure(EventMakerUnknownOrderStateException("position_size_negative"))
+            if (size <= 0.0) continue
+            val conditionId = position.conditionId?.takeIf { it.isNotBlank() }
+                ?: return Result.failure(EventMakerUnknownOrderStateException("position_condition_missing"))
+            if (!conditionIds.add(conditionId)) {
+                return Result.failure(EventMakerUnknownOrderStateException("multiple_position_assets:$conditionId"))
+            }
+        }
+        return Result.success(conditionIds)
+    }
+
     override suspend fun place(
         accountId: Long,
         market: LivePaperMarket,
@@ -229,6 +284,7 @@ class ClobEventMakerExecutionAdapter(
         value?.let { runCatching { cryptoUtils.decrypt(it) }.getOrNull() }?.takeIf { it.isNotBlank() }
 
     companion object {
+        private const val MAX_ACTIVE_ORDER_PAGES = 100
         private val KNOWN_ORDER_STATUSES = setOf(
             "LIVE", "OPEN", "MATCHED", "FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED"
         )

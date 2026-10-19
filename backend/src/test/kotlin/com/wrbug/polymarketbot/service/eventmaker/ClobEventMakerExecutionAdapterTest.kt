@@ -1,11 +1,14 @@
 package com.wrbug.polymarketbot.service.eventmaker
 
+import com.wrbug.polymarketbot.api.GetActiveOrdersResponse
 import com.wrbug.polymarketbot.api.NegRiskResponse
 import com.wrbug.polymarketbot.api.NewOrderRequest
 import com.wrbug.polymarketbot.api.NewOrderResponse
 import com.wrbug.polymarketbot.api.OpenOrder
+import com.wrbug.polymarketbot.api.OrderResponse
 import com.wrbug.polymarketbot.api.OrderbookResponse
 import com.wrbug.polymarketbot.api.PolymarketClobApi
+import com.wrbug.polymarketbot.api.PositionResponse
 import com.wrbug.polymarketbot.api.SignedOrderObject
 import com.wrbug.polymarketbot.api.TickSizeResponse
 import com.wrbug.polymarketbot.entity.Account
@@ -91,6 +94,93 @@ class ClobEventMakerExecutionAdapterTest {
         val result = adapter.getOrder(1L, "order-1")
 
         assertTrue(result.exceptionOrNull() is EventMakerOrderNotFoundException)
+    }
+
+    @Test
+    fun `active order lookup paginates and deduplicates`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(api.getActiveOrders(null, null, null, null)).thenReturn(
+            Response.success(
+                GetActiveOrdersResponse(
+                    data = listOf(orderResponse("order-1"), orderResponse("order-2")),
+                    next_cursor = "next"
+                )
+            )
+        )
+        Mockito.`when`(api.getActiveOrders(null, null, null, "next")).thenReturn(
+            Response.success(
+                GetActiveOrdersResponse(
+                    data = listOf(orderResponse("order-2"), orderResponse("order-3")),
+                    next_cursor = null
+                )
+            )
+        )
+
+        val result = adapter.listOpenOrderIds(1L)
+
+        assertTrue(result.isSuccess)
+        assertEquals(setOf("order-1", "order-2", "order-3"), result.getOrThrow())
+    }
+
+    @Test
+    fun `repeated active order cursor fails closed`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(api.getActiveOrders(null, null, null, null)).thenReturn(
+            Response.success(GetActiveOrdersResponse(listOf(orderResponse("order-1")), "same"))
+        )
+        Mockito.`when`(api.getActiveOrders(null, null, null, "same")).thenReturn(
+            Response.success(GetActiveOrdersResponse(listOf(orderResponse("order-1")), "same"))
+        )
+
+        val result = adapter.listOpenOrderIds(1L)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message!!.startsWith("active_orders_cursor_repeated"))
+    }
+
+    @Test
+    fun `open positions expose only positive condition ids`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(blockchainService.getPositions("0xproxy")).thenReturn(
+            Result.success(
+                listOf(
+                    position("condition-1", 5.0),
+                    position("condition-2", 0.0),
+                    position(null, null)
+                )
+            )
+        )
+
+        val result = adapter.listOpenPositionConditionIds(1L)
+
+        assertTrue(result.isSuccess)
+        assertEquals(setOf("condition-1"), result.getOrThrow())
+    }
+
+    @Test
+    fun `multiple assets for one condition fail closed`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(blockchainService.getPositions("0xproxy")).thenReturn(
+            Result.success(listOf(position("condition-1", 1.0), position("condition-1", 1.0)))
+        )
+
+        val result = adapter.listOpenPositionConditionIds(1L)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message!!.startsWith("multiple_position_assets"))
+    }
+
+    @Test
+    fun `positive position without condition fails closed`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(blockchainService.getPositions("0xproxy")).thenReturn(
+            Result.success(listOf(position(null, 1.0)))
+        )
+
+        val result = adapter.listOpenPositionConditionIds(1L)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is EventMakerUnknownOrderStateException)
     }
 
     @Test
@@ -210,6 +300,24 @@ class ClobEventMakerExecutionAdapterTest {
         metadata = "0x0",
         builder = "0x0",
         signature = "0xsignature"
+    )
+
+    private fun position(conditionId: String?, size: Double?) = PositionResponse(
+        proxyWallet = "0xproxy",
+        conditionId = conditionId,
+        size = size,
+        currentValue = size
+    )
+
+    private fun orderResponse(id: String) = OrderResponse(
+        id = id,
+        market = "condition",
+        side = "BUY",
+        price = "0.96",
+        size = "10.00",
+        filled = "0.00",
+        status = "LIVE",
+        createdAt = "1"
     )
 
     private fun openOrder(status: String) = OpenOrder(

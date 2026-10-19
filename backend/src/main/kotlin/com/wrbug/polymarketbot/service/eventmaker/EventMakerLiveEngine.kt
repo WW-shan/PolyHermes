@@ -51,7 +51,8 @@ class EventMakerLiveEngine(
     private val config: EventMakerConfig,
     private val quotePlanner: EventMakerQuotePlanner,
     private val riskPolicy: EventMakerRiskPolicy,
-    private val executionPort: EventMakerExecutionPort
+    private val executionPort: EventMakerExecutionPort,
+    private val initialRealizedPnl: Double = 0.0
 ) {
     private val activeAccounts = ConcurrentHashMap<String, Long>()
     private val reconcileFailures = ConcurrentHashMap<String, Int>()
@@ -137,9 +138,9 @@ class EventMakerLiveEngine(
 
             if (intent.side == EventMakerSide.BUY) {
                 val snapshot = EventMakerRiskSnapshot(
-                    totalInventoryNotional = states.sumOf { it.inventoryNotional() },
+                    totalInventoryNotional = states.sumOf { it.inventoryNotional() + it.pendingBuyNotional() },
                     openMarketCount = states.count { it.inventoryShares > BigDecimal.ZERO || it.activeOrder != null },
-                    dailyPnl = states.sumOf { it.realizedPnl } +
+                    dailyPnl = initialRealizedPnl + states.sumOf { it.realizedPnl } +
                         states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) }
                 )
                 val decision = riskPolicy.canOpenBuy(config, snapshot)
@@ -154,7 +155,15 @@ class EventMakerLiveEngine(
                     if (order.side != intent.side || order.price != intent.price ||
                         order.originalShares != intent.shares
                     ) {
-                        halt("execution_order_mismatch:${order.orderId}")
+                        state.onOrderPlaced(order)
+                        val cancelOutcome = executionPort.cancel(accountId, order.orderId)
+                        if (cancelOutcome.isSuccess) state.onOrderCanceled()
+                        val reason = if (cancelOutcome.isSuccess) {
+                            "execution_order_mismatch:${order.orderId}:canceled"
+                        } else {
+                            "execution_order_mismatch:${order.orderId}:cancel_failed:${cancelOutcome.exceptionOrNull()?.message}"
+                        }
+                        halt(reason)
                         result = result.merge(EventMakerEngineResult.halted(haltedReason!!))
                     } else {
                         state.onOrderPlaced(order)
@@ -260,25 +269,73 @@ class EventMakerLiveEngine(
 
     suspend fun cancelAll(states: List<EventMakerLiveState>, accountId: Long): EventMakerEngineResult {
         var result = EventMakerEngineResult()
+        val now = System.currentTimeMillis()
         for (state in states) {
             val active = state.activeOrder ?: continue
-            executionPort.cancel(accountId, active.orderId).fold(
-                onSuccess = {
-                    activeAccounts.remove(active.orderId)
-                    reconcileFailures.remove(active.orderId)
-                    state.onOrderCanceled()
-                    result = result.merge(
-                        EventMakerEngineResult(
-                            canceled = listOf(EventMakerEngineCancel(state.market.conditionId, active.orderId, "stop"))
+            val cancelResult = executionPort.cancel(accountId, active.orderId)
+            val snapshotResult = executionPort.getOrder(accountId, active.orderId)
+            val snapshot = snapshotResult.getOrNull()
+            if (snapshot == null) {
+                val cancelMessage = cancelResult.exceptionOrNull()?.message ?: "ok"
+                val snapshotMessage = snapshotResult.exceptionOrNull()?.message ?: "unknown"
+                result = result.merge(
+                    EventMakerEngineResult(
+                        errors = listOf(
+                            "stop_state_unconfirmed:${active.orderId}:cancel=$cancelMessage:lookup=$snapshotMessage"
                         )
                     )
-                },
-                onFailure = { error ->
+                )
+                continue
+            }
+            val validation = validateSnapshot(active, snapshot)
+            if (validation != null) {
+                result = result.merge(EventMakerEngineResult(errors = listOf("stop_state_unconfirmed:$validation")))
+                continue
+            }
+            val reconciled = try {
+                state.reconcile(snapshot, now)
+            } catch (e: Exception) {
+                result = result.merge(
+                    EventMakerEngineResult(errors = listOf("stop_reconcile_failed:${active.orderId}:${e.message}"))
+                )
+                continue
+            }
+            if (reconciled.events.isNotEmpty()) {
+                result = result.merge(
+                    EventMakerEngineResult(
+                        reconciled = listOf(
+                            EventMakerEngineReconcile(
+                                marketId = state.market.conditionId,
+                                orderId = active.orderId,
+                                events = reconciled.events,
+                                status = snapshot.status
+                            )
+                        )
+                    )
+                )
+            }
+            if (state.activeOrder == null) {
+                activeAccounts.remove(active.orderId)
+                reconcileFailures.remove(active.orderId)
+                if (cancelResult.isSuccess && snapshot.status.uppercase() !in FILLED_ORDER_STATUSES) {
                     result = result.merge(
-                        EventMakerEngineResult(errors = listOf("stop_cancel_failed:${active.orderId}:${error.message}"))
+                        EventMakerEngineResult(
+                            canceled = listOf(
+                                EventMakerEngineCancel(state.market.conditionId, active.orderId, "stop")
+                            )
+                        )
                     )
                 }
-            )
+            } else {
+                val cancelMessage = cancelResult.exceptionOrNull()?.message ?: "ok"
+                result = result.merge(
+                    EventMakerEngineResult(
+                        errors = listOf(
+                            "stop_order_still_active:${active.orderId}:cancel=$cancelMessage:status=${snapshot.status}"
+                        )
+                    )
+                )
+            }
         }
         return result
     }
@@ -289,7 +346,11 @@ class EventMakerLiveEngine(
         if (actual.orderId != expected.orderId) return "order_state_unknown:order_id_mismatch"
         if (actual.side != expected.side) return "order_state_unknown:side_mismatch"
         if (actual.price <= BigDecimal.ZERO || actual.price >= BigDecimal.ONE) return "order_state_unknown:invalid_price"
+        if (actual.price.compareTo(expected.price) != 0) return "order_state_unknown:price_mismatch"
         if (actual.originalShares <= BigDecimal.ZERO) return "order_state_unknown:invalid_original_size"
+        if (actual.originalShares.compareTo(expected.originalShares) != 0) {
+            return "order_state_unknown:original_size_mismatch"
+        }
         if (actual.matchedShares < BigDecimal.ZERO || actual.matchedShares > actual.originalShares) {
             return "order_state_unknown:invalid_matched_size"
         }
@@ -305,6 +366,7 @@ class EventMakerLiveEngine(
 
     companion object {
         private const val MAX_RECONCILE_FAILURES = 3
+        private val FILLED_ORDER_STATUSES = setOf("FILLED")
         private val KNOWN_ORDER_STATUSES = setOf(
             "LIVE", "OPEN", "MATCHED", "FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED"
         )

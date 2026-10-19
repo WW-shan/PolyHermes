@@ -2,12 +2,14 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**keyset 发现和候选审计已完成；当前严格条件下无 2-tick 可报价市场，等待合格市场恢复干净 Shadow**<br>
-> 最后更新：2026-10-19 07:43 +08:00<br>
+> 当前状态：**Live 状态恢复/账户级对账已加固，97 suites / 474 tests 通过；待提交后重启干净 Shadow**<br>
+> 最后更新：2026-10-19 09:01 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
 > 正式回测：[完整池回测与策略审计](event-maker-robust-backtest-2026-10-19.md)<br>
+> 稳健性核验：[交叉分段与 cluster bootstrap](event-maker-robustness-crosscheck-2026-10-19.md)<br>
+> Live 验证：[执行链路验证](event-maker-live-execution-validation-2026-10-19.md)<br>
 
 ## 1. 完成定义
 
@@ -32,17 +34,17 @@
 | 真实盘口 maker-only 纸交易 | 已完成一轮 | `event-maker-live-paper-2026-10-17.md` |
 | 报价规划器 | 已完成 | `EventMakerQuotePlanner.kt` |
 | 风险策略 | 已完成 | `EventMakerRiskPolicy.kt` |
-| 策略核心单元测试 | 已完成 | event-maker/research 定向测试与全量 445 tests 通过 |
+| 策略核心单元测试 | 已完成 | event-maker/research 定向 93 tests；全量 474 tests 通过 |
 | Shadow Spring 服务 | 已完成，统一 Shadow/Live 引擎 | `EventMakerStrategyService.kt`、`EventMakerLiveEngine.kt` |
 | Live CLOB 执行适配器 | 已完成，mock/集成验证通过 | `ClobEventMakerExecutionAdapter.kt` |
 | REST 控制接口 | 已完成 | `/api/event-maker/*` |
-| Live 订单对账 | 已完成，恢复/未知状态测试通过 | `EventMakerLiveState.kt` |
+| Live 订单对账 | 已完成强化：状态损坏/错账户/未登记订单与持仓/部分成交/停止终态均 fail-closed | `EventMakerStateStore.kt`、`EventMakerLiveState.kt`、`EventMakerLiveEngine.kt` |
 | 2 小时 Shadow 长测 | 旧基线稳定性通过；策略 0 fill | `event-maker-shadow-2026-10-19.md` |
 | 旧被动 2h/12h Shadow | 2h 因类版本冲突无效；12h 已停止；均 0 fill | `backend/build/research/event-maker-shadow-passive-2c-*` |
 | 新版保守 Shadow 冒烟 | 10 分钟 0 fill、0 错误；1 分钟停止复测 activeOrders=0 | `backend/build/research/event-maker-shadow-v2-smoke*-20261019/` |
-| 新干净长测 | 候选发现存在分页/前 40 截断疑点，修复后再启动 | `DISC-1`；不强改价格带 |
-| 全量测试 | 95 suites / 445 tests / 0 failures / 2 skipped | `backend/build/test-results/test/` |
-| Live 端到端测试 | 引擎级 mock 已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
+| 新干净长测 | v2 等待 12 轮无活动通过市场，已因安全修复停止；提交后重启 | `event-maker-shadow-watch-v2-20261019/`；不降低价格带 |
+| 全量测试 | 97 suites / 474 tests / 0 failures / 0 errors / 2 skipped | `backend/build/test-results/test/` |
+| Live 端到端测试 | 引擎级 mock/恢复/账户级对账已完成；真实小资金 smoke 待授权 | 当前无可用账户、资金和明确授权 |
 
 ## 3. 目标架构
 
@@ -145,9 +147,9 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | Live 断线恢复 | 重连和对账测试 | 已完成（引擎恢复/未知状态测试） |
 | 一键停止 | 停止后无活跃订单、无新报价 | 已完成（引擎撤单测试） |
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
-| Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；新被动 Shadow 运行中 |
+| Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；v2 等待 12 轮无市场后因安全修复停止，待重启 |
 | 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；q50 与 50bps 均转负 |
-| 全量回归 | 95 suites / 445 tests / 0 failures / 2 skipped | 已完成 |
+| 全量回归 | 97 suites / 474 tests / 0 failures / 0 errors / 2 skipped | 已完成 |
 | 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
@@ -163,6 +165,10 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - 日亏损未触发；
 - 所有报价均为 post-only；
 - 一键停止可用；
+- 状态文件可解析、账户匹配、favorite token 匹配且 fill ledger 自洽；
+- 账户全部活跃订单都在状态文件中；
+- 账户正数持仓与状态库存集合一致；
+- 撤单后能读取最终订单快照，部分成交可对账；
 - 最近一次 shadow 测试没有重复成交或未知状态。
 
 ## 7. 运行与产物
@@ -311,3 +317,22 @@ cd D:\Project\PolyHermes\backend
 - 冒烟：0 分钟等待 1 次尝试；1 分钟等待/15 秒重试 5 次尝试；均正确超时且未伪造 fill。
 - 全量测试：96 suites / 450 tests / 0 failures / 0 errors / 2 skipped。
 - 下一步：提交后启动长等待任务。出现合格市场后，同一 JVM 直接进入 Shadow，避免重复重编译。
+### 10.8 2026-10-19 08:46 状态恢复与账户级对账加固
+
+| ID | 任务 | 状态 | 验收证据 |
+|---|---|---|---|
+| SAFE-1 | 状态文件损坏、错账户、缺失 favorite token、非法快照 fail-closed | 已完成 | `EventMakerStateStoreTest`、`EventMakerLiveStateTest` |
+| SAFE-2 | 账户全部活跃订单与状态登记比对 | 已完成 | `ClobEventMakerExecutionAdapterTest`、`EventMakerStrategyServiceSafetyTest` |
+| SAFE-3 | 账户正数持仓 conditionId 与状态库存比对 | 已完成 | `ClobEventMakerExecutionAdapterTest`、`EventMakerStrategyServiceSafetyTest` |
+| SAFE-4 | 孤儿订单确认撤销、孤儿库存阻止启动 | 已完成 | `EventMakerStartupRecoveryTest` |
+| SAFE-5 | 停止时最终快照对账部分成交 | 已完成 | `EventMakerLiveEngineTest` |
+| SAFE-6 | 部分卖出跨订单累计 cycle PnL | 已完成 | `EventMakerLiveStateTest` |
+| SAFE-7 | Shadow 审计脚本逐笔重放财务数据 | 已完成 | `scripts/audit-event-maker-shadow.ps1` 自测：有效 exit 0、篡改 exit 1 |
+| BT-4 | 标签/价格桶 × 训练/测试与 cluster bootstrap | 已完成 | `docs/zh/event-maker-robustness-crosscheck-2026-10-19.md`、分析脚本 |
+| TEST-3 | 定向与全量回归 | 已完成 | eventmaker 93 tests；全量 97 suites / 474 tests / 0 failures / 0 errors / 2 skipped |
+| GIT-3 | 提交并推送本轮安全修复 | 待执行 | 提交后回填 commit hash |
+| OBS-4 | 用新代码重启干净等待 + Shadow | 待执行 | 提交后启动；严格条件不变 |
+
+- 当前没有运行中的 Shadow/回测进程。
+- 下一执行顺序：GIT-3 → OBS-4 → 等待结果 → 审计 → 文档收尾。
+- 真实 Live smoke 仍缺少 `accountId`、资金上限、明确授权、时间窗口和市场范围。

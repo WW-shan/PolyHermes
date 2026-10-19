@@ -50,6 +50,87 @@ foreach ($row in $markoutRows) {
 
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
+$stateRealizedPnl = 0.0
+$stateCompletedCycles = 0
+foreach ($market in $stateMarkets) {
+    $replayInventory = [decimal]0
+    $replayEntryPrice = [decimal]0
+    $replayRealized = 0.0
+    $replayCompletedCycles = 0
+    $partialCyclePnl = 0.0
+    $currentEntryShares = [decimal]0
+    $currentCycleSoldShares = [decimal]0
+    foreach ($fill in @($market.fills)) {
+        if ($null -eq $fill) { continue }
+        $side = [string]$fill.side
+        $price = [decimal]::Parse([string]$fill.price, [Globalization.CultureInfo]::InvariantCulture)
+        $shares = [decimal]::Parse([string]$fill.shares, [Globalization.CultureInfo]::InvariantCulture)
+        if ($shares -le 0) {
+            $failures.Add("invalidFillShares:$($market.conditionId):$shares")
+            continue
+        }
+        if ($side -eq 'BUY') {
+            if ($replayInventory -le 0) {
+                $replayEntryPrice = $price
+                $currentEntryShares = $shares
+                $currentCycleSoldShares = [decimal]0
+                $partialCyclePnl = 0.0
+            } else {
+                $currentEntryShares += $shares
+            }
+            $replayInventory += $shares
+        } elseif ($side -eq 'SELL') {
+            if ($replayInventory -le 0 -or $shares -gt $replayInventory) {
+                $failures.Add("sellExceedsInventory:$($market.conditionId):$shares>$replayInventory")
+                continue
+            }
+            $pnl = ([double]($price - $replayEntryPrice)) * ([double]$shares)
+            $replayRealized += $pnl
+            $partialCyclePnl += $pnl
+            $currentCycleSoldShares += $shares
+            $replayInventory -= $shares
+            if ($replayInventory -le 0) {
+                if ($currentCycleSoldShares -ne $currentEntryShares) {
+                    $failures.Add("cycleSharesReplayMismatch:$($market.conditionId):$currentCycleSoldShares!=$currentEntryShares")
+                }
+                $replayInventory = [decimal]0
+                $replayEntryPrice = [decimal]0
+                $replayCompletedCycles++
+                $partialCyclePnl = 0.0
+                $currentEntryShares = [decimal]0
+                $currentCycleSoldShares = [decimal]0
+            }
+        } else {
+            $failures.Add("unknownFillSide:$($market.conditionId):$side")
+        }
+    }
+    $stateInventory = [decimal]::Parse([string]$market.inventoryShares, [Globalization.CultureInfo]::InvariantCulture)
+    $stateRealized = [double]$market.realizedPnl
+    if ($replayInventory -ne $stateInventory) {
+        $failures.Add("inventoryReplayMismatch:$($market.conditionId):$replayInventory!=$stateInventory")
+    }
+    if ([math]::Abs($replayRealized - $stateRealized) -gt 1e-6) {
+        $failures.Add("realizedReplayMismatch:$($market.conditionId):$replayRealized!=$stateRealized")
+    }
+    if ($replayCompletedCycles -ne [int]$market.completedCycles) {
+        $failures.Add("cycleCountReplayMismatch:$($market.conditionId):$replayCompletedCycles!=$($market.completedCycles)")
+    }
+    $cyclePnl = 0.0
+    foreach ($cycle in @($market.cycles)) {
+        if ($null -ne $cycle) { $cyclePnl += [double]$cycle.pnl }
+    }
+    if ([math]::Abs(($cyclePnl + $partialCyclePnl) - $replayRealized) -gt 1e-6) {
+        $failures.Add("cyclePnlReplayMismatch:$($market.conditionId):$cyclePnl+$partialCyclePnl!=$replayRealized")
+    }
+    $stateRealizedPnl += $stateRealized
+    $stateCompletedCycles += [int]$market.completedCycles
+}
+if ([math]::Abs([double]$summary.realizedPnl - $stateRealizedPnl) -gt 1e-6) {
+    $failures.Add("summary.realizedPnl=$($summary.realizedPnl) stateRealizedPnl=$stateRealizedPnl")
+}
+if ([int]$summary.completedCycles -ne $stateCompletedCycles) {
+    $failures.Add("summary.completedCycles=$($summary.completedCycles) stateCompletedCycles=$stateCompletedCycles")
+}
 if (-not [string]::IsNullOrWhiteSpace([string]$summary.haltedReason)) {
     $failures.Add("haltedReason=$($summary.haltedReason)")
 }

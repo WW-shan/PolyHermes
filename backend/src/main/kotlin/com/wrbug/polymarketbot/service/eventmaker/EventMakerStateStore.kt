@@ -20,6 +20,7 @@ class EventMakerStateStore(
     private val lock = Any()
 
     fun save(state: EventMakerPersistedState) = synchronized(lock) {
+        validate(state)
         val path = targetPath()
         val parent = path.parent ?: throw IllegalStateException("state_file_has_no_parent")
         Files.createDirectories(parent)
@@ -45,20 +46,102 @@ class EventMakerStateStore(
     fun load(): EventMakerPersistedState? = synchronized(lock) {
         val path = targetPath()
         if (!Files.exists(path)) return@synchronized null
-        runCatching {
-            val parsed = Files.readString(path, StandardCharsets.UTF_8)
-                .let { gson.fromJson(it, EventMakerPersistedState::class.java) }
-            parsed?.takeIf { it.version == CURRENT_VERSION }
-        }.getOrNull()
+        val raw = try {
+            Files.readString(path, StandardCharsets.UTF_8)
+        } catch (e: Exception) {
+            throw IllegalStateException("event_maker_state_unreadable", e)
+        }
+        val parsed = try {
+            gson.fromJson(raw, EventMakerPersistedState::class.java)
+        } catch (e: Exception) {
+            throw IllegalStateException("event_maker_state_corrupt", e)
+        } ?: throw IllegalStateException("event_maker_state_empty")
+        if (parsed.version != CURRENT_VERSION) {
+            throw IllegalStateException("event_maker_state_version_unsupported:${parsed.version}")
+        }
+        validate(parsed)
+        parsed
     }
 
     fun clear() = synchronized(lock) {
         Files.deleteIfExists(targetPath())
     }
 
+    private fun validate(state: EventMakerPersistedState) {
+        try {
+            if (state.mode !in MODES) invalid("unknown_mode:${state.mode}")
+            if (state.mode == EventMakerMode.LIVE.name && (state.accountId == null || state.accountId <= 0L)) {
+                invalid("live_account_missing")
+            }
+            if (state.cumulativeRealizedPnl.isNaN() || state.cumulativeRealizedPnl.isInfinite()) {
+                invalid("cumulative_realized_pnl_invalid")
+            }
+            val markets = state.markets
+            val duplicateIds = markets.groupingBy { it.conditionId }.eachCount().filterValues { it > 1 }.keys
+            if (duplicateIds.isNotEmpty()) invalid("duplicate_condition:${duplicateIds.joinToString(",")}")
+            markets.forEach(::validateMarket)
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (e: Exception) {
+            throw IllegalStateException("event_maker_state_invalid", e)
+        }
+    }
+
+    private fun validateMarket(market: EventMakerPersistedMarket) {
+        if (market.conditionId.isBlank()) invalid("condition_id_blank")
+        if (market.favoriteTokenId.isNullOrBlank()) invalid("favorite_token_missing:${market.conditionId}")
+        if (market.phase !in PHASES) invalid("phase_invalid:${market.conditionId}:${market.phase}")
+        val inventory = market.inventoryShares.toBigDecimalOrNull()
+            ?.takeIf { it >= java.math.BigDecimal.ZERO }
+            ?: invalid("inventory_invalid:${market.conditionId}")
+        val entryPrice = market.entryPrice.toBigDecimalOrNull()
+            ?.takeIf { it >= java.math.BigDecimal.ZERO && it <= java.math.BigDecimal.ONE }
+            ?: invalid("entry_price_invalid:${market.conditionId}")
+        if (inventory > java.math.BigDecimal.ZERO && entryPrice <= java.math.BigDecimal.ZERO) {
+            invalid("inventory_without_entry_price:${market.conditionId}")
+        }
+        if (market.completedCycles < 0) invalid("completed_cycles_invalid:${market.conditionId}")
+        if (market.realizedPnl.isNaN() || market.realizedPnl.isInfinite()) {
+            invalid("realized_pnl_invalid:${market.conditionId}")
+        }
+        val orderId = market.activeOrderId
+        if (orderId.isNullOrBlank()) {
+            if (market.activeOrderSide != null || market.activeOrderPrice != null ||
+                market.activeOrderOriginalShares != null || market.activeOrderMatchedShares != null
+            ) {
+                invalid("active_order_fragmented:${market.conditionId}")
+            }
+            return
+        }
+        if (market.activeOrderSide !in ORDER_SIDES) invalid("active_order_side_invalid:${market.conditionId}")
+        val price = market.activeOrderPrice?.toBigDecimalOrNull()
+            ?.takeIf { it > java.math.BigDecimal.ZERO && it < java.math.BigDecimal.ONE }
+            ?: invalid("active_order_price_invalid:${market.conditionId}")
+        val original = market.activeOrderOriginalShares?.toBigDecimalOrNull()
+            ?.takeIf { it > java.math.BigDecimal.ZERO }
+            ?: invalid("active_order_size_invalid:${market.conditionId}")
+        val matched = market.activeOrderMatchedShares?.toBigDecimalOrNull()
+            ?.takeIf { it >= java.math.BigDecimal.ZERO && it <= original }
+            ?: invalid("active_order_matched_invalid:${market.conditionId}")
+        if (market.activeOrderStatus !in ORDER_STATUSES) {
+            invalid("active_order_status_invalid:${market.conditionId}:${market.activeOrderStatus}")
+        }
+        if (price <= java.math.BigDecimal.ZERO) invalid("active_order_price_invalid:${market.conditionId}")
+        if (matched > original) invalid("active_order_matched_invalid:${market.conditionId}")
+    }
+
+    private fun invalid(reason: String): Nothing =
+        throw IllegalStateException("event_maker_state_invalid:$reason")
+
     private fun targetPath(): Path = Paths.get(stateFile).toAbsolutePath().normalize()
 
     companion object {
-        const val CURRENT_VERSION = 1
+        const val CURRENT_VERSION = 2
+        private val MODES = setOf(EventMakerMode.SHADOW.name, EventMakerMode.LIVE.name)
+        private val PHASES = EventMakerPhase.entries.map { it.name }.toSet()
+        private val ORDER_SIDES = EventMakerSide.entries.map { it.name }.toSet()
+        private val ORDER_STATUSES = setOf(
+            "LIVE", "OPEN", "MATCHED", "FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED"
+        )
     }
 }

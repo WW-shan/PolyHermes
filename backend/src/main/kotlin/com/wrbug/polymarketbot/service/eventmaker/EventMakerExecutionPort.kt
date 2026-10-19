@@ -5,6 +5,10 @@ import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 interface EventMakerExecutionPort {
     suspend fun validateAccount(accountId: Long): Result<Unit>
 
+    suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>>
+
+    suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>>
+
     suspend fun place(
         accountId: Long,
         market: LivePaperMarket,

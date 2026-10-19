@@ -8,7 +8,6 @@ import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -39,6 +38,12 @@ class EventMakerStrategyService(
     private val stateMutex = Mutex()
 
     @Volatile
+    private var stopping = false
+
+    @Volatile
+    private var realizedPnlBaseline = 0.0
+
+    @Volatile
     private var status = EventMakerStatus(
         running = false,
         mode = EventMakerMode.SHADOW,
@@ -67,14 +72,34 @@ class EventMakerStrategyService(
         if (status.running) return Result.failure(IllegalStateException("event_maker_already_running"))
         if (config.mode == EventMakerMode.LIVE) {
             if (!config.liveTradingEnabled) return Result.failure(IllegalStateException("live_trading_disabled"))
-            if (config.accountId == null) return Result.failure(IllegalStateException("live_account_required"))
-            val validation = runBlocking { executionPort.validateAccount(config.accountId) }
+            val accountId = config.accountId ?: return Result.failure(IllegalStateException("live_account_required"))
+            val persisted = try {
+                stateStore.load()
+            } catch (e: Exception) {
+                return Result.failure(IllegalStateException("persisted_state_rejected:${e.message}", e))
+            }
+            try {
+                validatePersistedOwner(persisted, accountId)
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+            val validation = runBlocking { executionPort.validateAccount(accountId) }
             if (validation.isFailure) {
                 return Result.failure(validation.exceptionOrNull() ?: IllegalStateException("live_account_validation_failed"))
             }
+            try {
+                runBlocking {
+                    ensureNoUnmanagedOpenOrders(accountId, persisted)
+                    ensureNoUnmanagedPositions(accountId, persisted)
+                }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
         }
+        stopping = false
+        realizedPnlBaseline = 0.0
         val runId = generation.incrementAndGet()
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val scope = CoroutineScope(Job() + Dispatchers.IO)
         val channel = Channel<LiveFeedEvent>(Channel.UNLIMITED)
         val client = LivePaperDataClient(proxyUrl.takeIf { it.isNotBlank() })
         runScope = scope
@@ -119,7 +144,9 @@ class EventMakerStrategyService(
     }
 
     fun stop(): EventMakerStatus = synchronized(lock) {
+        stopping = true
         generation.incrementAndGet()
+        runBlocking { stateMutex.withLock { } }
         val job = runJob
         runBlocking { job?.cancelAndJoin() }
         runJob = null
@@ -137,7 +164,10 @@ class EventMakerStrategyService(
         }
         if (stoppedMode == EventMakerMode.LIVE && accountId != null && states.isNotEmpty()) {
             runCatching { persistLive(stoppedStartedAt, accountId, states) }
-                .onFailure { logger.warn("Failed to persist stopped event-maker state", it) }
+                .onFailure {
+                    logger.warn("Failed to persist stopped event-maker state", it)
+                    status = status.copy(lastError = "stop_state_persist_failed:${it.message}")
+                }
         }
 
         currentEngine = null
@@ -250,17 +280,38 @@ class EventMakerStrategyService(
         runId: Long
     ) {
         val accountId = config.accountId ?: throw IllegalStateException("live_account_required")
-        val prepared = prepareMarkets(config, client)
+        val persisted = stateStore.load()
+        validatePersistedOwner(persisted, accountId)
+        ensureNoUnmanagedOpenOrders(accountId, persisted)
+        ensureNoUnmanagedPositions(accountId, persisted)
+        val prepared = try {
+            prepareMarkets(config, client)
+        } catch (e: Exception) {
+            val cleanupError = runCatching { cancelOrphanedOrders(persisted, emptySet(), accountId) }.exceptionOrNull()
+            if (cleanupError != null) {
+                throw IllegalStateException(
+                    "market_prepare_failed_and_recovery_failed:${e.message}:${cleanupError.message}",
+                    e
+                )
+            }
+            throw e
+        }
         val discovered = prepared.markets
         val books = prepared.books
         val states = discovered.map { EventMakerLiveState(it, config) }
-        val persisted = stateStore.load()?.takeIf { it.mode == "LIVE" && it.accountId == accountId }
         cancelOrphanedOrders(persisted, discovered.map { it.conditionId }.toSet(), accountId)
         persisted?.markets?.forEach { saved ->
             states.firstOrNull { it.market.conditionId == saved.conditionId }?.restore(saved)
         }
+        realizedPnlBaseline = restoredRealizedBaseline(persisted, states.sumOf { it.realizedPnl })
         currentLiveStates = states
-        val engine = EventMakerLiveEngine(config, quotePlanner, riskPolicy, executionPort)
+        val engine = EventMakerLiveEngine(
+            config,
+            quotePlanner,
+            riskPolicy,
+            executionPort,
+            initialRealizedPnl = realizedPnlBaseline
+        )
         engine.registerRestoredOrders(states, accountId)
         currentEngine = engine
 
@@ -293,6 +344,8 @@ class EventMakerStrategyService(
             }
         }
         status = status.copy(markets = discovered.map { it.question })
+        ensureNoUnmanagedOpenOrders(accountId, persisted)
+        ensureNoUnmanagedPositions(accountId, persisted)
 
         stateMutex.withLock {
             val initial = runEngineTick(engine, states, books, accountId)
@@ -342,15 +395,21 @@ class EventMakerStrategyService(
         } finally {
             pollJob?.cancel()
             reconcileJob?.cancel()
-            stateMutex.withLock {
-                val cleanup = engine.cancelAll(states, accountId)
-                applyEngineResult(cleanup)
-                updateStatus(states, books, trades, bookUpdates)
-                persistLive(status.startedAt, accountId, states)
+            try {
+                stateMutex.withLock {
+                    val cleanup = engine.cancelAll(states, accountId)
+                    applyEngineResult(cleanup)
+                    updateStatus(states, books, trades, bookUpdates)
+                    persistLive(status.startedAt, accountId, states)
+                }
+            } catch (e: Exception) {
+                logger.error("Failed to cancel and persist live event-maker state during shutdown", e)
+                status = status.copy(lastError = "shutdown_state_persist_failed:${e.message}")
+            } finally {
+                ws.close()
+                client.close()
+                if (runId == generation.get()) status = status.copy(running = false, stoppedAt = System.currentTimeMillis())
             }
-            ws.close()
-            client.close()
-            if (runId == generation.get()) status = status.copy(running = false, stoppedAt = System.currentTimeMillis())
         }
     }
 
@@ -399,19 +458,124 @@ class EventMakerStrategyService(
         val books: MutableMap<String, MarketBook>
     )
 
-    private suspend fun cancelOrphanedOrders(
+    internal suspend fun ensureNoUnmanagedOpenOrders(
+        accountId: Long,
+        persisted: EventMakerPersistedState?
+    ) {
+        val activeOrderIds = executionPort.listOpenOrderIds(accountId).getOrElse {
+            throw IllegalStateException("open_orders_unavailable:${it.message}", it)
+        }
+        val managedOrderIds = persisted?.markets
+            ?.mapNotNull { it.activeOrderId?.takeIf(String::isNotBlank) }
+            ?.toSet()
+            .orEmpty()
+        val unmanaged = activeOrderIds - managedOrderIds
+        if (unmanaged.isNotEmpty()) {
+            throw IllegalStateException("unmanaged_open_orders:${unmanaged.sorted().joinToString(",")}")
+        }
+    }
+
+    internal suspend fun ensureNoUnmanagedPositions(
+        accountId: Long,
+        persisted: EventMakerPersistedState?
+    ) {
+        val activeConditionIds = executionPort.listOpenPositionConditionIds(accountId).getOrElse {
+            throw IllegalStateException("positions_unavailable:${it.message}", it)
+        }
+        val managedConditionIds = persisted?.markets
+            ?.filter {
+                val inventory = it.inventoryShares.toBigDecimalOrNull()
+                    ?: throw IllegalStateException("persisted_inventory_invalid:${it.conditionId}")
+                inventory > BigDecimal.ZERO
+            }
+            ?.map { it.conditionId.lowercase() }
+            ?.toSet()
+            .orEmpty()
+        val normalizedActiveConditionIds = activeConditionIds.map { it.lowercase() }.toSet()
+        val unmanaged = normalizedActiveConditionIds - managedConditionIds
+        val missing = managedConditionIds - normalizedActiveConditionIds
+        if (unmanaged.isNotEmpty() || missing.isNotEmpty()) {
+            throw IllegalStateException(
+                "open_position_state_mismatch:unmanaged=${unmanaged.sorted().joinToString(",")}:" +
+                    "missing=${missing.sorted().joinToString(",")}"
+            )
+        }
+    }
+
+    internal fun restoredRealizedBaseline(
+        persisted: EventMakerPersistedState?,
+        restoredRealizedPnl: Double
+    ): Double {
+        if (persisted == null) return 0.0
+        val persistedTotal = persisted.cumulativeRealizedPnl.takeIf { it.isFinite() } ?: 0.0
+        val inferredMarketTotal = persisted.markets.sumOf { it.realizedPnl }
+        val cumulative = if (kotlin.math.abs(persistedTotal) <= 1e-9 && kotlin.math.abs(inferredMarketTotal) > 1e-9) {
+            inferredMarketTotal
+        } else {
+            persistedTotal
+        }
+        return cumulative - restoredRealizedPnl
+    }
+
+    private fun validatePersistedOwner(persisted: EventMakerPersistedState?, accountId: Long) {
+        if (persisted == null) return
+        if (persisted.mode != EventMakerMode.LIVE.name) {
+            throw IllegalStateException("persisted_state_mode_mismatch:${persisted.mode}")
+        }
+        if (persisted.accountId != accountId) {
+            throw IllegalStateException("persisted_state_account_mismatch:${persisted.accountId}!=$accountId")
+        }
+    }
+
+    internal suspend fun cancelOrphanedOrders(
         persisted: EventMakerPersistedState?,
         discoveredConditionIds: Set<String>,
         accountId: Long
     ) {
-        persisted?.markets
-            ?.filter { it.conditionId !in discoveredConditionIds && !it.activeOrderId.isNullOrBlank() }
-            ?.forEach { saved ->
-                val orderId = saved.activeOrderId ?: return@forEach
+        val orphaned = persisted?.markets
+            ?.filter { it.conditionId !in discoveredConditionIds }
+            .orEmpty()
+        for (saved in orphaned) {
+            val inventory = saved.inventoryShares.toBigDecimalOrNull()
+                ?.takeIf { it >= BigDecimal.ZERO }
+                ?: throw IllegalStateException("orphan_inventory_invalid:${saved.conditionId}")
+            val orderId = saved.activeOrderId?.takeIf { it.isNotBlank() }
+            if (orderId != null) {
                 executionPort.cancel(accountId, orderId).getOrElse {
                     throw IllegalStateException("orphan_order_cancel_failed:$orderId:${it.message}", it)
                 }
+                confirmCanceledWithoutFill(accountId, saved, orderId)
             }
+            if (inventory > BigDecimal.ZERO) {
+                throw IllegalStateException("orphan_inventory_requires_reconciliation:${saved.conditionId}:$inventory")
+            }
+        }
+    }
+
+    private suspend fun confirmCanceledWithoutFill(
+        accountId: Long,
+        saved: EventMakerPersistedMarket,
+        orderId: String
+    ) {
+        val persistedMatched = saved.activeOrderMatchedShares?.toBigDecimalOrNull()
+            ?.takeIf { it >= BigDecimal.ZERO }
+            ?: throw IllegalStateException("orphan_order_matched_invalid:$orderId")
+        var lastFailure: String? = null
+        repeat(ORPHAN_CONFIRM_ATTEMPTS) { attempt ->
+            val result = executionPort.getOrder(accountId, orderId)
+            if (result.isSuccess) {
+                val snapshot = result.getOrThrow()
+                if (snapshot.matchedShares > BigDecimal.ZERO || persistedMatched > BigDecimal.ZERO) {
+                    throw IllegalStateException("orphan_order_has_fill:$orderId:${snapshot.matchedShares}")
+                }
+                if (snapshot.status.uppercase() in CANCELLED_ORDER_STATUSES) return
+                lastFailure = "status=${snapshot.status}"
+            } else {
+                lastFailure = result.exceptionOrNull()?.message ?: "unknown"
+            }
+            if (attempt < ORPHAN_CONFIRM_ATTEMPTS - 1) delay(ORPHAN_CONFIRM_DELAY_MS)
+        }
+        throw IllegalStateException("orphan_order_state_unknown:$orderId:$lastFailure")
     }
 
     private suspend fun runEngineTick(
@@ -420,9 +584,11 @@ class EventMakerStrategyService(
         books: Map<String, MarketBook>,
         accountId: Long
     ): EventMakerEngineResult {
+        if (stopping) return EventMakerEngineResult()
         val now = System.currentTimeMillis()
         val reconciled = engine.reconcile(states, accountId, now)
         if (engine.haltedReason != null) return reconciled
+        if (stopping) return reconciled
         return reconciled.merge(engine.quote(states, books, accountId, now))
     }
 
@@ -451,7 +617,7 @@ class EventMakerStrategyService(
         trades: Long,
         bookUpdates: Long
     ) {
-        val realized = states.sumOf { it.realizedPnl }
+        val realized = realizedPnlBaseline + states.sumOf { it.realizedPnl }
         val unrealized = states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) }
         status = status.copy(
             running = true,
@@ -468,15 +634,22 @@ class EventMakerStrategyService(
     }
 
     private fun persistLive(startedAt: Long?, accountId: Long, states: List<EventMakerLiveState>) {
-        runCatching {
-            stateStore.save(
-                EventMakerPersistedState(
-                    mode = EventMakerMode.LIVE.name,
-                    accountId = accountId,
-                    startedAt = startedAt,
-                    markets = states.map { it.toPersisted() }
-                )
+        stateStore.save(
+            EventMakerPersistedState(
+                mode = EventMakerMode.LIVE.name,
+                accountId = accountId,
+                startedAt = startedAt,
+                cumulativeRealizedPnl = realizedPnlBaseline + states.sumOf { it.realizedPnl },
+                markets = states.map { it.toPersisted() }
             )
-        }.onFailure { logger.warn("Failed to persist event-maker state", it) }
+        )
+    }
+
+    companion object {
+        private const val ORPHAN_CONFIRM_ATTEMPTS = 3
+        private const val ORPHAN_CONFIRM_DELAY_MS = 250L
+        private val CANCELLED_ORDER_STATUSES = setOf(
+            "CANCELLED", "CANCELED", "EXPIRED", "REJECTED"
+        )
     }
 }

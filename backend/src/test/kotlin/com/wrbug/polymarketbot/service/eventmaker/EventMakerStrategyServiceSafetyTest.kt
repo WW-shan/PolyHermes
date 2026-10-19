@@ -1,42 +1,157 @@
 package com.wrbug.polymarketbot.service.eventmaker
 
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
+import java.nio.file.Path
 
 class EventMakerStrategyServiceSafetyTest {
-    private val service = EventMakerStrategyService(
-        proxyUrl = "",
-        riskPolicy = EventMakerRiskPolicy(),
-        quotePlanner = EventMakerQuotePlanner(),
-        executionPort = NoopExecutionPort(),
-        shadowExecutionPort = EventMakerShadowExecutionPort(),
-        stateStore = EventMakerStateStore()
-    )
+    @TempDir
+    lateinit var tempDir: Path
+
+    private val executionPort = NoopExecutionPort()
 
     @Test
     fun `live mode is rejected unless explicitly enabled`() {
+        val service = service()
+
         val result = service.start(EventMakerConfig(mode = EventMakerMode.LIVE, accountId = 1L))
 
         assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull()?.message == "live_trading_disabled")
+        assertEquals("live_trading_disabled", result.exceptionOrNull()?.message)
         assertFalse(service.currentStatus().running)
     }
 
     @Test
     fun `live mode requires account`() {
+        val service = service()
+
         val result = service.start(
             EventMakerConfig(mode = EventMakerMode.LIVE, liveTradingEnabled = true)
         )
 
         assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull()?.message == "live_account_required")
+        assertEquals("live_account_required", result.exceptionOrNull()?.message)
         assertFalse(service.currentStatus().running)
     }
 
+    @Test
+    fun `live mode rejects persisted state owned by another account`() {
+        val stateFile = tempDir.resolve("state.json")
+        EventMakerStateStore(stateFile.toString()).save(
+            EventMakerPersistedState(
+                mode = EventMakerMode.LIVE.name,
+                accountId = 99L,
+                startedAt = 1_000L,
+                markets = emptyList()
+            )
+        )
+        val service = service(stateFile)
+
+        val result = service.start(
+            EventMakerConfig(mode = EventMakerMode.LIVE, accountId = 1L, liveTradingEnabled = true)
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals("persisted_state_account_mismatch:99!=1", result.exceptionOrNull()?.message)
+        assertEquals(0, executionPort.validationCount)
+        assertFalse(service.currentStatus().running)
+    }
+
+    @Test
+    fun `live mode rejects corrupt persisted state`() {
+        val stateFile = tempDir.resolve("state.json")
+        Files.writeString(stateFile, "not-json")
+        val service = service(stateFile)
+
+        val result = service.start(
+            EventMakerConfig(mode = EventMakerMode.LIVE, accountId = 1L, liveTradingEnabled = true)
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals("persisted_state_rejected:event_maker_state_corrupt", result.exceptionOrNull()?.message)
+        assertEquals(0, executionPort.validationCount)
+        assertFalse(service.currentStatus().running)
+    }
+
+    @Test
+    fun `live mode rejects active orders that are not in persisted state`() {
+        val service = service()
+        executionPort.openOrderIds = setOf("orphan-1")
+
+        val result = service.start(
+            EventMakerConfig(mode = EventMakerMode.LIVE, accountId = 1L, liveTradingEnabled = true)
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals("unmanaged_open_orders:orphan-1", result.exceptionOrNull()?.message)
+        assertEquals(1, executionPort.validationCount)
+        assertFalse(service.currentStatus().running)
+    }
+
+    @Test
+    fun `live mode rejects positions that are not in persisted state`() {
+        val service = service()
+        executionPort.positionConditionIds = setOf("orphan-position")
+
+        val result = service.start(
+            EventMakerConfig(mode = EventMakerMode.LIVE, accountId = 1L, liveTradingEnabled = true)
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(
+            "open_position_state_mismatch:unmanaged=orphan-position:missing=",
+            result.exceptionOrNull()?.message
+        )
+        assertEquals(1, executionPort.validationCount)
+        assertFalse(service.currentStatus().running)
+    }
+
+    @Test
+    fun `realized pnl baseline carries prior profit without double counting restored markets`() {
+        val service = service()
+        val persisted = EventMakerPersistedState(
+            mode = EventMakerMode.LIVE.name,
+            accountId = 1L,
+            startedAt = 1_000L,
+            cumulativeRealizedPnl = 1.25,
+            markets = emptyList()
+        )
+
+        val baseline = service.restoredRealizedBaseline(persisted, restoredRealizedPnl = 0.75)
+
+        assertEquals(0.50, baseline, 1e-9)
+    }
+
+    private fun service(stateFile: Path = tempDir.resolve("unused-state.json")) = EventMakerStrategyService(
+        proxyUrl = "",
+        riskPolicy = EventMakerRiskPolicy(),
+        quotePlanner = EventMakerQuotePlanner(),
+        executionPort = executionPort,
+        shadowExecutionPort = EventMakerShadowExecutionPort(),
+        stateStore = EventMakerStateStore(stateFile.toString())
+    )
+
     private class NoopExecutionPort : EventMakerExecutionPort {
-        override suspend fun validateAccount(accountId: Long): Result<Unit> = Result.success(Unit)
+        var validationCount: Int = 0
+            private set
+        var openOrderIds: Set<String> = emptySet()
+        var positionConditionIds: Set<String> = emptySet()
+
+        override suspend fun validateAccount(accountId: Long): Result<Unit> {
+            validationCount++
+            return Result.success(Unit)
+        }
+
+        override suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>> =
+            Result.success(openOrderIds)
+
+        override suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>> =
+            Result.success(positionConditionIds)
 
         override suspend fun place(
             accountId: Long,

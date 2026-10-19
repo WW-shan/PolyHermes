@@ -593,3 +593,56 @@
 - `check-event-maker-watch.ps1` 增加 stdout/stderr 异常扫描：Data API 失败、Gamma 失败、HTTP 429、线程异常、OOM。
 - 已实际运行：`logIssues=0`、`stderrBytes=0`；当前 v2 等待任务存活，已完成 3 轮，最近一轮仍为 qualified=6、activityPassed=0、selected=0。
 - 该检查只用于观测，不影响正在运行的 Shadow 进程。
+### 08:18 只读审查发现状态安全缺口并停止等待任务
+
+- 动作：停止等待中的只读 Shadow/发现任务；包装进程 PID 7652、JavaExec PID 14836，停止前均存活。
+- 停止前状态：共 12 轮发现，最近一轮 `qualifiedMarkets=6`、`activityPassedMarkets=0`、`selectedMarkets=0`，拒绝原因全部为 `recent_trades_30m_below_min=6`；`logIssues=0`、`stderrBytes=0`。
+- 证据：`backend/build/research/event-maker-shadow-watch-v2-20261019/discovery-attempts.jsonl`、`market-discovery.json`、`stdout.log`。
+- 停止原因：只读代码审计发现实盘状态恢复/对账缺口，需要先修复并回归测试，不能在旧实现上继续等待：
+  1. `EventMakerStateStore.load()` 对损坏 JSON 和不支持版本返回 `null`，LIVE 可能把未知旧状态当作全新启动。
+  2. 已持久化状态若属于其他账户会被静默忽略，旧订单/持仓可能失去跟踪。
+  3. 不在本轮发现列表中的活动订单只撤销、不取得终止快照；已有持仓会被后续状态写入丢弃。
+  4. 部分卖出后完成回合时，`EventMakerCycleRecord` 的 PnL/股数只包含最后一次卖出，和 `realizedPnl` 不一致。
+- 安全影响：以上问题不影响这次纯只读 Shadow，但不满足真实资金“未知状态必须 fail-closed”和逐回合可对账要求。
+- 下一步：先修状态存储、启动恢复、孤儿持仓/订单和部分成交回合记账；补测试；全量回归；提交后再重启干净 Shadow。
+### 08:20-08:40 Live 状态恢复与停止对账加固
+
+- 状态文件读取由“损坏即返回 null”改为 fail-closed：损坏 JSON、空文件、版本不支持、LIVE 缺少账户、重复 condition、缺失 favorite token、非法库存/订单快照都会拒绝加载。
+- 状态所有权校验：持久化状态必须属于当前 LIVE 账户；启动前读取账户全部活跃订单，任何不在状态文件中的订单都会以 `unmanaged_open_orders` 拒绝启动。
+- 持仓校验：通过 Data API 读取账户当前正数持仓 conditionId；未登记持仓或状态中有库存但账户无对应持仓时拒绝启动；同一 condition 出现多个资产也拒绝。
+- 孤儿处理：不在本轮发现列表的活动订单先撤销，再读取终止快照确认无成交；孤儿库存、撤单失败、仍有成交或无法确认状态全部 fail-closed。
+- 停止清理：撤单后必须读取最终订单快照；部分成交先写入库存和 cycle，再清除 activeOrder；查询失败或订单仍活跃时保留 `activeOrder*`。
+- 部分卖出记账：`EventMakerCycleRecord` 现在累计同一入场后的全部卖出股数和 PnL，而不是只记录最后一次卖出。
+- 持久化新增 `favoriteTokenId`，恢复时校验 conditionId + favorite token 完全一致；逐笔 fills 会重放并核对 inventory、realizedPnl、completedCycles 和 cycle records。
+- 风险预算现在计入未成交买单敞口，避免多个未成交买单绕过 `maxTotalInventoryNotional`。
+- 协程作用域由 `SupervisorJob` 改为普通 `Job`：持久化或对账子任务失败会终止整个 LIVE 运行，不再由主循环继续报价。
+- 状态写入失败不再吞掉；运行中写入失败会触发退出清理；停止时写入失败会写入 `stop_state_persist_failed`。
+
+### 08:41 稳健性交叉核验
+
+- 新增 `scripts/analyze-event-maker-robustness.ps1`，对完整池结果做标签/价格桶 × 训练/测试分段、市场和自然月 cluster bootstrap、集中度和参数选择脆弱性分析。
+- 新增报告 `docs/zh/event-maker-robustness-crosscheck-2026-10-19.md`，并在主回测报告增加第 13 节摘要。
+- 结果：全部市场 ROI +0.807%，95% cluster bootstrap 区间 [-0.647%, +1.904%]；自然月聚类区间 [-0.730%, +1.898%]；测试市场区间 [-1.545%, +1.931%]；均包含 0。
+- 113 个训练期正收益配置中，41 个测试期非正（36.3%）；选中配置测试排名第 15。结论仍是“可继续 Shadow，不可实盘”。
+
+### 08:45 Shadow 审计脚本自测
+
+- `scripts/audit-event-maker-shadow.ps1` 增加逐笔 fill 重放，核对 inventory、realizedPnl、completedCycles、cycle 数量及 cycle PnL 总和。
+- 构造临时有效证据：脚本 exit 0；将 cycle PnL 从 0.10 改为 0.04 后，脚本 exit 1，输出 `cyclePnlReplayMismatch:condition:0.04+0!=0.1`。
+- 临时目录在 `backend/build/research/` 内校验绝对路径后删除。
+- 复测历史 Shadow smoke：`fill=0`、`activeOrders=0`、`duplicateTradeRows=0`，审计通过。
+
+### 08:46 回归与当前下一步
+
+- 定向测试：`.\gradlew.bat test --tests "com.wrbug.polymarketbot.service.eventmaker.*" --console=plain`，BUILD SUCCESSFUL。
+- 全量测试：97 suites / 473 tests / 0 failures / 0 errors / 2 skipped。
+- 当前没有运行中的 Shadow 或回测进程；v2 等待任务在第 12 轮仍为 0 个活动通过市场，已因安全修复停止。
+- 下一步：提交并推送本轮安全修复和文档；随后用新代码重启干净等待+Shadow。严格条件不变，不通过降低门槛制造 fill。
+### 09:00 最终安全收口与回归
+
+- 状态 schema 升到 version 2；新增状态级 `cumulativeRealizedPnl`，跨进程携带已完成市场的已实现 PnL。
+- 风险策略、status 和状态写入统一使用“跨进程累计已实现 PnL + 当前库存浮亏”，避免重启后损失上限归零。
+- conditionId 在账户持仓对账前统一小写，避免大小写差异造成误判。
+- 新增 realized PnL baseline 单元测试：已有累计 1.25、恢复市场 0.75 时，baseline 为 0.50，不重复计数。
+- 全量测试：97 suites / 474 tests / 0 failures / 0 errors / 2 skipped；eventmaker/research eventmaker 93 tests。
+- 当前无 Shadow/Backtest 进程；下一步为提交、推送、重启新代码等待+Shadow。

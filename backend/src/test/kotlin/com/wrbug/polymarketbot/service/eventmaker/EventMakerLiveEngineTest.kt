@@ -174,6 +174,7 @@ class EventMakerLiveEngineTest {
         val missing = engine.reconcile(listOf(state), 7L, now + 1)
         assertTrue(missing.haltedReason!!.startsWith("order_state_unknown"))
 
+        port.getOrderFailure = null
         val cancelEngine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
         cancelEngine.registerRestoredOrders(listOf(state), 7L)
         val canceled = cancelEngine.cancelAll(listOf(state), 7L)
@@ -227,8 +228,92 @@ class EventMakerLiveEngineTest {
 
         assertEquals(1, result.errors.size)
         assertNotNull(state.activeOrder)
-        assertTrue(result.errors.single().startsWith("stop_cancel_failed"))
+        assertTrue(result.errors.single().startsWith("stop_order_still_active"))
     }
+
+    @Test
+    fun `stop reconciles partial fills before clearing the active order`() = runTest {
+        val now = System.currentTimeMillis()
+        val state = EventMakerLiveState(market, config)
+        state.onBook(book(0.95, 0.97, now))
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        val order = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now).placed.single().order
+        port.fill(order.orderId, BigDecimal("2.00"))
+
+        val result = engine.cancelAll(listOf(state), 7L)
+
+        assertTrue(result.errors.isEmpty())
+        assertEquals(1, result.canceled.size)
+        assertNull(state.activeOrder)
+        assertEquals(BigDecimal("2.00"), state.inventoryShares)
+    }
+
+    @Test
+    fun `stop lookup failure preserves active order`() = runTest {
+        val now = System.currentTimeMillis()
+        val state = EventMakerLiveState(market, config)
+        state.onBook(book(0.95, 0.97, now))
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+        port.getOrderFailure = IllegalStateException("timeout")
+
+        val result = engine.cancelAll(listOf(state), 7L)
+
+        assertEquals(1, result.errors.size)
+        assertNotNull(state.activeOrder)
+        assertTrue(result.errors.single().startsWith("stop_state_unconfirmed"))
+    }
+    @Test
+    fun `pending buy order consumes aggregate risk budget`() = runTest {
+        val now = System.currentTimeMillis()
+        val limitedConfig = config.copy(maxTotalInventoryNotional = 15.0)
+        val existing = EventMakerLiveState(market, limitedConfig)
+        existing.onBook(book(0.95, 0.97, now))
+        existing.onOrderPlaced(
+            EventMakerLiveOrder(
+                orderId = "existing-buy",
+                side = EventMakerSide.BUY,
+                price = BigDecimal("0.96"),
+                originalShares = BigDecimal("10.00"),
+                matchedShares = BigDecimal.ZERO,
+                status = "LIVE",
+                createdAt = now
+            )
+        )
+        val candidate = EventMakerLiveState(market.copy(conditionId = "condition-2"), limitedConfig)
+        candidate.onBook(book(0.95, 0.97, now))
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(limitedConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        val result = engine.quote(
+            listOf(existing, candidate),
+            mapOf("token" to existing.lastBook!!),
+            7L,
+            now
+        )
+
+        assertTrue(result.placed.isEmpty())
+        assertTrue(result.errors.any { it == "risk_blocked:total_inventory_limit" })
+        assertNull(candidate.activeOrder)
+    }
+
+    @Test
+    fun `mismatched placed order is canceled before halt`() = runTest {
+        val now = System.currentTimeMillis()
+        val state = EventMakerLiveState(market, config)
+        state.onBook(book(0.95, 0.97, now))
+        val port = FakeExecutionPort().apply { mismatchPlacement = true }
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        val result = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+
+        assertTrue(result.haltedReason!!.startsWith("execution_order_mismatch"))
+        assertEquals(1, port.cancelCount)
+        assertNull(state.activeOrder)
+    }
+
     private fun book(bid: Double, ask: Double, now: Long) = MarketBook(
         tokenId = "token",
         bids = listOf(BookLevel(bid, 100.0)),
@@ -254,10 +339,17 @@ class EventMakerLiveEngineTest {
         var placeFailure: Throwable? = null
         var getOrderFailure: Throwable? = null
         var cancelFailure: Throwable? = null
+        var mismatchPlacement: Boolean = false
         var cancelCount: Int = 0
             private set
 
         override suspend fun validateAccount(accountId: Long): Result<Unit> = Result.success(Unit)
+
+        override suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>> =
+            Result.success(orders.filterValues { it.status == "LIVE" }.keys.toSet())
+
+        override suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>> =
+            Result.success(emptySet())
 
         override suspend fun place(
             accountId: Long,
@@ -268,7 +360,7 @@ class EventMakerLiveEngineTest {
             val order = EventMakerLiveOrder(
                 orderId = "fake-${sequence.incrementAndGet()}",
                 side = intent.side,
-                price = intent.price,
+                price = if (mismatchPlacement) intent.price.add(BigDecimal("0.01")) else intent.price,
                 originalShares = intent.shares,
                 matchedShares = BigDecimal.ZERO,
                 status = "LIVE"

@@ -75,6 +75,12 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
 
     override suspend fun validateAccount(accountId: Long): Result<Unit> = Result.success(Unit)
 
+    override suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>> = synchronized(lock) {
+        Result.success(orders.filterValues { it.status == "LIVE" }.keys.toSet())
+    }
+
+    override suspend fun listOpenPositionConditionIds(accountId: Long): Result<Set<String>> = Result.success(emptySet())
+
     override suspend fun place(
         accountId: Long,
         market: LivePaperMarket,

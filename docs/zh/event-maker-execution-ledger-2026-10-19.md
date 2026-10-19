@@ -1,12 +1,14 @@
 # Event Maker 执行台账（2026-10-19）
 
-> 最后更新：2026-10-19 07:29 +08:00
+> 最后更新：2026-10-19 09:01 +08:00
 > 目的：把目标、计划、实际动作、命令、结果、证据和恢复步骤持续写入仓库，避免依赖聊天记忆。
 > 当前状态：**进行中，不得标记完成**
 > 权威计划：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)
 > 逐轮日志：[event-maker-work-log.md](event-maker-work-log.md)
 > 运行手册：[event-maker-runbook.md](event-maker-runbook.md)
 > 正式回测：[event-maker-robust-backtest-2026-10-19.md](event-maker-robust-backtest-2026-10-19.md)
+> 稳健性核验：[event-maker-robustness-crosscheck-2026-10-19.md](event-maker-robustness-crosscheck-2026-10-19.md)
+> Live 验证：[event-maker-live-execution-validation-2026-10-19.md](event-maker-live-execution-validation-2026-10-19.md)
 
 ## 1. 当前目标
 
@@ -36,13 +38,17 @@
 | TEST-1 | event-maker/research 定向测试和全量测试 | 已完成 | 95 suites / 445 tests / 0 failures / 2 skipped |
 | GIT-1 | 提交并推送全部已验证改动 | 已完成 | `06d168f`、`main -> main` |
 | OBS-2 | 分析 Shadow 完成结果 | 部分完成 | 10min/1min 冒烟通过；旧 2h/12h 无效或已停止 |
+| SAFE-1 | 状态文件、账户级订单/持仓、孤儿和停止对账加固 | 已完成 | 97 suites / 474 tests；Live 验证报告 |
+| BT-4 | 标签/价格桶 × 期间、cluster bootstrap、参数选择脆弱性 | 已完成 | 交叉核验报告、分析脚本 |
+| GIT-3 | 提交并推送本轮安全修复与文档 | 待执行 | 提交后回填 hash |
+| OBS-4 | 用新代码重启严格等待 + Shadow | 待执行 | 提交后启动；不降低门槛 |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围 |
 
 ## 3. 最近后台进程与状态
 
 | 进程 | PID | 开始时间 | 预计结束 | 输出目录 | 当前状态 |
 |---|---:|---|---|---|---|
-| 当前等待+Shadow 任务 | 7652 / 14836 | 08:05 | 等待最多 180m；选出后 Shadow 120m | `backend/build/research/event-maker-shadow-watch-v2-20261019/` | waiting；每 60s 重新发现；每轮记录活动拒绝原因 |
+| v2 等待+Shadow 任务 | 7652 / 14836 | 08:05 | 08:18 已停止 | `backend/build/research/event-maker-shadow-watch-v2-20261019/` | 12 次发现均为 0 活动通过；因状态恢复安全修复停止；待提交后用新代码重启 |
 | 旧被动入场 2h/12h | 旧会话 | 04:50 / 04:52 | 已结束 | `event-maker-shadow-passive-2c-*` | 历史记录；2h 收尾类冲突无效；12h 已停止；均 0 fill |
 
 轮询方式：运行 `.\scripts\check-event-maker-watch.ps1`；不要重复启动同一输出目录的 Shadow。
@@ -262,3 +268,16 @@ cd D:\Project\PolyHermes\backend
 - 首轮已记录 `qualified=6 activityPassed=0 selected=0 activityRejections={recent_trades_30m_below_min=6}`。
 - 参数仍为严格条件：0.97～0.99、24h >=100,000、30m/2h 活动门槛、`minSpreadTicks=2`、成交因子 1。
 - 进程运行期间禁止编译和测试；轮询使用 `.\scripts\check-event-maker-watch.ps1`。
+### 08:18-08:46 状态恢复安全加固记录
+
+- 08:18 停止只读等待任务 PID 7652/14836；停止前 12 轮发现，最近一轮 qualified=6、activityPassed=0、selected=0，原因为 `recent_trades_30m_below_min=6`。
+- 修复状态读取：损坏 JSON、空文件、版本不支持、错账户、重复 condition、缺失 favorite token、非法订单/库存均 fail-closed。
+- 新增账户级启动对账：活跃订单必须全部在状态文件中；正数持仓 conditionId 必须与状态库存集合一致；同 condition 多资产拒绝。
+- 新增孤儿恢复：孤儿订单撤销并确认终态无成交；孤儿库存或无法确认状态阻止启动。
+- 新增停止对账：撤单后读取最终订单快照，部分成交先写入库存/cycle；无法确认时保留 activeOrder。
+- 修复部分卖出 cycle 记账：跨多个卖出订单累计 shares 和 PnL。
+- 新增 favoriteTokenId 持久化和 fill ledger 重放校验。
+- 风险预算计入未成交买单；协程作用域改为普通 Job，持久化/对账失败会终止整个 LIVE 运行。
+- 新增稳健性交叉核验脚本和报告；全部市场、训练、测试、自然月 cluster bootstrap 95% 区间均包含 0。
+- 全量测试：97 suites / 474 tests / 0 failures / 0 errors / 2 skipped。
+- 当前无 Shadow/Backtest 进程。下一步：提交推送 → 重启新代码等待任务 → 分析 Shadow evidence → 处理真实 Live smoke 阻塞项。
