@@ -50,7 +50,7 @@ foreach ($row in $markoutRows) {
 
 $fillAnalysisScript = Join-Path $PSScriptRoot "analyze-event-maker-shadow-fills.ps1"
 $fillAnalysisFile = Join-Path $OutputDir "fill-analysis.json"
-$fillVolumeFactor = if ($null -ne $execution.fillVolumeFactor) { [double]$execution.fillVolumeFactor } else { -1 }
+$fillVolumeFactor = if ($null -ne $execution.fillVolumeFactor) { [double]$execution.fillVolumeFactor } else { 1.0 }
 & $fillAnalysisScript -OutputDir $OutputDir -FillVolumeFactor $fillVolumeFactor -WriteReport | Out-Null
 $fillAnalysis = Get-Content -LiteralPath $fillAnalysisFile -Raw -Encoding UTF8 | ConvertFrom-Json
 $modelFillOrders = [int]$fillAnalysis.summary.ordersMeetingModelFill

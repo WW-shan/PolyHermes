@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 560 tests 通过；跨进程 UTC 日亏损锚点、SETTLE 结算账本（含部分卖出后结算）和 pending redemption 恢复已补齐。v2–v5 Shadow 的缺陷已修复；v6 已八次挂单并八次 requote 撤单，当前 FLAT、0 fill，仍缺真实成交验收。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
-> 最后更新：2026-10-20 04:15 +08:00<br>
+> 最后更新：2026-10-20 04:45 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -609,3 +609,9 @@ cd D:\Project\PolyHermes\backend
 - 新增两条 adapter 反例：negRisk 不匹配拒绝读取；赎回数量不匹配拒绝标记 REDEEMED。
 - 隔离 worktree 全量回归：103 suites / 560 tests / 0 failures / 0 errors / 2 skipped。
 - 这仍是 mock/回执结构级验证；真实 Builder Relayer、真实链上回执和 pUSD 到账必须由小资金 Live smoke 证明。
+### 10.28 2026-10-20 04:45 审计脚本旧产物兼容
+
+- 旧版 `execution-diagnostics.json` 没有 `fillVolumeFactor` 字段；审计脚本原先回退为 `-1`，会被成交复核脚本拒绝。
+- 现在缺字段时回退为保守默认 `1.0`，只用于读取历史证据；正式 Shadow 仍由 `watch-process.json` 提供 q20 factor。
+- 对 `backend/build/research` 下全部旧 Shadow 目录做了一轮回归：最终干净产物通过；早期中断目录因 `activeOrders` 非零仍按预期失败。
+- v6 在 04:44 仍正常运行，FLAT、0 fill、0 cycle、0 inventory，`logIssues=0`、`stderrBytes=0`。

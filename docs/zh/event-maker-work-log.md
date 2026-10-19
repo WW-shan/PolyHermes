@@ -1287,3 +1287,9 @@
 - 新增 adapter 反例测试：negRisk 不匹配、赎回数量不匹配均拒绝。
 - 隔离 worktree 全量测试：103 suites / 560 tests / 0 failures / 0 errors / 2 skipped。
 - v6 在 04:11 仍正常运行，FLAT、0 fill、0 cycle、0 inventory；本轮未替换运行中 v6 的构建产物。
+### 04:45 审计脚本旧产物兼容
+
+- 旧版 Shadow 的 `execution-diagnostics.json` 没有 `fillVolumeFactor`；`audit-event-maker-shadow.ps1` 原先回退 `-1`，导致旧产物无法复核。
+- 改为缺字段时使用保守默认 `1.0`；正式运行仍以 `watch-process.json` 的 `shadowFillVolumeFactor=20` 为准。
+- 对全部历史 Shadow 目录执行审计回归：最终干净产物通过，早期中断目录因 activeOrders 非零按预期失败。
+- v6 在 04:44 仍正常运行，未放宽任何正式门槛。
