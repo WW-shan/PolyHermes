@@ -588,3 +588,8 @@
 - 新后台任务 PID：PowerShell `7652`，JavaExec `14836`；输出 `event-maker-shadow-watch-v2-20261019/`。
 - 首轮：qualified=6、activityPassed=0、selected=0，`activityRejections={recent_trades_30m_below_min=6}`；等待循环正常进入下一次重试。
 - 检查脚本默认目录已切到 v2；运行期间禁止编译和跑测试。
+### 08:09 增强后台状态检查
+
+- `check-event-maker-watch.ps1` 增加 stdout/stderr 异常扫描：Data API 失败、Gamma 失败、HTTP 429、线程异常、OOM。
+- 已实际运行：`logIssues=0`、`stderrBytes=0`；当前 v2 等待任务存活，已完成 3 轮，最近一轮仍为 qualified=6、activityPassed=0、selected=0。
+- 该检查只用于观测，不影响正在运行的 Shadow 进程。

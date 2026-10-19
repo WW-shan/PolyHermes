@@ -18,6 +18,20 @@ Write-Output "output=$OutputDir"
 Write-Output "wrapperPid=$($launch.pid) wrapperAlive=$([bool]$wrapper)"
 Write-Output "shadowPid=$($shadow.ProcessId) shadowAlive=$([bool]$shadow)"
 
+$stdoutFile = Join-Path $OutputDir "stdout.log"
+$stderrFile = Join-Path $OutputDir "stderr.log"
+$logIssues = @()
+if (Test-Path -LiteralPath $stdoutFile) {
+    $logIssues = @(Select-String -LiteralPath $stdoutFile -Pattern "Data API trades failed|Gamma .* failed|Exception in thread|NoSuchMethodError|OutOfMemoryError|HTTP 429" -Encoding UTF8)
+}
+$stderrLength = 0
+if (Test-Path -LiteralPath $stderrFile) {
+    $stderrLength = (Get-Item -LiteralPath $stderrFile).Length
+}
+Write-Output "logIssues=$($logIssues.Count) stderrBytes=$stderrLength"
+if ($logIssues.Count -gt 0) {
+    $logIssues | Select-Object -Last 5 | ForEach-Object { Write-Output "logIssue=$($_.Line)" }
+}
 $attemptFile = Join-Path $OutputDir "discovery-attempts.jsonl"
 if (Test-Path -LiteralPath $attemptFile) {
     $attempts = @(Get-Content -LiteralPath $attemptFile -Encoding UTF8 | Where-Object { $_.Trim().Length -gt 0 })

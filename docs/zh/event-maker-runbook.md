@@ -149,6 +149,7 @@ cd D:\Project\PolyHermes
 脚本输出：
 
 - `wrapperAlive` / `shadowAlive`：包装进程和 JavaExec 是否存活；
+- `logIssues` / `stderrBytes`：扫描 stdout/stderr 中的 API 失败、HTTP 429、异常和 OOM 信号；
 - `attempts`：已完成发现轮数；
 - `lastAttempt`：最近一轮候选、活动过滤、选择数和停止原因；
 - `state=waiting`：仍在等待；
