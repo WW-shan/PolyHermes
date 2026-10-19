@@ -1198,3 +1198,8 @@
 - wrapper PID `1252`，Java PID `22320`，监控 PID `8120`，启动 `2026-10-20 00:53:09 +08:00`。
 - 首轮 qualified=2、activityPassed=0、selected=0；原因 `recent_trades_30m_below_min=2`。
 - 当前 waiting，日志 0 异常，stderr 为空；门槛不变，运行期间不再改代码。
+### 00:58 回测产物完整性复核
+
+- 数据集：`event-maker-full-v2-7d-20261019-dataset.json.gz`，49,553,423 bytes，SHA-256 `9B8A3F84A3CA47A135ACBE277E018021EC4A2C22DCC7B953E635F07238624424`。
+- 八窗口 summary 各 864 配置；参数邻域 1,008；无 Guard 对照 864。
+- 按正式筛选口径复算，八窗口交集为 2 个配置，与候选报告一致。

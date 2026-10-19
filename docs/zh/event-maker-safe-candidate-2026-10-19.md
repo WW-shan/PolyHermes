@@ -195,6 +195,21 @@ backend/build/research/event-maker-candidate-neighborhood-age1800-20261019-summa
 backend/build/research/event-maker-no-guard-age1800-horizon-1d-candidate-20261019-summary.csv
 ```
 
+数据集核验（2026-10-20）：
+
+```text
+file: event-maker-full-v2-7d-20261019-dataset.json.gz
+bytes: 49,553,423
+sha256: 9B8A3F84A3CA47A135ACBE277E018021EC4A2C22DCC7B953E635F07238624424
+```
+
+复核结果：
+
+- 八窗口 summary 均为 864 个配置；
+- 参数邻域为 1,008 个配置；
+- 同数据无 Guard 对照为 864 个配置；
+- 按“每窗口零结算亏损、总/训练/测试 ROI > 0、训练成交市场 >= 20”复算，八窗口交集为 2 个配置，与报告一致。
+
 这些文件位于被 Git 忽略的 `backend/build/`；仓库只提交可复查的报告、命令和结论。
 
 ## 13. 最终判断
