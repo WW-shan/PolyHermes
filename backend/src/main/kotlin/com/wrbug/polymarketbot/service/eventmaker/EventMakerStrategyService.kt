@@ -263,6 +263,7 @@ class EventMakerStrategyService(
             for (event in channel) {
                 if (runId != generation.get()) break
                 var shouldStop = false
+                var stateChanged = false
                 stateMutex.withLock {
                     when (event) {
                         is LiveFeedEvent.BookUpdated -> {
@@ -370,6 +371,7 @@ class EventMakerStrategyService(
                 discovered.forEach { market -> client.getRecentTrades(market).forEach { channel.trySend(LiveFeedEvent.Trade(it)) } }
             }
         }
+        var lastPersistAt = System.currentTimeMillis()
         val reconcileJob = runScope?.launch {
             while (isActive) {
                 delay(config.reconcileSeconds * 1000L)
@@ -378,6 +380,7 @@ class EventMakerStrategyService(
                     applyEngineResult(result)
                     updateStatus(states, books, trades, bookUpdates)
                     persistLive(status.startedAt, accountId, states)
+                    lastPersistAt = System.currentTimeMillis()
                 }
             }
         }
@@ -395,6 +398,7 @@ class EventMakerStrategyService(
             for (event in channel) {
                 if (runId != generation.get()) break
                 var shouldStop = false
+                var stateChanged = false
                 stateMutex.withLock {
                     when (event) {
                         is LiveFeedEvent.BookUpdated -> {
@@ -419,11 +423,21 @@ class EventMakerStrategyService(
                         }
                         is LiveFeedEvent.Unknown -> logger.debug("Event maker live unknown WS event: ${event.eventType}")
                     }
-                    val result = runEngineTick(engine, states, books, accountId)
+                    // Book/trade events only drive quoting. Order reconciliation is a
+                    // REST call per active order, so it stays on the dedicated
+                    // reconcileJob cadence instead of firing on every WS event.
+                    val result = runQuoteTick(engine, states, books, accountId)
                     shouldStop = applyEngineResult(result) || engine.haltedReason != null
+                    stateChanged = result.placed.isNotEmpty() ||
+                        result.canceled.isNotEmpty() ||
+                        result.reconciled.isNotEmpty()
                 }
                 updateStatus(states, books, trades, bookUpdates)
-                persistLive(status.startedAt, accountId, states)
+                val now = System.currentTimeMillis()
+                if (stateChanged || now - lastPersistAt >= LIVE_PERSIST_INTERVAL_MS) {
+                    persistLive(status.startedAt, accountId, states)
+                    lastPersistAt = now
+                }
                 if (shouldStop) break
                 if (riskPolicy.shouldHalt(config, status.realizedPnl + status.unrealizedPnl)) {
                     status = status.copy(lastError = "daily_loss_limit")
@@ -625,6 +639,22 @@ class EventMakerStrategyService(
         throw IllegalStateException("orphan_order_state_unknown:$orderId:$lastFailure")
     }
 
+    /**
+     * Quote-only tick for the high-frequency WS event loop. It deliberately does
+     * not reconcile orders: that issues one REST lookup per active order and must
+     * stay on the [EventMakerConfig.reconcileSeconds] cadence.
+     */
+    private suspend fun runQuoteTick(
+        engine: EventMakerLiveEngine,
+        states: List<EventMakerLiveState>,
+        books: Map<String, MarketBook>,
+        accountId: Long
+    ): EventMakerEngineResult {
+        if (stopping) return EventMakerEngineResult()
+        engine.haltedReason?.let { return EventMakerEngineResult.halted(it) }
+        return engine.quote(states, books, accountId, System.currentTimeMillis())
+    }
+
     private suspend fun runEngineTick(
         engine: EventMakerLiveEngine,
         states: List<EventMakerLiveState>,
@@ -693,6 +723,11 @@ class EventMakerStrategyService(
     }
 
     companion object {
+        /**
+         * Upper bound on how often the LIVE event loop rewrites the state file when
+         * nothing changed. Order-affecting events always persist immediately.
+         */
+        private const val LIVE_PERSIST_INTERVAL_MS = 5_000L
         private const val ORPHAN_CONFIRM_ATTEMPTS = 3
         private const val ORPHAN_CONFIRM_DELAY_MS = 250L
         private val CANCELLED_ORDER_STATUSES = setOf(

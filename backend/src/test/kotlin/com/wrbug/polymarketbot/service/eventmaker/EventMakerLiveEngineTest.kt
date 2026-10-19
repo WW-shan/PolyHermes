@@ -314,6 +314,21 @@ class EventMakerLiveEngineTest {
         assertNull(state.activeOrder)
     }
 
+    @Test
+    fun `quote does not perform order lookups`() = runTest {
+        // The LIVE event loop quotes on every WS event. Order reconciliation is a
+        // REST call per active order, so quote() must never issue one; otherwise a
+        // busy market would hammer the CLOB API thousands of times per hour.
+        val now = System.currentTimeMillis()
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        val state = EventMakerLiveState(market, config)
+
+        engine.quote(listOf(state), mapOf(market.favoriteTokenId to book(0.975, 0.98, now)), 7L, now)
+
+        assertEquals(0, port.getOrderCount)
+    }
+
     private fun book(bid: Double, ask: Double, now: Long) = MarketBook(
         tokenId = "token",
         bids = listOf(BookLevel(bid, 100.0)),
@@ -341,6 +356,8 @@ class EventMakerLiveEngineTest {
         var cancelFailure: Throwable? = null
         var mismatchPlacement: Boolean = false
         var cancelCount: Int = 0
+            private set
+        var getOrderCount: Int = 0
             private set
 
         override suspend fun validateAccount(accountId: Long): Result<Unit> = Result.success(Unit)
@@ -370,6 +387,7 @@ class EventMakerLiveEngineTest {
         }
 
         override suspend fun getOrder(accountId: Long, orderId: String): Result<EventMakerLiveOrder> {
+            getOrderCount++
             getOrderFailure?.let { return Result.failure(it) }
             return orders[orderId]?.let { Result.success(it) }
                 ?: Result.failure(EventMakerOrderNotFoundException(orderId))
