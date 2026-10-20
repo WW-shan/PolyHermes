@@ -117,6 +117,7 @@ class LivePaperDataClient(
         minRecentTradesPerSide2h: Int = 0,
         minPrice: Double = 0.0,
         maxPrice: Double = 1.0,
+        tags: List<String> = listOf("Politics", "Geopolitics"),
         maxPagesPerTag: Int = DEFAULT_GAMMA_DISCOVERY_PAGES,
         pageLimit: Int = DEFAULT_GAMMA_PAGE_LIMIT
     ): List<LivePaperMarket> = discoverMarketsDetailed(
@@ -133,6 +134,7 @@ class LivePaperDataClient(
         minRecentTradesPerSide2h = minRecentTradesPerSide2h,
         minPrice = minPrice,
         maxPrice = maxPrice,
+        tags = tags,
         maxPagesPerTag = maxPagesPerTag,
         pageLimit = pageLimit
     ).markets
@@ -151,6 +153,7 @@ class LivePaperDataClient(
         minRecentTradesPerSide2h: Int = 0,
         minPrice: Double = 0.0,
         maxPrice: Double = 1.0,
+        tags: List<String> = listOf("Politics", "Geopolitics"),
         maxPagesPerTag: Int = DEFAULT_GAMMA_DISCOVERY_PAGES,
         pageLimit: Int = DEFAULT_GAMMA_PAGE_LIMIT
     ): MarketDiscoveryResult = withContext(Dispatchers.IO) {
@@ -169,7 +172,12 @@ class LivePaperDataClient(
         } else {
             null
         }
-        val cursors = listOf(Tag.POLITICS, Tag.GEOPOLITICS).map { TagCursor(it) }
+        require(tags.isNotEmpty()) { "at least one discovery tag is required" }
+        val requestedTags = tags.map { label ->
+            Tag.values().firstOrNull { it.label.equals(label, ignoreCase = true) }
+                ?: throw IllegalArgumentException("unsupported discovery tag: $label")
+        }.distinct()
+        val cursors = requestedTags.map { TagCursor(it) }
         val found = linkedMapOf<String, LivePaperMarket>()
         lateinit var stoppedReason: String
 
@@ -565,7 +573,11 @@ class LivePaperDataClient(
 
     private enum class Tag(val id: String, val label: String) {
         POLITICS("2", "Politics"),
-        GEOPOLITICS("100265", "Geopolitics")
+        GEOPOLITICS("100265", "Geopolitics");
+
+        companion object {
+            fun supportedLabels(): List<String> = values().map { it.label }
+        }
     }
 
     private data class GammaMarketJson(

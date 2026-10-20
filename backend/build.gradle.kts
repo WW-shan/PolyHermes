@@ -215,6 +215,7 @@ tasks.register<JavaExec>("eventMakerShadow") {
     argsList += listOf("--min-recent-trades-per-side-2h", providers.gradleProperty("shadowMinRecentTradesPerSide2h").orNull ?: "0")
     argsList += listOf("--min-price", providers.gradleProperty("shadowMinPrice").orNull ?: "0.90")
     argsList += listOf("--max-price", providers.gradleProperty("shadowMaxPrice").orNull ?: "0.99")
+    argsList += listOf("--tags", providers.gradleProperty("shadowTags").orNull ?: "Politics,Geopolitics")
     argsList += listOf("--min-remaining-minutes", providers.gradleProperty("shadowMinRemainingMinutes").orNull ?: "120")
     providers.gradleProperty("shadowMaxRemainingMinutes").orNull?.let {
         argsList += listOf("--max-remaining-minutes", it)

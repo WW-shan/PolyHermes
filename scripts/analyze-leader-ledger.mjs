@@ -199,12 +199,12 @@ function aggregate(items, keyFn) {
   const m = new Map();
   for (const item of items) {
     const key = keyFn(item);
-    const e = m.get(key) ?? { key, count: 0, shares: 0, cost: 0, pnl: 0, wins: 0, losses: 0 };
+    const e = m.get(key) ?? { key, count: 0, shares: 0, cost: 0, pnl: 0, wins: 0, losses: 0, winPnl: 0, lossPnl: 0 };
     e.count += 1; e.shares += item.shares; e.cost += item.buyPrice * item.shares; e.pnl += item.pnl;
-    if (item.pnl > 0) e.wins += 1; if (item.pnl < 0) e.losses += 1;
+    if (item.pnl > 0) { e.wins += 1; e.winPnl += item.pnl; } if (item.pnl < 0) { e.losses += 1; e.lossPnl += item.pnl; }
     m.set(key, e);
   }
-  return [...m.values()].map(e => ({ ...e, roi: e.cost > 0 ? e.pnl / e.cost : 0, winRate: e.count ? e.wins / e.count : 0 }))
+  return [...m.values()].map(e => ({ ...e, roi: e.cost > 0 ? e.pnl / e.cost : 0, winRate: e.count ? e.wins / e.count : 0, avgWin: e.wins ? e.winPnl / e.wins : 0, avgLoss: e.losses ? e.lossPnl / e.losses : 0, breakEvenLossRate: (e.wins && e.losses && e.winPnl > 0 && e.lossPnl < 0) ? (e.winPnl / e.wins) / ((e.winPnl / e.wins) + Math.abs(e.lossPnl / e.losses)) : null }))
     .sort((a,b)=>a.key.localeCompare(b.key));
 }
 
@@ -228,6 +228,31 @@ for (const row of activity) {
   e.count += 1; e.usdc += num(row.usdcSize); activityByType[type] = e;
 }
 const holdingSeconds = allClosed.map(r=>r.holdingSeconds).filter(Number.isFinite);
+
+const dailyPnl = new Map();
+for (const r of roundTrips) {
+  const d = new Date(r.sellAt * 1000).toISOString().slice(0, 10);
+  dailyPnl.set(d, (dailyPnl.get(d) ?? 0) + r.pnl);
+}
+for (const s of settlements) {
+  const d = new Date(s.settledAt * 1000).toISOString().slice(0, 10);
+  dailyPnl.set(d, (dailyPnl.get(d) ?? 0) + s.pnl);
+}
+const dailyRows = [...dailyPnl.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([date,pnl])=>({date,pnl:Number(pnl.toFixed(4))}));
+let dailyCum = 0, dailyPeak = 0, dailyMaxDd = 0;
+for (const row of dailyRows) {
+  dailyCum += row.pnl;
+  dailyPeak = Math.max(dailyPeak, dailyCum);
+  dailyMaxDd = Math.max(dailyMaxDd, dailyPeak - dailyCum);
+}
+const dailyStats = {
+  days: dailyRows.length,
+  bestDay: dailyRows.length ? Math.max(...dailyRows.map(r=>r.pnl)) : 0,
+  worstDay: dailyRows.length ? Math.min(...dailyRows.map(r=>r.pnl)) : 0,
+  positiveDays: dailyRows.filter(r=>r.pnl>0).length,
+  negativeDays: dailyRows.filter(r=>r.pnl<0).length,
+  maxDrawdownUsd: dailyMaxDd
+};
 const report = {
   generatedAt: new Date().toISOString(),
   address: raw.address,
@@ -256,6 +281,8 @@ const report = {
   bands: aggregate(allClosed, r => band(r.buyPrice)),
   outcomes: aggregate(allClosed, r => r.outcome || 'unknown'),
   categories: aggregate(allClosed, r => category(r.title)),
+  dailyStats,
+  dailyPnl: dailyRows,
   holding: {
     count: holdingSeconds.length,
     medianSeconds: median(holdingSeconds),

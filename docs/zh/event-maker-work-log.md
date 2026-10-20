@@ -1812,3 +1812,39 @@
 - Gamma 按 volume 排序前 100 个开放市场抽样：98 个带 `feeSchedule`，98/98 均为 `takerOnly=true`（另 2 个无 `feeSchedule`，即免费）；rate 仅 0（20 个）/ 0.05（78 个），没有 maker 费字段。
 - `makerBaseFee=1000` / `takerBaseFee=1000` 是历史遗留字段，不能用于成本计算。
 - 含义：maker 0 费确认；BOND 回测 `makerFeeRate=0` 正确；BOND_SCALP 主动卖出按 taker 计费；负 markout / 逆向选择才是主要风险，手续费不是瓶颈。
+### 04:10 机械止损研究：价格/时间/流止损全部破坏 edge
+
+- 新增 `scripts/analyze-bond-stop-loss.cjs`，测试 0.5c–25c 价格止损、1–7 天时间止损。
+- all-eligible 0.95–0.97 +3c：无止损 +1.82%；5c -0.28%、10c -1.17%、15c -0.71%；1c -0.70%、2c -0.47%、3c -0.23%。
+- queue 模型 0.95–0.97 Geopolitics +3c：无止损 +3.17%；1 天 +0.49%、2 天 +0.86%、3 天 +1.77%。
+- 结论：机械止损会把最终会回升的仓位提前砍掉；目标账户的选择性止损不是固定规则。
+
+### 04:15 按 tag 分解：0.95–0.97 只有 Geopolitics 为正
+
+- 新增 `scripts/analyze-bond-by-tag.cjs` 和 `scripts/analyze-bond-queue-by-tag.cjs`。
+- queue 模型 0.95–0.97：Geopolitics +1c +1.08% / +3c +3.17%（60/106 成交，69 cycles，0 结算亏损）；Politics +1c -1.85% / +3c -1.14%。
+- 0.97–0.99：Geopolitics +1c +1.06% / +3c +1.82%；Politics +1c +1.04% / +3c +1.81%。
+- 结论：0.95–0.97 只做 Geopolitics；0.97–0.99 两个 tag 都可做。
+
+### 04:20 目标账户真实收益结构：74.5% 胜率、平均亏损仅 -$7.99
+
+- 重算 `leader-ledger-raw-20261021.json`：4,747 matched round trips，matched PnL +$14,342，ROI +0.748%。
+- Geopolitics：3,472 trips，胜率 74.5%，平均盈利 +$6.95，平均亏损 -$7.99，盈亏平衡亏损率 46.5%，实际亏损率 25.5%，ROI +0.825%。
+- Politics：470 trips，胜率 73.2%，ROI +1.33%。
+- 183 个交易日：151 正 / 28 负；最好 +$827.80，最差 -$640.27；已实现最大回撤约 $1,022.73。
+- 结论：他是高频 favorite scalping/做市，不是 hold-to-settlement；收益稳定但单笔很小。
+
+### 04:25 新一轮 Shadow：5 个 LIVE 臂 + tag 过滤
+
+- 新增 `--tags` 过滤（`LivePaperDataClient` / `EventMakerShadowCli` / `build.gradle.kts` / `start-bond-shadow.ps1`），并有单测；全量 `gradlew test` BUILD SUCCESSFUL。
+- 启动 0.97–0.99 的 +1c / +3c 两臂；启动 Geopolitics-only 0.95–0.97 +3c 臂。
+- 当前 LIVE：3c-cap1000、1c-cap1000、1c-97099、3c-97099、3c-geo-9597。
+- 退役：joinbid/passive（DEAD，0 fill）、wide-universe（0 fill，扩池无效）。
+- `report-bond-shadow-status.cjs` 增加 PID 存活检查，输出 LIVE/STALE/DEAD；`monitor-bond-shadows.ps1` 默认监控 5 个 LIVE 臂。
+- 详细报告：`docs/zh/bond-strategy-robustness-2026-10-21.md`；交付计划新增第 20 节。
+### 04:30 新臂首批成交：Geopolitics-only markout 明显更好
+
+- `3c-cap1000` / `1c-cap1000`：各 2 fills（同一 0.953 市场 + 新增 0.97 Geopolitics 市场），inventory 208.02；markout60 从 -1.05 改善到 -0.58，markout300 -1.20。
+- `3c-geo-9597`（Geopolitics only）：1 fill @ 0.97，103.09 股；markout60 -0.10、markout300 -0.41，明显好于全 tag 臂的首笔 -1.05/-1.99。
+- `1c-97099` / `3c-97099`：仍 0 fill。
+- 结论：首批数据支持“0.95–0.97 只做 Geopolitics”的假设，但样本只有 1 笔，不能下结论；继续跑。

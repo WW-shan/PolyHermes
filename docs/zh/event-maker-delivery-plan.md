@@ -1200,3 +1200,61 @@ cd D:\Project\PolyHermes\backend
 - Bab el-Mandeb Oct 31 No 0.9499→0.976（+2.74%）是 0.95–0.97 band 的真实 +2.6c 案例。
 - Bab el-Mandeb Dec 31 No 0.85→0.84（-1.18%）仍在持有，符合大止损行为。
 - 结论：真实操作是跨 band、大仓位、动态持有；我们的 $100 模型只覆盖很小一部分。
+
+## 20. 2026-10-21 04:20 BOND 稳健性终判与新一轮 Shadow
+
+### 20.1 结论
+
+- 目标账户的策略家族真实盈利，但核心是**高频 favorite scalping / 做市 + 选择性止损**，不是机械 hold-to-settlement。
+- 价格止损、时间止损、逆向流止损在 queue 模型中全部破坏 edge；不能用一个固定规则复刻他的“该砍/该扛”判断。
+- 0.95–0.97 只有 **Geopolitics** 为正（+3c 回测 +3.17%，69 cycles，0 结算亏损）；Politics 为负（+3c -1.14%）。
+- 0.97–0.99 两个 tag 都为正（Geopolitics +1c +1.06% / +3c +1.82%；Politics +1c +1.04% / +3c +1.81%）。
+- 7 天样本 0 亏损，而目标账户一年期 Geopolitics 真实亏损率 25.5%；7 天样本是顺风窗口，不能把 100% 胜率当长期预期。
+
+### 20.2 目标账户真实结构
+
+| 类别 | round trips | 胜率 | 平均盈利 | 平均亏损 | 盈亏平衡亏损率 | 实际亏损率 | ROI |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Geopolitics | 3,472 | 74.5% | +$6.95 | -$7.99 | 46.5% | 25.5% | +0.825% |
+| Politics | 470 | 73.2% | +$7.63 | -$2.55 | 75.0% | 26.8% | +1.33% |
+| 全部 matched | 4,747 | — | — | — | — | — | +0.748% |
+
+- 183 个交易日：151 正 / 28 负；最好 +$827.80，最差 -$640.27；已实现最大回撤约 $1,022.73。
+- 他的收益是“高频、低单笔、低回撤”，不是单笔暴利。
+
+### 20.3 机械退出测试
+
+| 退出规则 | 0.95–0.97 Geopolitics +3c | 0.97–0.99 Geopolitics +3c | 判定 |
+|---|---:|---:|---|
+| 无退出（只 +3c 或结算） | +3.17% | +1.82% | 基准 |
+| 1 天时间止损 | +0.49% | +0.26% | REJECT |
+| 2 天时间止损 | +0.86% | +0.57% | REJECT |
+| 3 天时间止损 | +1.77% | +0.90% | REJECT |
+| 1h flow<-0.4 & drop>0.5c | -0.09% | +0.31% | REJECT |
+| 1h flow<-0.6 & drop>1c | +0.37% | -0.64% | REJECT |
+| 5c/10c/15c 价格止损 | 均低于基准 | 均低于基准 | REJECT |
+
+### 20.4 新 Shadow 臂（5 个 LIVE）
+
+- `3c-cap1000`：0.95–0.97，全部 tag，+3c。
+- `1c-cap1000`：0.95–0.97，全部 tag，+1c。
+- `1c-97099`：0.97–0.99，全部 tag，+1c。
+- `3c-97099`：0.97–0.99，全部 tag，+3c。
+- `3c-geo-9597`：0.95–0.97，**Geopolitics only**，+3c。
+
+已退役：`joinbid`、`passive`（DEAD，0 fill）、`wide-universe`（0 fill，扩池无效）。
+
+### 20.5 工具与验收
+
+- 新增 `--tags` 过滤（Shadow CLI / LivePaperDataClient / build.gradle / start-bond-shadow.ps1），并有单测。
+- 新增 `scripts/analyze-bond-stop-loss.cjs`、`analyze-bond-by-tag.cjs`、`analyze-bond-queue-by-tag.cjs`。
+- `scripts/report-bond-shadow-status.cjs` 增加 PID 存活检查，输出 `LIVE / STALE / DEAD`。
+- 全量 `gradlew test`：BUILD SUCCESSFUL。
+- 详细报告：`docs/zh/bond-strategy-robustness-2026-10-21.md`。
+
+### 20.6 下一步
+
+1. 5 个 LIVE 臂继续跑 24–48h，检查 fill / markout / 首轮 cycle。
+2. 重点观察 `3c-geo-9597` 与 `1c/3c-97099` 的真实 fill rate 和 markout。
+3. 若 7 天仍无 fill 或 markout 持续为负，停止机械 maker 方向，不再调参。
+4. 真实资金前必须满足：覆盖 50–100 个结算事件、亏损率 CI 上界低于盈亏平衡率、最大回撤可承受。

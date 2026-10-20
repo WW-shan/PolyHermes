@@ -26,18 +26,41 @@ function parseCsv(text) {
 const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-3c-cap1000-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-1c-cap1000-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-1c-97099-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-3c-97099-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-1c-joinbid-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-1c-passive-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-1c-wide-universe-shadow-7d-20261021'
 ];
 const dirs = (arg('dirs') || defaultDirs.join(',')).split(',').map(s => s.trim()).filter(Boolean);
 const lines = [];
-lines.push('| arm | markets | active | fills | cycles | inventory | realizedPnl | markout60 | markout300 | neg60 |');
-lines.push('|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | inventory | realizedPnl | markout60 | markout300 | neg60 |');
+lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
 let totalFills = 0, totalCycles = 0, totalPnl = 0;
+const stale = [];
 for (const dir of dirs) {
   const statePath = path.join(dir, 'state.json');
-  if (!fs.existsSync(statePath)) { lines.push(`| ${path.basename(dir)} | - | - | - | - | - | - | - | - | - |`); continue; }
+  const arm = path.basename(dir);
+  if (!fs.existsSync(statePath)) {
+    lines.push(`| ${arm} | MISSING | - | - | - | - | - | - | - | - | - | - | - |`);
+    stale.push(arm + ' (missing)');
+    continue;
+  }
+  const stateMtime = fs.statSync(statePath).mtimeMs;
+  const stateAgeMin = (Date.now() - stateMtime) / 60000;
+  let pid = null;
+  let procAlive = null;
+  const runPath = path.join(dir, 'run.json');
+  if (fs.existsSync(runPath)) {
+    try {
+      const run = JSON.parse(fs.readFileSync(runPath, 'utf8').replace(/^\uFEFF/, ''));
+      pid = Number(run.pid) || null;
+      if (pid) { try { process.kill(pid, 0); procAlive = true; } catch (e) { procAlive = false; } }
+    } catch (e) { /* ignore malformed run.json */ }
+  }
+  const status = procAlive === false ? 'DEAD' : (stateAgeMin <= 5 ? 'LIVE' : 'STALE');
+  if (status !== 'LIVE') stale.push(arm + ` (${status}, ${stateAgeMin.toFixed(1)}m)`);
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   const markets = Array.isArray(state.markets) ? state.markets : [];
   const fills = markets.reduce((s, m) => s + (Array.isArray(m.fills) ? m.fills.length : 0), 0);
@@ -60,9 +83,10 @@ for (const dir of dirs) {
   totalFills += fills; totalCycles += cycles; totalPnl += realized;
   const fmt = v => v == null ? '-' : (Math.round(v * 100) / 100).toString();
   const pct = v => v == null ? '-' : (Math.round(v * 1000) / 10).toString() + '%';
-  lines.push(`| ${path.basename(dir)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
+  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
 }
-lines.push(`| **total** | | | **${totalFills}** | **${totalCycles}** | | **${Math.round(totalPnl * 100) / 100}** | | | |`);
+lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | | **${Math.round(totalPnl * 100) / 100}** | | | |`);
+if (stale.length) { lines.push(''); lines.push(`**NOT LIVE:** ${stale.join(', ')}`); }
 const text = lines.join('\n');
 console.log(text);
 const output = arg('output');

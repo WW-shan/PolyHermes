@@ -56,6 +56,7 @@ internal data class ShadowOptions(
     val minRecentTradesPerSide2h: Int,
     val minPrice: Double,
     val maxPrice: Double,
+    val tags: List<String>,
     val minRemainingMinutes: Int,
     val maxRemainingMinutes: Int?,
     val minutes: Int,
@@ -207,6 +208,15 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
     require(waitForMarketMinutes >= 0)
     require(discoveryRetrySeconds > 0)
     require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
+    val tags = (option("tags") ?: "Politics,Geopolitics")
+        .split(',')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+    require(tags.isNotEmpty()) { "at least one --tags value is required" }
+    val supportedTags = setOf("Politics", "Geopolitics")
+    require(tags.all { tag -> supportedTags.any { it.equals(tag, ignoreCase = true) } }) {
+        "unsupported --tags value: $tags"
+    }
     return ShadowOptions(
         proxyUrl = option("proxy"),
         outputDir = Paths.get(option("output") ?: "build/research/event-maker-shadow-$stamp"),
@@ -224,6 +234,7 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
         minRecentTradesPerSide2h = option("min-recent-trades-per-side-2h")?.toIntOrNull() ?: 0,
         minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90,
         maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99,
+        tags = tags,
         minRemainingMinutes = option("min-remaining-minutes")?.toIntOrNull() ?: 120,
         maxRemainingMinutes = option("max-remaining-minutes")?.toIntOrNull(),
         minutes = minutes,
@@ -346,6 +357,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                 minRecentTradesPerSide2h = options.minRecentTradesPerSide2h,
                 minPrice = options.minPrice,
                 maxPrice = options.maxPrice,
+                tags = options.tags,
                 maxPagesPerTag = options.maxDiscoveryPages
             )
             Files.writeString(

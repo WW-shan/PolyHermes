@@ -1,5 +1,5 @@
-﻿param(
-  [string]$Outputs = "build/research/event-maker-bond-scalp-shadow-7d-20261021-v2,build/research/event-maker-bond-scalp-1c-shadow-7d-20261021",
+param(
+  [string]$Outputs = "build/research/event-maker-bond-scalp-3c-cap1000-shadow-7d-20261021,build/research/event-maker-bond-scalp-1c-cap1000-shadow-7d-20261021,build/research/event-maker-bond-scalp-1c-97099-shadow-7d-20261021,build/research/event-maker-bond-scalp-3c-97099-shadow-7d-20261021,build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021",
   [int]$IntervalMinutes = 30,
   [string]$Log = "build/research/bond-shadow-monitor.log",
   [string]$Series = "build/research/bond-shadow-audit-series.jsonl"
