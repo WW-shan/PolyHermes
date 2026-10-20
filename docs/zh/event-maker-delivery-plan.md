@@ -1015,4 +1015,5 @@ cd D:\Project\PolyHermes\backend
 - `backend/build/research/event-maker-bond-scalp-20261021-fee-sensitivity.csv`
 - `backend/build/research/event-maker-bond-scalp-20261021-top-cycles.csv`
 - `backend/build/research/leader-bond-style-backtest-20261021-repro.json`
-- `backend/build/research/event-maker-bond-scalp-shadow-7d-20261021/`
+- `backend/build/research/event-maker-bond-scalp-shadow-7d-20261021-v2/`
+- 自动审计：`scripts/watch-bond-shadow.ps1`（PID 19216）→ `audit-final.json`

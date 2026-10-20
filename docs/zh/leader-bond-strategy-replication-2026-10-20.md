@@ -338,6 +338,7 @@ cd D:\Project\PolyHermes\backend
 - 启动时选中 8 个市场 / 16 个 token，WS 已订阅；已挂出第一个 maker BUY。
 - 进程：wrapper PID 2476、Gradle java 11084、app java 10360；输出目录 `backend/build/research/event-maker-bond-scalp-shadow-7d-20261021-v2`。
 - 7 天后用 `scripts/audit-bond-shadow.cjs` 审计 fill rate、平均入场/退出价、MAE、结算亏损、重复 fill key 和真实 ROI；单笔 ROI 若远高于 1%，先怀疑队列/成交假设。
+- 已启动自动审计 watcher（PID 19216，`scripts/watch-bond-shadow.ps1`）：等 wrapper 2476 / app 10360 退出后自动生成 `audit-final.json` 并写日志 `bond-scalp-shadow-7d-watch-20261021.log`。
 
 ## 5. 结论与风险
 

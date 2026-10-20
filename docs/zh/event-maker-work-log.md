@@ -1646,6 +1646,7 @@
 - 01:08 用修正参数重启（`...-20261021-v2`）：requote=300s、maxOrderAge=1800s，其余相同。
 - 启动选中 8 市场 / 16 token，WS_OPEN、WS_SUBSCRIBED，已挂 maker BUY。
 - 进程：wrapper PID 2476、Gradle java 11084、app java 10360；输出目录 `event-maker-bond-scalp-shadow-7d-20261021-v2`。
+- 启动自动审计 watcher：`scripts/watch-bond-shadow.ps1`，PID 19216；等 wrapper/app 退出后自动写 `audit-final.json`。
 
 ### 01:10 官方费率二次复核：maker 确实 0 费
 
