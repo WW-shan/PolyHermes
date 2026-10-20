@@ -1149,3 +1149,15 @@ cd D:\Project\PolyHermes\backend
 - join-bid 有 3 个市场因 entry_queue_too_deep 被拒绝，join 队列深度太大。
 - aggressive 成交最快但 markout 最差；join-bid/passive 需等成交数据。
 - 结论：成交速度与入场质量存在 trade-off。
+### 19.20 四臂 Shadow 与完整集监控状态（2026-10-21 03:30）
+
+| 臂 | 市场/active | fills | cycles | 60s markout |
+|---|---|---:|---:|---:|
+| +3c aggressive | 10/9 | 1 | 0 | -1.05 |
+| +1c aggressive | 10/9 | 1 | 0 | -1.05 |
+| +1c join-bid | 5/5 | 0 | 0 | — |
+| +1c passive | 8/8 | 0 | 0 | — |
+
+- 首笔成交市场最新 bid 0.945 / ask 0.946，entry 0.953，浮亏 -0.84，未触发 +1c/+3c 退出。
+- crypto/finance 24h monitor：27 条 opportunities，11 条 actionable，但全部 `worstPnl < 0`（部分成交裸风险）；politics 0 条。
+- 结论：没有风险自由完整集；继续等 join-bid/passive 成交与 markout 数据。

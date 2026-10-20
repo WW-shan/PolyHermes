@@ -1752,3 +1752,9 @@
 - passive（bid-0.25c）：8 市场 / 8 active / 0 fill。
 - 结论：成交速度与入场质量 trade-off；等 join-bid/passive 成交数据。
 - monitor 重启 PID 10748，四臂；watcher 18188（join-bid）。
+### 03:30 四臂 Shadow 与完整集监控状态
+
+- 四臂：+3c/+1c aggressive 各 1 fill（60s markout -1.05）；join-bid 5/5 active 0 fill；passive 8/8 active 0 fill。
+- 首笔市场最新 bid 0.945 / ask 0.946，entry 0.953，浮亏 -0.84，未触发退出。
+- crypto/finance 24h monitor：27 opportunities / 11 actionable，全部 worstPnl < 0（部分成交裸风险）；politics 0。
+- 结论：无风险自由完整集；继续等 join-bid/passive 成交数据。
