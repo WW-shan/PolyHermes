@@ -14,7 +14,9 @@ import okhttp3.Request
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URI
+import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.concurrent.TimeUnit
 
 private const val MAX_GAMMA_DISCOVERY_PAGES = 100
@@ -462,6 +464,13 @@ class LivePaperDataClient(
         if (favoriteBid < 0.88 || favoriteAsk >= 1.0) return null
         if (minFavoriteBid != null && favoriteBid < minFavoriteBid) return null
         if (maxFavoriteBidExclusive != null && favoriteBid >= maxFavoriteBidExclusive) return null
+        val today = LocalDate.now(ZoneOffset.UTC).toString()
+        val rewardDailyRate = raw.clobRewards.orEmpty()
+            .filter { reward ->
+                (reward.startDate.isNullOrBlank() || reward.startDate <= today) &&
+                    (reward.endDate.isNullOrBlank() || reward.endDate >= today)
+            }
+            .sumOf { it.rewardsDailyRate ?: 0.0 }
         return LivePaperMarket(
             conditionId = conditionId,
             question = raw.question ?: conditionId,
@@ -472,7 +481,11 @@ class LivePaperDataClient(
             outcomes = outcomes,
             tokenIds = tokens,
             favoriteIndex = favoriteIndex,
-            negRisk = raw.negRisk ?: raw.negRiskOther ?: false
+            negRisk = raw.negRisk ?: raw.negRiskOther ?: false,
+            rewardDailyRate = rewardDailyRate,
+            rewardsMinSize = raw.rewardsMinSize?.takeIf { it > 0.0 } ?: 0.0,
+            rewardsMaxSpread = raw.rewardsMaxSpread?.takeIf { it > 0.0 } ?: 0.0,
+            holdingRewardsEnabled = raw.holdingRewardsEnabled ?: false
         )
     }
 
@@ -567,7 +580,17 @@ class LivePaperDataClient(
         val negRisk: Boolean?,
         val negRiskOther: Boolean?,
         val enableOrderBook: Boolean?,
-        val orderPriceMinTickSize: Double?
+        val orderPriceMinTickSize: Double?,
+        val clobRewards: List<GammaClobRewardJson>?,
+        val rewardsMinSize: Double?,
+        val rewardsMaxSpread: Double?,
+        val holdingRewardsEnabled: Boolean?
+    )
+
+    private data class GammaClobRewardJson(
+        val rewardsDailyRate: Double?,
+        val startDate: String?,
+        val endDate: String?
     )
 
     private data class TickSizeJson(

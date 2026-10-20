@@ -14,7 +14,14 @@ data class LivePaperMarket(
     val outcomes: List<String>,
     val tokenIds: List<String>,
     val favoriteIndex: Int,
-    val negRisk: Boolean = false
+    val negRisk: Boolean = false,
+    /** Active CLOB liquidity-reward pool in USDC per UTC day. Zero means no active reward. */
+    val rewardDailyRate: Double = 0.0,
+    /** Minimum share-denominated order size that can earn liquidity rewards. */
+    val rewardsMinSize: Double = 0.0,
+    /** Maximum distance from the adjusted midpoint, in cents, that can earn rewards. */
+    val rewardsMaxSpread: Double = 0.0,
+    val holdingRewardsEnabled: Boolean = false
 ) {
     val favoriteTokenId: String get() = tokenIds[favoriteIndex]
 }

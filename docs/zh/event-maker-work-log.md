@@ -1367,3 +1367,11 @@
 - 目标地址公开奖励：446 天累计 4,195.28 USDC；最近 30 天 70.35、最近 7 天 5.49；当前仓位约 20,084 USDC。奖励不是其主要收益来源。
 - 结论：流动性奖励不能救活 0.97–0.99 单边 maker；唯一待验证方向是 0.90–0.95 双边 post-only BUY + 单边成交立即对冲。RWD-3～RWD-5 未完成前禁止实盘。
 - 报告：`docs/zh/event-maker-liquidity-rewards-2026-10-20.md`。
+
+### 11:05 奖励计算器与配对报价器落地
+
+- 新增 `LiquidityRewardCalculator`：官方二次评分、Q_one/Q_two/Q_min、单边/双边规则和 0.10/0.90 边界都有测试。
+- `LivePaperMarket` 与 `LivePaperDataClient` 已解析 Gamma 的 active reward allocation、`rewardsMinSize`、`rewardsMaxSpread`、`holdingRewardsEnabled`。
+- 新增 `PairedRewardQuotePlanner`：在 YES/NO 两个 outcome 上生成 post-only BUY，自动使用奖励最小 size，拒绝穿价和配对成本超限。
+- 回归：105 suites / 578 tests / 0 failures / 0 errors / 2 skipped。
+- 下一步：真正的双 token Shadow + 单边成交 IOC hedge。当前代码未改变 v6 行为，也未开启实盘。

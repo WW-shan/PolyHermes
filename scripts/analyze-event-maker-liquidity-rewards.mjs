@@ -301,7 +301,7 @@ function weightedLevels(book, side, midpoint, maxSpreadCents, minSize) {
 }
 
 function qMin(qOne, qTwo, midpoint) {
-  if (midpoint > 0.10 && midpoint <= 0.90) {
+  if (midpoint >= 0.10 && midpoint <= 0.90) {
     return Math.max(Math.min(qOne, qTwo), Math.max(qOne / SCALING_FACTOR, qTwo / SCALING_FACTOR));
   }
   return Math.min(qOne, qTwo);

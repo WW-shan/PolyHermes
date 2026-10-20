@@ -715,3 +715,18 @@ cd D:\Project\PolyHermes\backend
 - 报告：`docs/zh/event-maker-liquidity-rewards-2026-10-20.md`。
 - 目标地址 446 天公开奖励合计 4,195.28 USDC；最近 30 天 70.35、最近 7 天 5.49，当前公开仓位约 20,084 USDC。奖励只占其收益的小部分。
 - **禁止**因为奖励而放宽 0.97–0.99 正式门槛，也**禁止**直接上 paired-bid 实盘；当前只是存在收益结构，尚未证明单边成交与对冲成本可控。
+
+### 10.37 2026-10-20 11:05 奖励计算器与配对报价器落地
+
+| ID | 任务 | 状态 | 验收证据 |
+|---|---|---|---|
+| RWD-CALC-1 | 官方 `S(v,s)`、`Q_one`、`Q_two`、`Q_min` Kotlin 实现 | 已完成 | `LiquidityRewardCalculator.kt`；测试覆盖高低价格带、单边/双边、最小 size、边界 0.10/0.90 |
+| RWD-CALC-2 | Gamma 奖励字段进入研究市场模型 | 已完成 | `LivePaperMarket` 新增 `rewardDailyRate`、`rewardsMinSize`、`rewardsMaxSpread`、`holdingRewardsEnabled`；`LivePaperDataClient` 按 UTC 日期过滤 active allocation |
+| RWD-CALC-3 | 双边 post-only 报价规划器 | 已完成 | `PairedRewardQuotePlanner.kt`；确保两边 size 达到奖励门槛、价格不穿 ask、配对成本可配置上限 |
+| RWD-CALC-4 | 回归测试 | 已完成 | 105 suites / 578 tests / 0 failures / 0 errors / 2 skipped |
+| RWD-SHADOW-1 | 将 paired planner 接入真实 Shadow 循环 | 待开始 | 需要同时订阅 YES/NO book、双订单账本、成交后 IOC hedge |
+| RWD-SHADOW-2 | 单边成交自动对冲与库存上限 | 待开始 | 未完成前不得启用实盘 |
+| RWD-SHADOW-3 | 0.90–0.95 前瞻 Shadow 72h | 待开始 | 7 个候选市场，记录 reward 估计/实际偏差、hedge 滑点、单边成交次数 |
+
+- 这些代码只新增研究/规划能力，未改变 v6 正在运行的单边策略行为，也未提交任何真实订单能力。
+- 下一步不是直接实盘，而是实现双 token Shadow；没有单边对冲证据时，reward 收益不能覆盖尾部风险。
