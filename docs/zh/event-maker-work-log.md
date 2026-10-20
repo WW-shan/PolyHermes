@@ -1527,3 +1527,13 @@
   - maker rebate（politics 25%、sports v3 15%）和 liquidity reward 未计入回测，所以回测结果偏保守；
   - 新增 `EventMakerFeeModelTest` 锁定 makerFeeRate 默认 0、负值拒绝，测试通过。
 - 报告已更新：`docs/zh/leader-bond-strategy-replication-2026-10-20.md` 第 4.1 节。
+
+### 22:10 复核官方费率：maker 全类别 0 费，rebate 是池子分成
+
+- 官方来源：`https://docs.polymarket.com/trading/fees`、`https://docs.polymarket.com/programs/maker-rebates`。
+- `Fees` 原文：**Makers are never charged fees. Only takers pay fees.**
+- 费率表：所有类别 `Maker Fee Rate = 0`；taker 费率按类别为 0.04/0.05/0.07，Geopolitics 与部分 `feesEnabled=false` 市场完全免费。
+- `rebateRate` 是 taker fee 进入 maker 返佣池的比例（Crypto 20%、Sports 15%、其余多数 25%），再按 maker 的 fee-equivalent 份额分配；不是每笔自动返还自己手续费的固定比例。
+- 实查 Gamma：politics `takerOnly=true/rate=0.04/rebateRate=0.25`，sports_v3 `0.05/0.15`，sports_v2 `0.03/0.25`，US x Iran ceasefire `feesEnabled=false`。
+- 结论：BOND 的 maker 成交 `makerFeeRate=0` 正确；主动 taker 卖出/对冲必须另计 taker fee；100bps 仅压力测试；rebate 未计入回测，但也不能当成确定收益。
+- 已更新 `docs/zh/leader-bond-strategy-replication-2026-10-20.md` 第 4.1 节。

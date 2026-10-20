@@ -62,6 +62,11 @@ data class EventMakerConfig(
     val flowGuardMinPriceDropCents: Double = 0.5,
     val orderNotional: Double = 100.0,
     val maxCycles: Int = 1,
+    /**
+     * Maker fills are protocol-fee-free in every current market category.
+     * Non-zero values are stress-test only; taker exits/hedges must be modeled
+     * separately with the applicable taker fee schedule.
+     */
     val makerFeeRate: Double = 0.0,
     /**
      * Optional activity gate mirroring the Shadow/Live discovery filter. When set,

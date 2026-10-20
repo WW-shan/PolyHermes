@@ -83,27 +83,48 @@ cd D:\Project\PolyHermes\backend
 
 ## 4.1 官方费率确认（2026-10-20）
 
-官方文档 `Trading Fees` 明确写明：
+官方来源（已实时抓取）：
 
-> `feeSchedule.takerOnly`: When `true`, fees are charged to the taker side only, and **makers pay no fee**.
->
-> `feeSchedule.rebateRate`: Fraction of taker fees rebated back to the resting maker. Example: `0.25` = 25% rebate.
+- Fees: https://docs.polymarket.com/trading/fees
+- Maker Rebates Program: https://docs.polymarket.com/programs/maker-rebates
 
-实查当前 Gamma 市场：
+官方 `Fees` 页面原文：
+
+> **Makers are never charged fees. Only takers pay fees.**
+
+同页费率表明确列出 **所有类别的 Maker Fee Rate 均为 0**：
+
+| 类别 | Taker Fee Rate | Maker Fee Rate | Maker Rebate |
+|---|---:|---:|---:|
+| Crypto | 0.07 | 0 | 20% |
+| Sports | 0.05 | 0 | 15% |
+| Finance / Politics / Mentions / Tech | 0.04 | 0 | 25% |
+| Economics / Culture / Weather / Other | 0.05 | 0 | 25% |
+| Geopolitics | 0 | 0 | — |
+| Combos | 0.05 | 0 | 0% |
+
+官方 `Maker Rebates Program` 进一步说明：
+
+- rebate 每天以 pUSD 发放，累计至少 1 pUSD 才支付；
+- 返佣不是“每笔免手续费”，而是把某市场 taker fee 的一部分放入返佣池，再按各 maker 的 fee-equivalent 份额分配；
+- 因此 `rebateRate=0.25` 表示该市场 taker fee 的 25% 进入返佣池，不表示每个 maker 自动拿回自己手续费的 25%。
+
+实查当前 Gamma（2026-10-20）：
 
 | 市场 | feesEnabled | feeType | takerOnly | rate | rebateRate |
 |---|---:|---|---:|---:|---:|
 | FC Barcelona 2026-10-20 | true | sports_fees_v3 | true | 0.05 | 0.15 |
 | Flávio Bolsonaro 巴西总统 | true | politics_fees | true | 0.04 | 0.25 |
+| Shakhtar Donetsk 欧冠冠军 | true | sports_fees_v2 | true | 0.03 | 0.25 |
 | US x Iran ceasefire | false | — | — | — | — |
 
-因此：
+对策略的含义：
 
-- **maker 的实际费率是 0**；`takerOnly=true` 时只有 taker 付费。
-- maker 还能获得 **rebateRate** 的返佣（politics 25%，sports v3 15%）。
-- 部分市场 `feesEnabled=false`，完全无手续费。
-- 本回测的 `makerFeeRate=0` 是正确口径；下面的 100bps 只是压力测试，不是实际 maker 费率。
-- 回测没有把 maker rebate 和 liquidity reward 计入，所以真实收益应略高于回测，而不是低于。
+- **maker 挂单成交确实 0 手续费**；BOND 回测的 `makerFeeRate=0` 口径正确。
+- 只有 post-only/resting maker 成交才享受 0 费；主动吃单、FAK/IOC 对冲或卖出属于 taker，必须按上表 taker rate 计费。
+- BOND 的 `exitSpread=100c` 是持有到结算，不产生 taker 卖出手续费；若改成主动卖出，必须另算 taker fee。
+- 下面的 100bps 表只是成本压力测试，不是当前 maker 费率。
+- 回测未计 maker rebate 和 liquidity reward，因此没有高估手续费；但返佣份额在 Shadow/Live 实测前不能当作确定收益。
 
 费用敏感性（0.95–0.97, off0, q1）：
 
@@ -120,7 +141,6 @@ cd D:\Project\PolyHermes\backend
 - `backend/build/research/event-maker-bond-20261020-robust-cycles.csv`
 - `backend/build/research/event-maker-bond-20261020-fee-sensitivity.csv`
 - `backend/build/research/leader-strategy-decomposition-20261020.json`
-
 ## 5. 结论与风险
 
 **可以复刻的部分：**
