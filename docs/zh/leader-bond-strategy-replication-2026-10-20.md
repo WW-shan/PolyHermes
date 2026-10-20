@@ -81,9 +81,33 @@ cd D:\Project\PolyHermes\backend
 | 0.97–0.99, off0, q1 | 260 | 170 | 170 | 100% | +308.17 | **1.81%** | 1.80% | 1.82% | 0 | -95.4% |
 | 0.97–0.99, off0, q2 | 260 | 147 | 147 | 100% | +266.33 | 1.81% | 1.81% | 1.82% | 0 | -95.4% |
 
+## 4.1 官方费率确认（2026-10-20）
+
+官方文档 `Trading Fees` 明确写明：
+
+> `feeSchedule.takerOnly`: When `true`, fees are charged to the taker side only, and **makers pay no fee**.
+>
+> `feeSchedule.rebateRate`: Fraction of taker fees rebated back to the resting maker. Example: `0.25` = 25% rebate.
+
+实查当前 Gamma 市场：
+
+| 市场 | feesEnabled | feeType | takerOnly | rate | rebateRate |
+|---|---:|---|---:|---:|---:|
+| FC Barcelona 2026-10-20 | true | sports_fees_v3 | true | 0.05 | 0.15 |
+| Flávio Bolsonaro 巴西总统 | true | politics_fees | true | 0.04 | 0.25 |
+| US x Iran ceasefire | false | — | — | — | — |
+
+因此：
+
+- **maker 的实际费率是 0**；`takerOnly=true` 时只有 taker 付费。
+- maker 还能获得 **rebateRate** 的返佣（politics 25%，sports v3 15%）。
+- 部分市场 `feesEnabled=false`，完全无手续费。
+- 本回测的 `makerFeeRate=0` 是正确口径；下面的 100bps 只是压力测试，不是实际 maker 费率。
+- 回测没有把 maker rebate 和 liquidity reward 计入，所以真实收益应略高于回测，而不是低于。
+
 费用敏感性（0.95–0.97, off0, q1）：
 
-| maker fee | ROI |
+| 成本压力（非实际 maker 费） | ROI |
 |---|---:|
 | 0 bps | 4.10% |
 | 10 bps | 3.92% |

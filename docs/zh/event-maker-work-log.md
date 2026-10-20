@@ -1512,3 +1512,18 @@
 - 配置：0.95–0.99、exitSpread=100c、maxCycles=1、order 100 USDC、minVolume=10k、maxRemaining=30d、5 个市场。
 - 首次发现：12 个合格市场，选中 5 个，WS 订阅 10 个 token；进程 PID 24440，输出 `backend/build/research/event-maker-bond-shadow-20261020-v2`。
 - 运行 120 分钟；目标是观察真实盘口下的挂单、成交、MAE 和结算行为。
+### 21:50 官方费率核实：maker 确实 0 费
+
+- 官方文档 `Trading Fees` 原文：
+  - `feeSchedule.takerOnly`: When `true`, fees are charged to the taker side only, and **makers pay no fee**.
+  - `feeSchedule.rebateRate`: Fraction of taker fees rebated back to the resting maker. Example: `0.25` = 25% rebate.
+- 实查 Gamma：
+  - FC Barcelona 2026-10-20：feesEnabled=true，sports_fees_v3，takerOnly=true，rate=0.05，rebateRate=0.15；
+  - Flávio Bolsonaro 巴西总统：feesEnabled=true，politics_fees，takerOnly=true，rate=0.04，rebateRate=0.25；
+  - US x Iran ceasefire：feesEnabled=false，完全无手续费。
+- 因此：
+  - maker 实际费率 = 0；之前 BOND 回测的 `makerFeeRate=0` 口径正确；
+  - 100bps 费用表只是压力测试，不是实际 maker 费率；
+  - maker rebate（politics 25%、sports v3 15%）和 liquidity reward 未计入回测，所以回测结果偏保守；
+  - 新增 `EventMakerFeeModelTest` 锁定 makerFeeRate 默认 0、负值拒绝，测试通过。
+- 报告已更新：`docs/zh/leader-bond-strategy-replication-2026-10-20.md` 第 4.1 节。
