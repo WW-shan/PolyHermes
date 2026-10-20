@@ -1739,3 +1739,9 @@
 - 我们首笔 Shadow 60s markout 约 -1.0%，说明 improveTicks=1 可能过于激进。
 - start-bond-shadow.ps1 新增 ImproveTicks；启动被动臂 improveTicks=0、entryOffset=0.25c，8 市场 / 8 active。
 - watcher 25484，monitor 20600；三臂 A/B 比较 fill rate 与 markout。
+### 03:10 退出结构：+1c/+3c 双目标组合
+
+- 目标账户价差分布：中位 +1c、p90 +3c、18.4% 负；单一固定退出无法匹配。
+- 50/50 组合：ROI ≈ 2.14%，持有中位 ≈ 2.17 天，接近 leader 的 2.02 天。
+- 组合比单臂更接近他的中位/p90，但仍缺 18.4% 负价差退出。
+- 实操：资金分两半跑两个目标，或同市场 ladder（先卖一半 +1c，剩余 +3c）。

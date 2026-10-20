@@ -1132,3 +1132,9 @@ cd D:\Project\PolyHermes\backend
 - 我们首笔 Shadow 60s markout 约 -1.0%，说明 improveTicks=1 可能过于激进。
 - 新增 `ImproveTicks` 参数；启动被动臂 improveTicks=0、entryOffset=0.25c。
 - 三臂 A/B：+3c aggressive、+1c aggressive、+1c passive；比较 fill rate 与 markout。
+### 19.18 +1c/+3c 双目标组合（2026-10-21）
+
+- 50% +1c + 50% +3c：预期 ROI ≈ 2.14%，持有中位 ≈ 2.17 天，接近 leader 的 2.02 天。
+- 退出分布约一半 1c、一半 3c，更接近 leader 的中位/p90。
+- 仍缺 leader 的 18.4% 负价差退出（discretionary loss-cutting）。
+- 实操：资金分两半跑两个目标，或同市场先卖一半 +1c、剩余挂 +3c（需 live 部分卖出支持）。
