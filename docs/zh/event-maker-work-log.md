@@ -1866,3 +1866,10 @@
 - `3c-geo-9597`：1 fill @ 0.97，103.09 股；markout60 -0.10、markout300 -0.41。
 - `1c-97099` / `3c-97099`：仍 0 fill。
 - 结论：0.95–0.97 Geopolitics 的入场质量明显好于全 tag；但样本仍只有 1 笔，继续跑。
+### 07:05 Shadow 中期：9 fills、0 cycles、未实现 -$3.93
+
+- `3c/1c-cap1000`：各 3 fills，inventory 309.43，markout60 -0.45 / markout300 -1.20，未实现 -$1.45。
+- `1c/3c-97099`：各 1 fill，inventory 101.41，markout60 -0.20，未实现 -$0.20。
+- `3c-geo-9597`：1 fill，inventory 103.09，markout60 -0.10 / markout300 -0.41，未实现 -$0.62。
+- 合计 9 fills、0 cycles、未实现 **-$3.93**（约 -0.44% 已投入名义本金）。
+- 结论：所有臂的 markout 仍为负，尚无 +1c/+3c 退出；继续等 cycle，暂不能判断策略有效。

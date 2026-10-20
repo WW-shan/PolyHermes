@@ -35,15 +35,15 @@ const defaultDirs = [
 ];
 const dirs = (arg('dirs') || defaultDirs.join(',')).split(',').map(s => s.trim()).filter(Boolean);
 const lines = [];
-lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | inventory | realizedPnl | markout60 | markout300 | neg60 |');
-lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
-let totalFills = 0, totalCycles = 0, totalPnl = 0;
+lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | inventory | realizedPnl | unrealizedPnl | totalPnl | markout60 | markout300 | neg60 |');
+lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+let totalFills = 0, totalCycles = 0, totalRealized = 0, totalUnrealized = 0;
 const stale = [];
 for (const dir of dirs) {
   const statePath = path.join(dir, 'state.json');
   const arm = path.basename(dir);
   if (!fs.existsSync(statePath)) {
-    lines.push(`| ${arm} | MISSING | - | - | - | - | - | - | - | - | - | - | - |`);
+    lines.push(`| ${arm} | MISSING | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
     stale.push(arm + ' (missing)');
     continue;
   }
@@ -68,6 +68,18 @@ for (const dir of dirs) {
   const active = markets.filter(m => m.activeOrderId).length;
   const inventory = markets.reduce((s, m) => s + num(m.inventoryShares), 0);
   const realized = markets.reduce((s, m) => s + num(m.realizedPnl), 0);
+  let unrealized = 0;
+  const snapPath = path.join(dir, 'snapshots.csv');
+  if (fs.existsSync(snapPath)) {
+    const rows = parseCsv(fs.readFileSync(snapPath, 'utf8'));
+    const head = rows[0] || [];
+    const idx = Object.fromEntries(head.map((h, i) => [h, i]));
+    if (idx.unrealized_pnl != null) {
+      const latest = new Map();
+      for (const r of rows.slice(1)) latest.set(r[idx.market_id], r);
+      for (const r of latest.values()) unrealized += num(r[idx.unrealized_pnl]);
+    }
+  }
   let m60 = null, m300 = null, neg60 = null;
   const markoutPath = path.join(dir, 'markouts.csv');
   if (fs.existsSync(markoutPath)) {
@@ -80,12 +92,12 @@ for (const dir of dirs) {
     m60 = mean(vals60); m300 = mean(vals300);
     neg60 = vals60.length ? vals60.filter(v => v < 0).length / vals60.length : null;
   }
-  totalFills += fills; totalCycles += cycles; totalPnl += realized;
+  totalFills += fills; totalCycles += cycles; totalRealized += realized; totalUnrealized += unrealized;
   const fmt = v => v == null ? '-' : (Math.round(v * 100) / 100).toString();
   const pct = v => v == null ? '-' : (Math.round(v * 1000) / 10).toString() + '%';
-  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
+  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(unrealized)} | ${fmt(realized + unrealized)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
 }
-lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | | **${Math.round(totalPnl * 100) / 100}** | | | |`);
+lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | | **${Math.round(totalRealized * 100) / 100}** | **${Math.round(totalUnrealized * 100) / 100}** | **${Math.round((totalRealized + totalUnrealized) * 100) / 100}** | | | |`);
 if (stale.length) { lines.push(''); lines.push(`**NOT LIVE:** ${stale.join(', ')}`); }
 const text = lines.join('\n');
 console.log(text);
