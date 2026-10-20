@@ -410,7 +410,7 @@ cd D:\Project\PolyHermes\backend
 ### 4.6.7 持续监控（2026-10-21）
 
 - 新增 `scripts/monitor-bond-shadows.ps1`：每 30 分钟对两个 Shadow 目录跑一次离线审计，把 `markets/fills/cycles/activeOrders/inventoryShares/realizedPnl/realizedRoi/flags` 追加到 `backend/build/research/bond-shadow-audit-series.jsonl`。
-- monitor PID 17676；两个 arm 的退出审计 watcher 分别为 19216（+3c）和 23192（+1c）。
+- 当前 cap1000 臂的 monitor PID 26068（旧 17676 已停止）；退出审计 watcher 为 21160（+3c）和 26520（+1c）。
 - 这样不必等 7 天：若数小时内仍 0 fill，或出现 duplicate fill key / 异常 ROI，可提前发现。
 
 ### 4.6.8 与目标账户行为对账：固定 +1c / +3c 都不是完整复刻（2026-10-21）

@@ -1678,7 +1678,7 @@
 - 目的：提前发现 0 fill、重复 fill key、异常 ROI，不必等 7 天。
 ### 01:33 完整集 24h 监控自动终审
 
-- 新增 `scripts/watch-complete-set-monitors.ps1`，PID 7832。
+- 新增 `scripts/watch-complete-set-monitors.ps1`，PID 9708（01:40 因脚本升级重启）。
 - 等 PID 11804 / 23072 退出后自动审计两个 `monitor-summary.json` 与 `opportunities.jsonl`，写 `complete-set-monitor-final-audit.json`。
 - 判定：有 actionable 才是 ACTIONABLE_FOUND；否则 NO_ACTIONABLE_OPPORTUNITY；同时保留 errorRows 与 lastPollErrors 供区分瞬态错误。
 ### 01:40 +1c focus 回测与目标账户行为对账

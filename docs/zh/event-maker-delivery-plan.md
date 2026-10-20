@@ -1050,7 +1050,7 @@ cd D:\Project\PolyHermes\backend
 - 退出审计：+3c watcher PID 19216，+1c watcher PID 23192。
 ### 19.8 完整集 24h 监控的自动终审（2026-10-21）
 
-- 新增 `scripts/watch-complete-set-monitors.ps1`（PID 7832）：等两个 24h 监控进程（11804、23072）退出后，自动读取各自的 `monitor-summary.json` 和 `opportunities.jsonl`，写 `complete-set-monitor-final-audit.json`。
+- 新增 `scripts/watch-complete-set-monitors.ps1`（PID 9708，01:40 升级脚本后重启）：等两个 24h 监控进程（11804、23072）退出后，自动读取各自的 `monitor-summary.json` 和 `opportunities.jsonl`，写 `complete-set-monitor-final-audit.json`。
 - 审计字段：pollCycles / discoveryCycles / errorRows / lastPollErrors / confirmedEpisodes / maxConfirmedEdge / maxConfirmedProfit / opportunities / actionable / rejectionReasons / verdict。
 - 判定规则：有 `best.actionable=true` 才是 `ACTIONABLE_FOUND`；否则为 `NO_ACTIONABLE_OPPORTUNITY`。
 ### 19.9 +1c / +3c 与目标账户行为对账（2026-10-21）
