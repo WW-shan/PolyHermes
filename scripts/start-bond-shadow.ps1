@@ -16,7 +16,15 @@ param(
   [int]$MinSpreadTicks = 1,
   [int]$MaxQueue = 500,
   [int]$RequoteSeconds = 120,
-  [int]$MaxOrderAgeSeconds = 3600
+  [int]$MaxOrderAgeSeconds = 3600,
+  [double]$MaxTotalInventoryNotional = 100,
+  [double]$MaxDailyLoss = 5,
+  [int]$MinRecentTrades = 0,
+  [double]$MinRecentNotional = 0,
+  [int]$MinRecentTradesPerSide = 0,
+  [int]$MinRecentTrades2h = 0,
+  [double]$MinRecentNotional2h = 0,
+  [int]$MinRecentTradesPerSide2h = 0
 )
 $ErrorActionPreference = "Stop"
 $backend = Join-Path (Split-Path -Parent $PSScriptRoot) "backend"
@@ -44,6 +52,14 @@ $argsList = @(
   "-PshadowMaxOrderAgeSeconds=$MaxOrderAgeSeconds",
   "-PshadowFlowGuardWindowSeconds=$FlowGuardWindowSeconds",
   "-PshadowFillVolumeFactor=$FillVolumeFactor",
+  "-PshadowMaxTotalInventoryNotional=$MaxTotalInventoryNotional",
+  "-PshadowMaxDailyLoss=$MaxDailyLoss",
+  "-PshadowMinRecentTrades=$MinRecentTrades",
+  "-PshadowMinRecentNotional=$MinRecentNotional",
+  "-PshadowMinRecentTradesPerSide=$MinRecentTradesPerSide",
+  "-PshadowMinRecentTrades2h=$MinRecentTrades2h",
+  "-PshadowMinRecentNotional2h=$MinRecentNotional2h",
+  "-PshadowMinRecentTradesPerSide2h=$MinRecentTradesPerSide2h",
   "-PshadowOutput=$Output",
   "--console=plain"
 )
@@ -67,6 +83,14 @@ $info = [pscustomobject]@{
   requoteSeconds = $RequoteSeconds
   maxOrderAgeSeconds = $MaxOrderAgeSeconds
   flowGuardWindowSeconds = $FlowGuardWindowSeconds
+  maxTotalInventoryNotional = $MaxTotalInventoryNotional
+  maxDailyLoss = $MaxDailyLoss
+  minRecentTrades = $MinRecentTrades
+  minRecentNotional = $MinRecentNotional
+  minRecentTradesPerSide = $MinRecentTradesPerSide
+  minRecentTrades2h = $MinRecentTrades2h
+  minRecentNotional2h = $MinRecentNotional2h
+  minRecentTradesPerSide2h = $MinRecentTradesPerSide2h
   output = $logDir
 }
 $info | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $logDir "run.json") -Encoding UTF8

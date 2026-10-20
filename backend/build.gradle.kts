@@ -239,6 +239,8 @@ tasks.register<JavaExec>("eventMakerShadow") {
     argsList += listOf("--order-notional", providers.gradleProperty("shadowOrderNotional").orNull ?: "25")
     argsList += listOf("--fill-volume-factor", providers.gradleProperty("shadowFillVolumeFactor").orNull ?: "1")
     argsList += listOf("--max-cycles-per-market", providers.gradleProperty("shadowMaxCyclesPerMarket").orNull ?: "3")
+    argsList += listOf("--max-total-inventory-notional", providers.gradleProperty("shadowMaxTotalInventoryNotional").orNull ?: "100")
+    argsList += listOf("--max-daily-loss", providers.gradleProperty("shadowMaxDailyLoss").orNull ?: "5")
     if (providers.gradleProperty("shadowAllowNegRisk").orNull == "true") argsList += "--allow-neg-risk"
     argsList += listOf("--output", providers.gradleProperty("shadowOutput").orNull ?: "build/research/event-maker-shadow")
     args(argsList)

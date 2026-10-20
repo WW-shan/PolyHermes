@@ -39,7 +39,7 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
 
-private data class ShadowOptions(
+internal data class ShadowOptions(
     val proxyUrl: String?,
     val outputDir: Path,
     val maxMarkets: Int,
@@ -78,7 +78,9 @@ private data class ShadowOptions(
     val activeOrderStaleBookSeconds: Long,
     val orderNotional: Double,
     val fillVolumeFactor: Double,
-    val maxCyclesPerMarket: Int
+    val maxCyclesPerMarket: Int,
+    val maxTotalInventoryNotional: Double,
+    val maxDailyLoss: Double
 )
 
 private data class ShadowSummary(
@@ -157,7 +159,7 @@ fun main(args: Array<String>) {
     exitProcess(if (summary.haltedReason == null) 0 else 2)
 }
 
-private fun parseOptions(args: Array<String>): ShadowOptions {
+internal fun parseOptions(args: Array<String>): ShadowOptions {
     fun option(name: String): String? {
         val index = args.indexOf("--$name")
         return if (index >= 0 && index + 1 < args.size) args[index + 1] else null
@@ -178,6 +180,8 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     val orderNotional = option("order-notional")?.toDoubleOrNull() ?: 25.0
     val fillVolumeFactor = option("fill-volume-factor")?.toDoubleOrNull() ?: 1.0
     val maxCyclesPerMarket = option("max-cycles-per-market")?.toIntOrNull() ?: 3
+    val maxTotalInventoryNotional = option("max-total-inventory-notional")?.toDoubleOrNull() ?: 100.0
+    val maxDailyLoss = option("max-daily-loss")?.toDoubleOrNull() ?: 5.0
     val discoveryPages = option("discovery-pages")?.toIntOrNull() ?: 50
     val waitForMarketMinutes = option("wait-for-market-minutes")?.toIntOrNull() ?: 0
     val discoveryRetrySeconds = option("discovery-retry-seconds")?.toLongOrNull() ?: 60L
@@ -197,6 +201,8 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     require(orderNotional > 0.0)
     require(fillVolumeFactor >= 0.0)
     require(maxCyclesPerMarket >= 1)
+    require(maxTotalInventoryNotional > 0.0)
+    require(maxDailyLoss > 0.0)
     require(discoveryPages in 1..100)
     require(waitForMarketMinutes >= 0)
     require(discoveryRetrySeconds > 0)
@@ -240,7 +246,9 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
         activeOrderStaleBookSeconds = activeOrderStaleBookSeconds,
         orderNotional = orderNotional,
         fillVolumeFactor = fillVolumeFactor,
-        maxCyclesPerMarket = maxCyclesPerMarket
+        maxCyclesPerMarket = maxCyclesPerMarket,
+        maxTotalInventoryNotional = maxTotalInventoryNotional,
+        maxDailyLoss = maxDailyLoss
     )
 }
 
@@ -485,8 +493,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             entryOffsetCents = options.entryOffsetCents,
             exitSpreadCents = options.exitSpreadCents,
             exitImproveTicks = options.exitImproveTicks,
-            maxTotalInventoryNotional = 100.0,
-            maxDailyLoss = 5.0,
+            maxTotalInventoryNotional = options.maxTotalInventoryNotional,
+            maxDailyLoss = options.maxDailyLoss,
             maxCyclesPerMarket = options.maxCyclesPerMarket,
             requoteSeconds = options.requoteSeconds,
             maxOrderAgeSeconds = options.maxOrderAgeSeconds,

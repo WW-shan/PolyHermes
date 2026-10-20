@@ -1699,3 +1699,10 @@
 - Bitcoin vs Gold vs S&P：worst fills 228/228/0，worst PnL -59.52；OpenAI IPO：worst PnL -13.96。
 - 原因：negRisk 篮子只成交 2/3 腿，第 3 腿 0 股，属于裸风险，不是完整集套利。
 - 更新 `watch-complete-set-monitors.ps1`：区分 riskFreeActionable / nakedRiskActionable；watcher 重启为 PID 9708。
+### 02:00 修复 Shadow 只开 1 个市场的风险上限 bug
+
+- 发现旧臂虽选中 8–10 市场，但 `maxTotalInventoryNotional` 硬编码 100、`maxDailyLoss` 硬编码 5，orderNotional=100 → 永远只有 1 个 active BUY。
+- 这违背多市场分散前提，也是长时间 0 fill 的直接原因之一。
+- 修复：ShadowCli/Gradle/start 脚本暴露两个参数；新增 `EventMakerShadowCliOptionsTest`；全量测试通过。
+- 旧臂审计 `NO_FILLS_OR_CYCLES` 并停止。
+- 重启 cap=1000：+3c 与 +1c 均 10 市场 / 10 active BUY；watcher 21160 / 26520，monitor 26068。

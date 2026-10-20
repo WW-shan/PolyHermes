@@ -452,6 +452,34 @@ cd D:\Project\PolyHermes\backend
 2. 因此回测的 49% fill rate **不能直接外推**到 Shadow；真实 fill rate 必须以 Shadow 为准。
 3. 这也是为什么两个 7 天 Shadow 臂是必要的：它们测的是真实挂单规则，而不是回测的近似。
 
+### 4.6.10 关键修复：Shadow 只开 1 个市场（2026-10-21）
+
+排查发现，旧的两个 Shadow 臂虽然选中 8–10 个市场，但 `state.json` 里始终只有 **1 个 active BUY**。原因：
+
+- `EventMakerShadowCli` 把 `maxTotalInventoryNotional` 硬编码为 **100 USDC**，把 `maxDailyLoss` 硬编码为 **5 USDC**；
+- 同时 `orderNotional=100`，所以第一个买单就吃满总库存预算，其余市场永远无法挂单；
+- 这直接违背“小单、多市场、分散事件”的策略前提，也解释了为什么长时间 0 fill。
+
+修复：
+
+1. `EventMakerShadowCli` 新增 `--max-total-inventory-notional` 和 `--max-daily-loss`，不再硬编码。
+2. `build.gradle.kts` 新增 `shadowMaxTotalInventoryNotional` / `shadowMaxDailyLoss`。
+3. `start-bond-shadow.ps1` 新增对应参数，并把 activity gate 参数也全部暴露。
+4. 新增 `EventMakerShadowCliOptionsTest`：解析 1000/100、拒绝 0。
+5. 全量测试 `BUILD SUCCESSFUL`。
+
+重启结果：
+
+| 臂 | 旧状态 | 新状态（cap=1000） |
+|---|---|---|
+| +3c | 8 市场，仅 1 active | **10 市场，10 active BUY** |
+| +1c | 10 市场，仅 1 active | **10 市场，10 active BUY** |
+
+- 旧臂审计：均 `NO_FILLS_OR_CYCLES`（0 fill / 0 cycle），已停止并留 `audit-stopped.json`。
+- 新臂：`...-3c-cap1000-shadow-7d-20261021`、`...-1c-cap1000-shadow-7d-20261021`。
+- watcher：+3c PID 21160，+1c PID 26520；持续 monitor PID 26068，序列 `bond-shadow-cap1000-audit-series.jsonl`。
+- 说明：`maxDailyLoss=1000` 是研究用上限，不是实盘风控建议；实盘必须单独设置更低的日亏损预算。
+
 ## 5. 结论与风险
 
 **可借鉴的部分（尚未验证可盈利）：**

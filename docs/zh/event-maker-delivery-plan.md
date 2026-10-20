@@ -1082,3 +1082,16 @@ cd D:\Project\PolyHermes\backend
 - 原因：negRisk 篮子只成交 2/3 条腿，第 3 条腿 0 股，等于裸风险；不是风险自由完整集。
 - 结论：`actionable=true` 只代表 edge 过缓冲，不代表 risk-free；必须同时满足 `askRiskWorstPnlUsd >= 0` 且 worst fills 覆盖所有腿。
 - 已更新 `watch-complete-set-monitors.ps1`：区分 `riskFreeActionable` 与 `nakedRiskActionable`；只有 riskFree>0 才判 `ACTIONABLE_FOUND`，否则 `PARTIAL_BASKET_NAKED_RISK_ONLY`。
+### 19.12 修复 Shadow 单市场风险上限（2026-10-21）
+
+| 项目 | 修复前 | 修复后 |
+|---|---|---|
+| maxTotalInventoryNotional | 硬编码 100 | CLI/Gradle/脚本可配 |
+| maxDailyLoss | 硬编码 5 | CLI/Gradle/脚本可配 |
+| +3c active orders | 1 / 8 市场 | 10 / 10 市场 |
+| +1c active orders | 1 / 10 市场 | 10 / 10 市场 |
+| 测试 | — | `EventMakerShadowCliOptionsTest`，全量 BUILD SUCCESSFUL |
+
+- 旧臂 0 fill / 0 cycle，已审计停止。
+- 新臂 cap=1000，watcher 21160 / 26520，monitor 26068。
+- 这是“多市场分散”策略能否成立的前提修复。
