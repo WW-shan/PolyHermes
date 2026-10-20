@@ -1585,3 +1585,10 @@
 - 新增 `docs/zh/event-maker-bond-runbook-2026-10-20.md`：配置、启动/停止、产物、审计清单、已知限制和 Live 门槛。
 - 明确写入：当前 BOND 是理想化假设，不是已验证复刻；目标账户 0.95–0.97 已平仓 ROI 约 +0.225%，队列回测 +4.10% 明显高估。
 - 手册要求每次运行结束必须核对 fill、MAE、结算亏损、重复成交、未知状态和 maker rebate/liquidity reward。
+
+### 23:40 BOND Shadow 离线审计脚本
+
+- 新增 `scripts/audit-bond-shadow.cjs`，读取 `state.json`/`summary.json`，汇总 markets、phases、activeOrders、inventory、cycles、deployed、realizedPnl/ROI、平均持有时间和 worst/best cycle。
+- 自动标记：无 fill/cycle、重复成交、lastErrors、ROI>1%、有库存但无活跃订单。
+- 已对当前 2h Shadow 运行：5 市场、4 FLAT、1 BUY_PENDING、0 cycles，flag=`NO_FILLS_OR_CYCLES`。
+- 运行方式：`npm run audit:bond-shadow -- --dir <output> --output <output>\audit.json`。

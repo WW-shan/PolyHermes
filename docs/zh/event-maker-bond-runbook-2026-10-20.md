@@ -54,6 +54,14 @@
 
 ## 4. 审计清单
 
+离线审计：
+
+```powershell
+cd D:\Project\PolyHermes\scripts
+npm run audit:bond-shadow -- --dir ..\backend\build\research\event-maker-bond-shadow-7d-20261020 --output ..\backend\build\research\event-maker-bond-shadow-7d-20261020\audit.json
+```
+
+
 每次运行结束必须回答：
 
 1. 选中了多少市场，实际挂单多少，fill 多少，fill rate 多少；
