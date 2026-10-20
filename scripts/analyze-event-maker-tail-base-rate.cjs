@@ -39,6 +39,13 @@ function referenceAt(market, timestamp) {
   return favorite < 0 ? null : { favorite, price };
 }
 
+const BANDS = [
+  { label: '0.95-0.97', low: 0.95, high: 0.97 },
+  { label: '0.97-0.99', low: 0.97, high: 0.99 },
+  { label: '0.985-0.995', low: 0.985, high: 0.995 },
+  { label: '0.99-0.999', low: 0.99, high: 0.999 }
+];
+
 const HORIZONS = [
   { label: '12h', hours: 12 },
   { label: '1d', hours: 24 },
@@ -65,33 +72,39 @@ if (!datasetPath || !outputPath) {
 
 const dataset = JSON.parse(zlib.gunzipSync(fs.readFileSync(datasetPath)).toString('utf8'));
 const rows = [];
-for (const horizon of HORIZONS) {
-  const seconds = horizon.hours * 3600;
-  let eligible = 0;
-  let favoriteLost = 0;
-  const lost = [];
-  for (const market of dataset.markets) {
-    const reference = referenceAt(market, market.closedTimestamp - seconds);
-    if (!reference) continue;
-    if (reference.price < 0.97 || reference.price >= 0.99) continue;
-    eligible++;
-    if (reference.favorite !== market.winnerIndex) {
-      favoriteLost++;
-      lost.push({ question: market.question, tag: market.tag, reference: reference.price });
+const bandRows = [];
+for (const band of BANDS) {
+  for (const horizon of HORIZONS) {
+    const seconds = horizon.hours * 3600;
+    let eligible = 0;
+    let favoriteLost = 0;
+    const lost = [];
+    for (const market of dataset.markets) {
+      const reference = referenceAt(market, market.closedTimestamp - seconds);
+      if (!reference) continue;
+      if (reference.price < band.low || reference.price >= band.high) continue;
+      eligible++;
+      if (reference.favorite !== market.winnerIndex) {
+        favoriteLost++;
+        lost.push({ question: market.question, tag: market.tag, reference: reference.price });
+      }
     }
+    const lossRate = eligible > 0 ? favoriteLost / eligible : 0;
+    const expectedValue = (1 - lossRate) * WIN_PROFIT - lossRate;
+    const row = {
+      band: band.label,
+      window: horizon.label,
+      eligible,
+      favoriteLost,
+      lossRate,
+      breakEvenLossRate: BREAK_EVEN_LOSS_RATE,
+      expectedValuePerCycle: expectedValue,
+      structurallyPositive: expectedValue > 0,
+      lostMarketSample: lost.slice(0, 10)
+    };
+    bandRows.push(row);
+    if (band.label === '0.97-0.99') rows.push(row);
   }
-  const lossRate = eligible > 0 ? favoriteLost / eligible : 0;
-  const expectedValue = (1 - lossRate) * WIN_PROFIT - lossRate;
-  rows.push({
-    window: horizon.label,
-    eligible,
-    favoriteLost,
-    lossRate,
-    breakEvenLossRate: BREAK_EVEN_LOSS_RATE,
-    expectedValuePerCycle: expectedValue,
-    structurallyPositive: expectedValue > 0,
-    lostMarketSample: lost.slice(0, 10)
-  });
 }
 
 const report = {
@@ -100,7 +113,8 @@ const report = {
   priceBand: [0.97, 0.99],
   winProfit: WIN_PROFIT,
   breakEvenLossRate: BREAK_EVEN_LOSS_RATE,
-  rows
+  rows,
+  bandRows
 };
 fs.writeFileSync(outputPath, JSON.stringify(report, null, 2));
 
