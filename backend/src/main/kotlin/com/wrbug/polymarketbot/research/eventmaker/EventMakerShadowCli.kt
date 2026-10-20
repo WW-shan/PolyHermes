@@ -521,7 +521,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             maxCyclesPerMarket = options.maxCyclesPerMarket,
             requoteSeconds = options.requoteSeconds,
             maxOrderAgeSeconds = options.maxOrderAgeSeconds,
-        tailWindowMinutes = options.tailWindowMinutes,
+            tailWindowMinutes = options.tailWindowMinutes,
             flowGuardWindowSeconds = options.flowGuardWindowSeconds,
             flowGuardMaxSignedFlow = options.flowGuardMaxSignedFlow,
             flowGuardMinPriceDropCents = options.flowGuardMinPriceDropCents,
