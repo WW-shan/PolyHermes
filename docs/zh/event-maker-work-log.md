@@ -1711,3 +1711,4 @@
 - 修复 cap 后，+3c 与 +1c 臂各在 `US x Iran ceasefire continues through October 22?` 成交：BUY @0.953，104.93 股。
 - 成交后 LONG；best ask 未到 entry+1c/+3c，卖出限价暂未挂出。
 - 说明多市场挂单（10/10 active）和成交模拟已跑通；单样本不足以下结论。
+- 02:17 快照：bid 0.939 / ask 0.944，entry 0.953，unrealized PnL -1.47 USDC；+1c/+3c 退出均未触发，首笔成交已出现逆选择浮亏。
