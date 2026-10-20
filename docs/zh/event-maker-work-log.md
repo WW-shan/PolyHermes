@@ -1612,3 +1612,13 @@
 - 全量 Gradle 测试：`BUILD SUCCESSFUL in 21s`。
 - 7d Shadow 已启动：PID 10868（wrapper），8 个市场、16 个 token，输出 `backend/build/research/event-maker-bond-shadow-7d-20261020`；flowGuard=0，与 BOND 回测口径一致。
 - 续跑脚本误报 `long shadow start failed`，原因是 PowerShell 脚本后的 `$LASTEXITCODE` 不可靠；已改为 `$?`，不影响实际已启动的 7d 进程。
+
+### 00:10 逐笔库存账本复核
+
+- 新增 `scripts/snapshot-leader-ledger.mjs`：抓取 trades、positions、closed-positions、activity，输出 `backend/build/research/leader-ledger-raw-20261021.json`。
+- 新增 `scripts/analyze-leader-ledger.mjs`：按 asset FIFO，分离 matched round-trip、settlement、open mark-to-market，输出 `leader-ledger-analysis-20261021.json`。
+- 快照：5,155 条 TRADE activity（2026-03-01 至 2026-10-16）、390 closed positions、5 open positions。
+- 结果：matched PnL +14,342、ROI +0.748%；settlement PnL +3,637；all closed ROI +0.802%；全周期 closed API ROI +0.532%。
+- 价格带 matched ROI：0.9–0.95 +1.39%、0.95–0.97 +1.26%、0.97–0.99 +0.85%、0.99–1 +0.31%、0.5–0.8 +0.94%。
+- 结论修正：上一版只用 1,034 条 trades 得到 matched ROI -0.2055%，样本不完整；全量 activity 账本显示 matched flow 为正，但 BOND 回测 +4.10% 仍约为目标 0.95–0.97 matched ROI 的 3.3 倍。
+- 目标账户更像高周转、多价格带的事件交易/做市混合策略；单靠 0.95–0.99 持有无法完整复刻。

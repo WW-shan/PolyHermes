@@ -2,7 +2,7 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 561 tests 通过；BOND 全价格带复核完成：0.90–0.95 明确负期望，0.95–0.99 只有边界性正期望，4.10% 不能当作稳定收益；与目标账户对账后，0.95–0.97 队列回测约为其已平仓 ROI 的 18 倍，当前 BOND 只是理想化假设模型，不是已验证复刻。BOND 2h Shadow 已完成（5 市场、5 挂单、5 撤单、0 fill、0 错误）；全量测试通过；7 天 Shadow 已启动（8 市场、flowGuard=0）。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 561 tests 通过；BOND 全价格带复核完成：0.90–0.95 明确负期望，0.95–0.99 只有边界性正期望，4.10% 不能当作稳定收益；与目标账户对账后，0.95–0.97 队列回测约为其已平仓 ROI 的 18 倍，当前 BOND 只是理想化假设模型，不是已验证复刻；逐笔库存账本显示目标账户 matched ROI +0.748%，edge 分布在多价格带，不是纯 bond carry。BOND 2h Shadow 已完成（5 市场、5 挂单、5 撤单、0 fill、0 错误）；全量测试通过；7 天 Shadow 已启动（8 市场、flowGuard=0）。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
 > 最后更新：2026-10-21 00:05 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
@@ -954,3 +954,22 @@ cd D:\Project\PolyHermes\backend
 - 全量测试 `BUILD SUCCESSFUL in 21s`。
 - 7d Shadow 已启动：PID 10868、8 市场、16 token、flowGuard=0；输出 `event-maker-bond-shadow-7d-20261020`。
 - 7d 结束后用 `npm run audit:bond-shadow` 审计；至少覆盖 2–4 周/50–100 个结算事件前不进入真实资金。
+### 18.4 逐笔库存账本复核（2026-10-21）
+
+| 指标 | 结果 |
+|---|---:|
+| TRADE activity 覆盖 | 2026-03-01 至 2026-10-16 |
+| trades / closed positions / open positions | 5,155 / 390 / 5 |
+| matched PnL | +14,342 USDC |
+| matched ROI | +0.748% |
+| settlement PnL | +3,637 USDC |
+| all closed ROI | +0.802% |
+| 全周期 closed API ROI | +0.532% |
+| 持有期中位数 / p90 | 2.02 天 / 10.96 天 |
+
+价格带 matched ROI：0.5–0.8 +0.94%、0.8–0.9 +0.69%、0.9–0.95 +1.39%、0.95–0.97 +1.26%、0.97–0.99 +0.85%、0.99–1 +0.31%。
+
+- 目标账户不是纯 0.95–0.99 债券 carry；edge 分布在多个价格带，0.9–0.97 最强。
+- 我们的 BOND 0.95–0.97 队列回测 +4.10% 约为目标同 band matched ROI 的 3.3 倍、closed-position ROI 的 18 倍，仍高估。
+- 新增脚本：`scripts/snapshot-leader-ledger.mjs`、`scripts/analyze-leader-ledger.mjs`。
+- 下一步若要复刻，需研究事件选择、跨价格带库存周转和退出纪律；单靠 0.95–0.99 持有不够。

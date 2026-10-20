@@ -19,6 +19,8 @@
     "test:paper-execute": "node --test test/paper-execute-complete-set.test.mjs",
     "paper:complete-set": "node paper-execute-complete-set.mjs",
     "analyze:bond-carry": "node analyze-leader-bond-style.cjs",
+    "snapshot:leader-ledger": "node snapshot-leader-ledger.mjs",
+    "analyze:leader-ledger": "node analyze-leader-ledger.mjs",
     "audit:bond-shadow": "node audit-bond-shadow.cjs"
   },
   "dependencies": {
