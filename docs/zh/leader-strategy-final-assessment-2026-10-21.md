@@ -53,6 +53,7 @@
 | +1c wide-universe (minVolume 1000) | 28/26 | 0 | 0 | — |
 
 - 首笔成交：`US x Iran ceasefire continues through October 22?` BUY @0.953，104.93 股；最新 bid 0.945 / ask 0.946，浮亏约 -0.84。
+- 首笔 60s 后 mid≈0.944，entry 0.953，逆向选择成本约 **0.9c**；按 0.944 公允价计算 EV ≈ **-0.9%/股**。+1c 目标 0.963 需要价格从 0.944 回升 1.9c，缺乏信息优势时很难。
 - 24h 完整集监控：crypto/finance 27 opportunities / 11 actionable，但全部 worstPnl < 0（部分成交裸风险）；politics 0。
 - 结论：没有风险自由完整集套利。
 
