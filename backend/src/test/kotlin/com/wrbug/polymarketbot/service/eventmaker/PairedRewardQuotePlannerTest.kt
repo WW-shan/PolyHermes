@@ -25,6 +25,7 @@ class PairedRewardQuotePlannerTest {
         assertEquals(0, plan.noPrice.compareTo(BigDecimal("0.04")))
         assertEquals("20.000000", plan.shares.toPlainString())
         assertEquals(0.99, plan.pairCostPerShare, 1e-9)
+        assertEquals(1.0, plan.maxImmediateHedgePairCost, 1e-9)
         assertEquals(0.2, plan.pairSpreadProfit, 1e-9)
         assertTrue(plan.ourQMin > 0.0)
     }
@@ -52,6 +53,20 @@ class PairedRewardQuotePlannerTest {
         assertFalse(plan.eligible)
         assertEquals("pair_cost_above_limit", plan.reason)
         assertEquals(1.01, plan.pairCostPerShare, 1e-9)
+    }
+
+    @Test
+    fun `hedge cost gate rejects spread that cannot be immediately covered`() {
+        val plan = PairedRewardQuotePlanner.plan(
+            market = rewardMarket(),
+            yesBook = book("yes", 0.95, 0.96),
+            noBook = book("no", 0.04, 0.05),
+            maxHedgePairCostPerShare = 0.999
+        )
+
+        assertFalse(plan.eligible)
+        assertEquals("hedge_cost_above_limit", plan.reason)
+        assertEquals(1.0, plan.maxImmediateHedgePairCost, 1e-9)
     }
 
     @Test

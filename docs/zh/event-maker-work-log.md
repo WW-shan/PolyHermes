@@ -1375,3 +1375,12 @@
 - 新增 `PairedRewardQuotePlanner`：在 YES/NO 两个 outcome 上生成 post-only BUY，自动使用奖励最小 size，拒绝穿价和配对成本超限。
 - 回归：105 suites / 578 tests / 0 failures / 0 errors / 2 skipped。
 - 下一步：真正的双 token Shadow + 单边成交 IOC hedge。当前代码未改变 v6 行为，也未开启实盘。
+
+### 11:45 配对奖励 Shadow 终判
+
+- 新增 `PairedRewardShadowCli.kt`、Gradle `pairedRewardShadow` 任务；订阅 YES/NO 两个 token，双边模拟 post-only BUY，单边成交后 grace 或立即 taker IOC hedge。
+- 5 秒宽限 smoke：7 市场、13 报价周期、1 maker fill、0 natural pair、1 hedge；奖励 0.0068，配对亏损 -2.4022，净 -2.3954。
+- 立即对冲 smoke：7 市场、34 报价周期、1 maker fill、0 natural pair、1 hedge；奖励 0.2100，配对亏损 -1.8486，净 -1.6386。
+- 两次均证明：bid 配对虽然约 0.994，但单边成交后买对手 ask + 0.2c 滑点约 1.006，taker fee 后单次损失远超同期奖励。
+- 新增安全门槛 `maxHedgePairCostPerShare` / `hedgeSlippageCents`；按 1.0 + 0.2c 扫描 87 个候选，0 个通过，正确结果是“不报价”。
+- 结论：0.90–0.95 paired reward farming 当前不可行；0.97–0.99 单边 maker 亦不可行；不跟单、不实盘。报告：`docs/zh/event-maker-paired-reward-shadow-2026-10-20.md`。- 修复 `CopyTradingFullChainE2ETest` 的异步竞态：`processedTrades.size` 直接断言改为先 awaitCondition，避免 SELL 异步落库尚未完成时误报；全量回归恢复为 105 suites / 579 tests / 0 failures。

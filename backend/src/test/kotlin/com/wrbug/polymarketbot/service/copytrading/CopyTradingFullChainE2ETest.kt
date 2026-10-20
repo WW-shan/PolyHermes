@@ -445,6 +445,7 @@ class CopyTradingFullChainE2ETest {
         assertEquals(1, ledgerRepos.details.size)
 
         // 两笔交易都已标记处理（跨来源去重依赖它）
+        awaitCondition { processedTrades.size == 2 }
         assertEquals(2, processedTrades.size)
         assertNotNull(processedTrades["$leaderId:${OnChainWsUtils.buildTradeId(txHash, tokenId, "BUY")}"])
         assertNotNull(processedTrades["$leaderId:${OnChainWsUtils.buildTradeId(txHash, tokenId, "SELL")}"])

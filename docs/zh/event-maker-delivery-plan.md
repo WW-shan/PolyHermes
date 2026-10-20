@@ -730,3 +730,18 @@ cd D:\Project\PolyHermes\backend
 
 - 这些代码只新增研究/规划能力，未改变 v6 正在运行的单边策略行为，也未提交任何真实订单能力。
 - 下一步不是直接实盘，而是实现双 token Shadow；没有单边对冲证据时，reward 收益不能覆盖尾部风险。
+
+### 10.38 2026-10-20 11:45 配对奖励 Shadow：当前市场结构性不可行
+
+| ID | 任务 | 状态 | 验收证据 |
+|---|---|---|---|
+| RWD-SHADOW-1 | 双 token WebSocket + 双边 post-only 模拟报价 | 已完成 | `PairedRewardShadowCli.kt`；7 个市场、14 个 token 订阅；报价/requote/成交/对冲全部落盘 |
+| RWD-SHADOW-2 | 单边成交后 grace / 立即 IOC hedge | 已完成 | 两轮 smoke 均执行对冲；5 秒宽限净 -2.3954，立即对冲净 -1.6386，均远差于奖励 |
+| RWD-SAFE-1 | 事前将立即对冲成本纳入选择 | 已完成 | `maxHedgePairCostPerShare` + `hedgeSlippageCents`；1.0 成本 + 0.2c 滑点下 87 个候选全部拒绝 |
+| RWD-SHADOW-3 | 0.90–0.95 前瞻 Shadow | 已完成（失败判定） | 自然配对 0 次；两次均只出现单边成交后对冲；奖励 0.0068/0.2100，对冲亏损 -2.4022/-1.8486 |
+| RWD-LIVE-1 | 小资金实盘 | 阻塞且禁止 | 没有通过安全对冲门槛的市场；不得用实盘验证已被 smoke 证伪的结构 |
+
+- 报告：`docs/zh/event-maker-paired-reward-shadow-2026-10-20.md`。
+- 典型盘口：YES 0.903/0.909、NO 0.091/0.097；bid 配对 0.994，但单边成交后买对手 ask + 滑点约 1.006，奖励无法覆盖。
+- 结论：**0.90–0.95 paired reward farming 在当前市场条件下不成立；0.97–0.99 单边 maker 也不成立。**
+- 下一步只有在“自然配对率显著提高”“盘口对冲成本 <=1.0”“改变收益结构”之一有真实数据后才重开，不再继续调价格带/宽限时间。

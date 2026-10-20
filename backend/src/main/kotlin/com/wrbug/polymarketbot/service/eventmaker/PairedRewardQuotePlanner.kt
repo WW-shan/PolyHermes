@@ -15,6 +15,7 @@ data class PairedRewardQuotePlan(
     val yesScore: Double,
     val noScore: Double,
     val ourQMin: Double,
+    val maxImmediateHedgePairCost: Double,
     val eligible: Boolean,
     val reason: String
 )
@@ -34,11 +35,15 @@ object PairedRewardQuotePlanner {
         noBook: MarketBook,
         improveTicks: Int = 0,
         requestedShares: Double = 0.0,
-        maxPairCostPerShare: Double = 1.0
+        maxPairCostPerShare: Double = 1.0,
+        maxHedgePairCostPerShare: Double = 1.0,
+        hedgeSlippageCents: Double = 0.0
     ): PairedRewardQuotePlan {
         require(improveTicks >= 0) { "improveTicks must be non-negative" }
         require(requestedShares >= 0.0) { "requestedShares must be non-negative" }
         require(maxPairCostPerShare > 0.0) { "maxPairCostPerShare must be positive" }
+        require(maxHedgePairCostPerShare > 0.0) { "maxHedgePairCostPerShare must be positive" }
+        require(hedgeSlippageCents >= 0.0) { "hedgeSlippageCents must be non-negative" }
         require(market.tokenIds.size >= 2) { "a binary market must have two token ids" }
         if (market.rewardDailyRate <= 0.0) return ineligible("no_active_reward")
         if (market.rewardsMinSize <= 0.0 || market.rewardsMaxSpread <= 0.0) {
@@ -57,6 +62,11 @@ object PairedRewardQuotePlanner {
         val yesPrice = postOnlyBid(yesBestBid, yesBestAsk, market.tickSize, improveTicks)
         val noPrice = postOnlyBid(noBestBid, noBestAsk, market.tickSize, improveTicks)
         val pairCost = yesPrice.toDouble() + noPrice.toDouble()
+        val hedgeSlippage = hedgeSlippageCents / 100.0
+        val maxImmediateHedgePairCost = maxOf(
+            yesPrice.toDouble() + noBestAsk + hedgeSlippage,
+            noPrice.toDouble() + yesBestAsk + hedgeSlippage
+        )
         val config = LiquidityRewardConfig(
             minSizeShares = shares,
             maxSpreadCents = market.rewardsMaxSpread
@@ -74,7 +84,9 @@ object PairedRewardQuotePlanner {
             midpoint = noMidpoint
         )
         val score = LiquidityRewardCalculator.calculate(yesRewardBook, noRewardBook, config)
-        val eligible = score.qMin > EPSILON && pairCost <= maxPairCostPerShare + EPSILON
+        val eligible = score.qMin > EPSILON &&
+            pairCost <= maxPairCostPerShare + EPSILON &&
+            maxImmediateHedgePairCost <= maxHedgePairCostPerShare + EPSILON
         return PairedRewardQuotePlan(
             yesPrice = yesPrice,
             noPrice = noPrice,
@@ -94,10 +106,12 @@ object PairedRewardQuotePlanner {
                 config
             ),
             ourQMin = score.qMin,
+            maxImmediateHedgePairCost = maxImmediateHedgePairCost,
             eligible = eligible,
             reason = when {
                 score.qMin <= EPSILON -> "not_reward_eligible"
                 pairCost > maxPairCostPerShare + EPSILON -> "pair_cost_above_limit"
+                maxImmediateHedgePairCost > maxHedgePairCostPerShare + EPSILON -> "hedge_cost_above_limit"
                 else -> "eligible"
             }
         )
@@ -122,6 +136,7 @@ object PairedRewardQuotePlanner {
         yesScore = 0.0,
         noScore = 0.0,
         ourQMin = 0.0,
+        maxImmediateHedgePairCost = 0.0,
         eligible = false,
         reason = reason
     )

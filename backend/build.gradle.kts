@@ -243,3 +243,40 @@ tasks.register<JavaExec>("eventMakerShadow") {
     argsList += listOf("--output", providers.gradleProperty("shadowOutput").orNull ?: "build/research/event-maker-shadow")
     args(argsList)
 }
+
+/**
+ * Research-only paired liquidity-reward shadow. It subscribes to both outcome
+ * tokens, simulates two post-only bids, and hedges a one-sided fill after a
+ * grace period. It never signs or submits an order.
+ */
+tasks.register<JavaExec>("pairedRewardShadow") {
+    group = "research"
+    description = "Run the paired liquidity-reward shadow against live public Polymarket data"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.wrbug.polymarketbot.research.eventmaker.PairedRewardShadowCliKt")
+
+    val argsList = mutableListOf<String>()
+    providers.gradleProperty("pairedRewardProxy").orNull?.let { argsList += listOf("--proxy", it) }
+    argsList += listOf("--output", providers.gradleProperty("pairedRewardOutput").orNull ?: "build/research/paired-reward-shadow")
+    argsList += listOf("--minutes", providers.gradleProperty("pairedRewardMinutes").orNull ?: "60")
+    argsList += listOf("--max-markets", providers.gradleProperty("pairedRewardMaxMarkets").orNull ?: "7")
+    argsList += listOf("--discovery-markets", providers.gradleProperty("pairedRewardDiscoveryMarkets").orNull ?: "1000")
+    argsList += listOf("--discovery-pages", providers.gradleProperty("pairedRewardDiscoveryPages").orNull ?: "10")
+    argsList += listOf("--min-volume", providers.gradleProperty("pairedRewardMinVolume").orNull ?: "1000")
+    argsList += listOf("--min-price", providers.gradleProperty("pairedRewardMinPrice").orNull ?: "0.90")
+    argsList += listOf("--max-price", providers.gradleProperty("pairedRewardMaxPrice").orNull ?: "0.955")
+    argsList += listOf("--min-remaining-minutes", providers.gradleProperty("pairedRewardMinRemainingMinutes").orNull ?: "1440")
+    argsList += listOf("--max-remaining-minutes", providers.gradleProperty("pairedRewardMaxRemainingMinutes").orNull ?: "43200")
+    argsList += listOf("--shares", providers.gradleProperty("pairedRewardShares").orNull ?: "0")
+    argsList += listOf("--improve-ticks", providers.gradleProperty("pairedRewardImproveTicks").orNull ?: "0")
+    argsList += listOf("--max-pair-cost", providers.gradleProperty("pairedRewardMaxPairCost").orNull ?: "1.0")
+    argsList += listOf("--max-hedge-pair-cost", providers.gradleProperty("pairedRewardMaxHedgePairCost").orNull ?: "1.0")
+    argsList += listOf("--requote-seconds", providers.gradleProperty("pairedRewardRequoteSeconds").orNull ?: "120")
+    argsList += listOf("--hedge-grace-ms", providers.gradleProperty("pairedRewardHedgeGraceMs").orNull ?: "5000")
+    argsList += listOf("--hedge-slippage-cents", providers.gradleProperty("pairedRewardHedgeSlippageCents").orNull ?: "0.2")
+    argsList += listOf("--taker-fee-rate", providers.gradleProperty("pairedRewardTakerFeeRate").orNull ?: "0.04")
+    argsList += listOf("--fill-volume-factor", providers.gradleProperty("pairedRewardFillVolumeFactor").orNull ?: "1")
+    argsList += listOf("--snapshot-seconds", providers.gradleProperty("pairedRewardSnapshotSeconds").orNull ?: "10")
+    argsList += listOf("--poll-seconds", providers.gradleProperty("pairedRewardPollSeconds").orNull ?: "1")
+    args(argsList)
+}
