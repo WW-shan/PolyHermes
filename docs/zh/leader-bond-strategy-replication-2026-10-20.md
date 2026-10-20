@@ -510,6 +510,26 @@ cd D:\Project\PolyHermes\backend
 3. 因此固定 +1c/+3c 模型只能复刻他的“正常盈利路径”，无法复刻“事件判断 + 大止损”这部分；这也是为什么回测 ROI 与他的真实表现不会完全一致。
 4. 结论：机械基线可以跑 Shadow 验证，但不要期望它等于目标账户的全部收益；真正的 alpha 有一部分来自事件判断，短期无法自动化。
 
+### 4.6.13 活动门槛实测：当前 favorite token 流量极薄（2026-10-21 02:22）
+
+对 13 个合格市场加活动门槛后：
+
+| 门槛 | 结果 |
+|---|---|
+| 3 trades / 50 notional / 1 per side（30m） | `activityPassed=1`，但该市场 `price_out_of_range` → `selected=0` |
+| 1 trade / 10 notional / 1 per side（30m） | `activityPassed=1`，仍 `price_out_of_range` → `selected=0` |
+
+说明当前 Politics/Geopolitics 高概率市场里，**favorite token 的 30 分钟双边成交极少**；大部分成交发生在便宜的 No 侧。这与首笔成交的逆选择一致：
+
+- 首笔成交 60s markout **-1.05 USDC**（bid 0.943 / ask 0.945）
+- 300s markout **-1.99 USDC**（bid 0.934 / ask 0.940）
+
+结论：
+
+1. 当前时点不适合用严格活动门槛（会选不出市场）；ungated 两臂继续作为基线。
+2. 首笔成交已经证明“有成交 ≠ 有 edge”，薄流量市场的 maker 成交更容易被逆选择。
+3. 等活动窗口或扩大市场池后，再测 gated 版本；gated 失败本身是有价值的数据点。
+
 ## 5. 结论与风险
 
 **可借鉴的部分（尚未验证可盈利）：**
