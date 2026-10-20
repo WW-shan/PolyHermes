@@ -287,3 +287,71 @@ concurrency=4
 - 但在 0.5c 门槛下，人工复核样本未通过。
 - 正式 0.5c 门槛不放宽。
 - 24 小时监控将记录该事件是否反复出现、能否持续到第二次确认、以及容量与盘口年龄。
+## 9. 2026-10-20 13:55 NegRisk 全 NO 方向与 24h 确认
+
+### 9.1 新增 NegRisk NO basket
+
+对 n 个互斥 outcome 的 NegRisk 事件，除了“买全部 YES”，还存在对称结构：
+
+- 买入全部 outcome 的 NO；
+- 恰好一个 outcome 的 NO 会归零，其余 n-1 个支付 1；
+- 因此每股组合支付 `n - 1`；
+- 在 `sum(NO ask) + fees < n - 1` 时才有利可图。
+
+实现为 `payoutPerShare = outcomes - 1` 的完整集评估，并新增 `noBasket` 结果字段、监控 episode 和 CSV 列。
+
+### 9.2 修正后扫描
+
+Politics + Geopolitics：
+
+- 1,740 市场；
+- 821 组；
+- 510 完整评估；
+- 1 个 ask-side 正收益；
+- 0 个 NO-basket 正收益；
+- 该 ask-side 候选仍为 `Who wins the Senate pending Hormuz Agreement by Oct 23?`。
+
+当前快照：
+
+| 指标 | 数值 |
+|---|---:|
+| top ask sum | 0.986 |
+| max shares | 496.62 |
+| 净利润 | 3.00220465 |
+| edge | **0.60453c/share** |
+
+### 9.3 24 小时监控 v4 的首个确认
+
+监控输出：
+
+- PID `15632`；
+- `backend/build/research/complete-set-monitor-24h-v4-20261020`；
+- watchlist 30；
+- poll 15 秒；
+- discovery 10 分钟。
+
+第一次二次确认：
+
+| 指标 | 数值 |
+|---|---:|
+| 确认前 top ask sum | 0.986 |
+| 确认前 edge | 0.60909c |
+| 确认时 top ask sum | 0.986 |
+| 确认时盘口年龄 | 2,449ms |
+| 确认时 max shares | 496.60 |
+| 确认时净利润 | 3.02475631 |
+| 确认结果 | **confirmed=true** |
+
+这是目前第一个在 1 秒二次确认后仍高于 0.5c 门槛的真实候选。
+
+### 9.4 仍然不能直接实盘
+
+原因：
+
+1. 需要同时买入三个独立订单，不是原子 basket；
+2. 任一腿失败都会留下单边仓位；
+3. 496 股的确认利润只有约 3 USDC，一次失败腿的回吐可能超过全部利润；
+4. 还需要验证机会在 24 小时内的持续频率、容量和盘口变化；
+5. 需要真实账户、最小资金授权和失败回滚路径。
+
+当前状态：**候选通过 Shadow 二次确认，但未通过实盘验收。**

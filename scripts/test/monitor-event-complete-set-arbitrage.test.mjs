@@ -64,6 +64,17 @@ test("NegRisk proxy sums every executable YES ask", () => {
   assert.equal(proxy.validation.ok, true);
 });
 
+test("NegRisk proxy exposes the sum of YES bids for NO-basket prefiltering", () => {
+  const group = { type: "negRisk", negRiskMarketId: "nr-1", discoveryTag: "politics" };
+  const m1 = rawMarket("m1", "y1", "n1", 0.4); m1.bestBid = 0.39;
+  const m2 = rawMarket("m2", "y2", "n2", 0.5); m2.bestBid = 0.49;
+  const event = {
+    id: "event-1", slug: "event-1", title: "Event 1", active: true, closed: false,
+    negRisk: true, enableNegRisk: true, markets: [m1, m2],
+  };
+  const proxy = proxySums(group, event);
+  assert.ok(Math.abs(proxy.bid - 0.88) < 1e-9);
+});
 test("NegRisk proxy refuses an incomplete event", () => {
   const group = { type: "negRisk", negRiskMarketId: "nr-1", discoveryTag: "politics" };
   const event = {

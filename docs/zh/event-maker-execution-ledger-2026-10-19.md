@@ -639,3 +639,13 @@ cd D:\Project\PolyHermes\backend
 
 - 0.5c 正式安全门槛保持不变。
 - 当前策略候选均未满足实盘条件。
+### 2026-10-20 13:55 NegRisk NO basket 与监控确认
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| CSA-15 | NegRisk NO basket 支持 | 已完成 | `payoutPerShare=outcomes-1`，29 Node tests 通过 |
+| CSA-16 | 最新完整集扫描 | 已完成 | 1,740 市场 / 821 组 / 1 ask 候选 / 0 noBasket |
+| CSA-17 | 24h 监控 v4 首次二次确认 | 已完成单次确认 | PID 15632；confirmed=true；edge 0.60909c；profit 3.02476 |
+| CSA-18 | 24h 持续确认与 episode 统计 | 运行中 | output=`complete-set-monitor-24h-v4-20261020` |
+| EXEC-1 | 三腿非原子执行/失败回滚模型 | 待执行 | 当前无 atomic basket；一次失败腿损失未界定 |
+| LIVE-1 | 真实小额 Live smoke | 阻塞 | 需要账户、资金上限、明确授权、时间窗口、市场范围 |

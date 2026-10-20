@@ -35,6 +35,9 @@ const DEFAULTS = Object.freeze({
   durationMs: 86_400_000,
   candidateAskSumMax: 1.02,
   candidateBidSumMin: 0.99,
+  prefilterAskSumMax: 1.10,
+  prefilterBidSumMin: 0.90,
+  prefilterNoBidSumMin: 1.00,
   maxWatchGroups: 100,
   minEdgeCents: 0.5,
   minProfitUsd: 0.01,
@@ -95,6 +98,15 @@ export function parseMonitorArgs(argv) {
         break;
       case "--candidate-bid-sum":
         options.candidateBidSumMin = numberArg(arg, next(), 0);
+        break;
+      case "--prefilter-ask-sum":
+        options.prefilterAskSumMax = numberArg(arg, next(), 0);
+        break;
+      case "--prefilter-bid-sum":
+        options.prefilterBidSumMin = numberArg(arg, next(), 0, { allowZero: true });
+        break;
+      case "--prefilter-no-bid-sum":
+        options.prefilterNoBidSumMin = numberArg(arg, next(), 0, { allowZero: true });
         break;
       case "--max-watch-groups":
         options.maxWatchGroups = Math.floor(numberArg(arg, next(), 0));
@@ -185,10 +197,11 @@ export function proxySums(group, event = null, maxOutcomesPerGroup = 256) {
   const validation = validateNegRiskEvent(event, group, { maxOutcomesPerGroup });
   if (!validation.ok) return { ask: null, bid: null, validation };
   const asks = validation.markets.map((market) => market.bestAsk);
+  const bids = validation.markets.map((market) => market.bestBid);
   if (asks.some((value) => value == null)) return { ask: null, bid: null, validation };
   return {
     ask: asks.reduce((sum, value) => sum + value, 0),
-    bid: null,
+    bid: bids.every((value) => value != null) ? bids.reduce((sum, value) => sum + value, 0) : null,
     validation,
   };
 }
@@ -196,6 +209,7 @@ export function proxySums(group, event = null, maxOutcomesPerGroup = 256) {
 function compactRow(row) {
   const ask = row.ask ?? {};
   const bid = row.bid ?? {};
+  const noBasket = row.noBasket ?? {};
   return {
     groupKey: row.groupKey,
     groupType: row.groupType,
@@ -215,6 +229,11 @@ function compactRow(row) {
     bidAvailable: Boolean(bid.available),
     bidActionable: Boolean(bid.actionable),
     bidReason: bid.reason ?? null,
+    noBasketTop: finite(noBasket.topAskSum),
+    noBasketEdgeCents: finite(noBasket.edgeCents),
+    noBasketAvailable: Boolean(noBasket.available),
+    noBasketActionable: Boolean(noBasket.actionable),
+    noBasketReason: noBasket.reason ?? null,
     actionable: Boolean(row.actionable),
   };
 }
@@ -286,6 +305,7 @@ async function verifyCandidates(candidates, options, previousWatchlist = new Map
     const keep = Boolean(
       row.ask?.available ||
       row.bid?.available ||
+      row.noBasket?.available ||
       (row.ask?.topAskSum != null && row.ask.topAskSum <= options.candidateAskSumMax + 0.01) ||
       (row.bid?.topBidSum != null && row.bid.topBidSum >= options.candidateBidSumMin - 0.01)
     );
@@ -343,7 +363,7 @@ async function appendJsonl(file, value) {
 function trackEpisodes(rows, episodes, now) {
   const seen = new Set();
   for (const row of rows) {
-    for (const side of ["ask", "bid"]) {
+    for (const side of ["ask", "bid", "noBasket"]) {
       const metric = row[side];
       if (!metric?.available) continue;
       const key = `${row.groupKey}:${side}`;

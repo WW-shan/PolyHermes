@@ -166,6 +166,27 @@ test("stale books remain measurable but cannot become actionable", () => {
   assert.equal(result.reason, "stale_book");
 });
 
+test("NegRisk NO basket has payout n-1 per share", () => {
+  const books = [
+    entry("no-a", [], [{ price: 0.64, size: 10 }]),
+    entry("no-b", [], [{ price: 0.66, size: 10 }]),
+    entry("no-c", [], [{ price: 0.66, size: 10 }]),
+  ];
+  const result = evaluateAskArb(books, 5, {
+    now: NOW,
+    payoutPerShare: 2,
+    requires: "all_neg_risk_no_outcomes",
+    minEdgeCents: 0.5,
+    minProfitUsd: 0.01,
+    mergeGasUsd: 0,
+  });
+  assert.equal(result.available, true);
+  assert.equal(result.actionable, true);
+  assert.equal(result.payoutPerShare, 2);
+  assert.equal(result.maxShares, 10);
+  assert.ok(Math.abs(result.profit - 0.4) < 1e-9);
+  assert.equal(result.requires, "all_neg_risk_no_outcomes");
+});
 test("bid arbitrage explicitly requires minting and accounts for mint gas", () => {
   const books = [
     entry("yes", [{ price: 0.51, size: 10 }], []),

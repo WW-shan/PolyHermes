@@ -1408,3 +1408,10 @@
   - Crypto + Finance：1,980 市场 / 1,000 组 / 851 完整评估 / 2 个正收益但均 stale / 0 actionable。
   - Sports：991 市场 / 500 组 / 410 完整评估 / 0 正收益 / 0 actionable。
 - 当前仍不实盘；完整集候选必须连续 24h 记录并越过 0.5c 二次确认门槛。
+### 13:55 NegRisk NO basket 与首个门槛确认
+
+- 扩展完整集扫描：新增 NegRisk “全买 NO”方向，组合 payout 为 `outcomes - 1`；新增 `noBasket` 结果、监控 episode 和 CSV 字段。
+- 最新 Politics + Geopolitics 扫描：1,740 市场 / 821 组 / 510 完整评估；1 个 ask-side 机会，0 个 NO-basket 机会。
+- Hormuz 候选快照：top ask sum 0.986，496.62 shares，净利润 3.0022，edge 0.60453c/share。
+- 24h 监控 v4 启动：PID `15632`，watchlist 30；首次二次确认 `confirmed=true`，确认时 age 2,449ms，496.60 shares，净利润 3.02476，edge 0.60909c。
+- 这是首个二次确认后仍高于 0.5c 的真实候选，但三腿非原子、失败腿回吐风险未解决，仍禁止实盘。
