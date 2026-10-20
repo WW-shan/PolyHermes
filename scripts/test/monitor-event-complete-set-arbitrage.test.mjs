@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseMonitorArgs, proxySums } from "../monitor-event-complete-set-arbitrage.mjs";
+import { compactRow, parseMonitorArgs, proxySums, updateConfirmationStats } from "../monitor-event-complete-set-arbitrage.mjs";
 
 function rawMarket(id, yesToken, noToken, bestAsk) {
   return {
@@ -90,4 +90,63 @@ test("NegRisk proxy refuses an incomplete event", () => {
   const proxy = proxySums(group, event);
   assert.equal(proxy.ask, null);
   assert.equal(proxy.validation.ok, false);
+});
+test("compact rows retain execution risk and confirmation stats update fail-closed", () => {
+  const row = {
+    groupKey: "neg:test",
+    groupType: "negRisk",
+    eventTitle: "Event",
+    eventSlug: "event",
+    outcomeCount: 3,
+    status: "ok",
+    ask: {
+      available: true,
+      actionable: true,
+      topAskSum: 0.98,
+      edgeCents: 0.7,
+      reason: "actionable",
+      executionRisk: {
+        capitalAtRiskUsd: 500,
+        maxObservedLossUsd: 42,
+        exhaustive: true,
+        payoutKind: "yes",
+        worstScenario: { worstPnl: -42, worstPolicy: "hold", fills: [10, 10, 0] },
+      },
+    },
+    noBasket: {},
+    actionable: true,
+  };
+  const compact = compactRow(row);
+  assert.equal(compact.askRiskCapitalUsd, 500);
+  assert.equal(compact.askRiskMaxObservedLossUsd, 42);
+  assert.deepEqual(compact.askRiskWorstFills, [10, 10, 0]);
+  assert.equal(compact.askRiskExhaustive, true);
+
+  const summary = {
+    confirmedEpisodes: 0,
+    confirmationAttempts: 0,
+    failedConfirmations: 0,
+    confirmationFailureReasons: {},
+    lastConfirmationAt: null,
+    lastConfirmedAt: null,
+    maxConfirmedEdgeCents: null,
+    maxConfirmedProfit: null,
+    maxConfirmedCapitalUsd: null,
+    maxConfirmedRiskLossUsd: null,
+  };
+  updateConfirmationStats(summary, {
+    confirmed: true,
+    side: "ask",
+    edgeCents: 0.7,
+    profit: 3,
+    row: compact,
+  });
+  assert.equal(summary.confirmationAttempts, 1);
+  assert.equal(summary.confirmedEpisodes, 1);
+  assert.equal(summary.maxConfirmedCapitalUsd, 500);
+  assert.equal(summary.maxConfirmedRiskLossUsd, 42);
+
+  updateConfirmationStats(summary, { confirmed: false, reason: "stale_book" });
+  assert.equal(summary.failedConfirmations, 1);
+  assert.equal(summary.confirmationFailureReasons.stale_book, 1);
 });

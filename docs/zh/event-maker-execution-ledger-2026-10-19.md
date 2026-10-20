@@ -649,3 +649,34 @@ cd D:\Project\PolyHermes\backend
 | CSA-18 | 24h 持续确认与 episode 统计 | 运行中 | output=`complete-set-monitor-24h-v4-20261020` |
 | EXEC-1 | 三腿非原子执行/失败回滚模型 | 待执行 | 当前无 atomic basket；一次失败腿损失未界定 |
 | LIVE-1 | 真实小额 Live smoke | 阻塞 | 需要账户、资金上限、明确授权、时间窗口、市场范围 |
+### 2026-10-20 14:35 完整集执行风险闭环
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| EXEC-1 | 三腿非原子执行/失败回滚模型 | 已完成 | `complete-set-basket-risk.mjs`；部分成交、撤单、回滚、残库存测试 |
+| EXEC-2 | 支付矩阵 YES/NO 语义 | 已完成 | YES 完整组支付 1；NO basket 支付 n-1 |
+| EXEC-3 | 最坏损失与资金/亏损双预算 | 已完成 | `maxLossUsd`、`maxCapitalUsd`；非穷举 fail-closed |
+| EXEC-4 | Mock basket executor | 已完成 | 只接受 `mode=mock` 与 `adapter.mode=mock`；live adapter 反例通过 |
+| EXEC-5 | 便宜腿优先执行顺序 | 已完成 | 成本升序 + payout matrix 列同步置换 |
+| EXEC-6 | 实时 Hormuz 风险复核 | 已完成（拒绝） | 完整 PnL -1.541957；最坏观测损失 40.9809；reject |
+| EXEC-7 | 风险指标进入扫描/监控 | 已完成代码 | ask/noBasket `executionRisk`；compact/episode/confirmation 风险字段 |
+| EXEC-8 | Node 回归 | 已完成 | 50 tests / 50 pass / 0 fail |
+| EXEC-9 | 24h 监控完成审计 | 运行中 | v4 PID 15632；poll 92；lastPollErrors 0 |
+| LIVE-1 | 真实小额 Live smoke | 阻塞 | 无正收益候选；无账户、资金上限、授权、时间窗口和市场范围 |
+
+- 报告：`docs/zh/event-maker-complete-set-execution-risk-2026-10-20.md`。
+- Mock 闭环不等于可实盘。非原子 basket 的最坏损失仍由资金上限约束，当前候选风险收益比不可接受。
+### 2026-10-20 15:25 盘口新鲜度与 OpenAI carry trade 复核
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| EXEC-10 | 最后变化时间/抓取时间分离 | 已完成 | `sourceUpdatedAt`、`fetchedAt`；stale 单测 |
+| EXEC-11 | OpenAI 事件完整性 | 已完成 | 7 档市值 + No IPO，NegRisk ID 一致 |
+| EXEC-12 | 连续确认与 episode | 已完成 | v3 74 次轮询约 30 分钟 actionable；edge 4.3657c |
+| EXEC-13 | 资金锁定与年化模型 | 已完成 | 26.03 股：净利 1.1364、资金 24.8936、最晚年化 3.791% |
+| EXEC-14 | 全类别年化排序扫描 | 已完成 | 4,712 市场 / 1,028 评估 / 1 actionable；最佳年化 3.791% |
+| EXEC-15 | OpenAI mock 失败路径 | 已完成 | 无买盘最坏 -13.8822；全成交 +1.1974 |
+| EXEC-16 | 双类别 24h 监控 | 运行中 | Politics v6 PID 23984；Crypto+Finance v3 PID 6804 |
+| EXEC-17 | Node 回归 | 已完成 | 54 tests / 54 pass / 0 fail |
+
+- 当前结论：能赚，但不是高收益策略；需要继续寻找短周期、大容量、可立即转换的完整集或其它结构。

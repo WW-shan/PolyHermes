@@ -10,7 +10,9 @@
     "ws-binance-klines": "node ws_binance_btc_usdc_klines.js",
     "test:complete-set-arb": "node --test test/scan-event-complete-set-arbitrage.test.mjs",
     "test:complete-set-monitor": "node --test test/monitor-event-complete-set-arbitrage.test.mjs",
-    "test:complete-set": "node --test test"
+    "test:complete-set": "node --test test",
+    "test:complete-set-risk": "node --test test/complete-set-basket-risk.test.mjs test/analyze-complete-set-execution-risk.test.mjs",
+    "analyze:complete-set-risk": "node analyze-complete-set-execution-risk.mjs"
   },
   "dependencies": {
     "@ethersproject/wallet": "^5.7.0",

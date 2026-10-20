@@ -206,7 +206,24 @@ export function proxySums(group, event = null, maxOutcomesPerGroup = 256) {
   };
 }
 
-function compactRow(row) {
+function compactRisk(prefix, risk) {
+  return {
+    [`${prefix}RiskCapitalUsd`]: finite(risk?.capitalAtRiskUsd),
+    [`${prefix}RiskMaxObservedLossUsd`]: finite(risk?.maxObservedLossUsd),
+    [`${prefix}RiskWorstPnlUsd`]: finite(risk?.worstScenario?.worstPnl),
+    [`${prefix}RiskWorstPolicy`]: risk?.worstScenario?.worstPolicy ?? null,
+    [`${prefix}RiskWorstFills`]: Array.isArray(risk?.worstScenario?.fills)
+      ? risk.worstScenario.fills.map((value) => finite(value))
+      : null,
+    [`${prefix}RiskPayoutKind`]: risk?.payoutKind ?? null,
+    [`${prefix}RiskExhaustive`]: risk?.exhaustive ?? null,
+    [`${prefix}RiskConversionPath`]: risk?.conversionPath ?? null,
+    [`${prefix}RiskTerminalRoi`]: finite(risk?.holding?.terminalRoi),
+    [`${prefix}RiskAnnualizedRoiAtEnd`]: finite(risk?.holding?.annualizedRoiAtEnd),
+    [`${prefix}RiskCapitalLockupDays`]: finite(risk?.holding?.capitalLockupDays),
+  };
+}
+export function compactRow(row) {
   const ask = row.ask ?? {};
   const bid = row.bid ?? {};
   const noBasket = row.noBasket ?? {};
@@ -215,6 +232,7 @@ function compactRow(row) {
     groupType: row.groupType,
     title: row.eventTitle,
     slug: row.eventSlug,
+    endDate: row.endDate ?? null,
     outcomeCount: row.outcomeCount,
     status: row.status,
     feeRates: row.feeRates,
@@ -224,6 +242,7 @@ function compactRow(row) {
     askAvailable: Boolean(ask.available),
     askActionable: Boolean(ask.actionable),
     askReason: ask.reason ?? null,
+    ...compactRisk("ask", ask.executionRisk),
     bidTop: finite(bid.topBidSum),
     bidEdgeCents: finite(bid.edgeCents),
     bidAvailable: Boolean(bid.available),
@@ -234,6 +253,7 @@ function compactRow(row) {
     noBasketAvailable: Boolean(noBasket.available),
     noBasketActionable: Boolean(noBasket.actionable),
     noBasketReason: noBasket.reason ?? null,
+    ...compactRisk("noBasket", noBasket.executionRisk),
     actionable: Boolean(row.actionable),
   };
 }
@@ -475,8 +495,52 @@ async function confirmPendingEpisodes(episodes, watchlist, options, opportunitie
   });
   return results;
 }
+function recordEpisodeDuration(summary, durationMs) {
+  const value = Math.max(0, Number(durationMs) || 0);
+  const stats = summary.episodeDurations;
+  stats.count += 1;
+  stats.totalMs += value;
+  stats.minMs = stats.minMs == null ? value : Math.min(stats.minMs, value);
+  stats.maxMs = stats.maxMs == null ? value : Math.max(stats.maxMs, value);
+  stats.meanMs = stats.count > 0 ? stats.totalMs / stats.count : null;
+}
+
+function maxMetric(current, value) {
+  return Number.isFinite(value) ? (current == null ? value : Math.max(current, value)) : current;
+}
+
+export function updateConfirmationStats(summary, confirmation) {
+  summary.confirmationAttempts += 1;
+  summary.lastConfirmationAt = new Date().toISOString();
+  if (!confirmation.confirmed) {
+    summary.failedConfirmations += 1;
+    const reason = confirmation.reason ?? confirmation.error ?? "unknown";
+    summary.confirmationFailureReasons[reason] = (summary.confirmationFailureReasons[reason] ?? 0) + 1;
+    return;
+  }
+  summary.confirmedEpisodes += 1;
+  summary.lastConfirmedAt = summary.lastConfirmationAt;
+  summary.maxConfirmedEdgeCents = maxMetric(summary.maxConfirmedEdgeCents, confirmation.edgeCents);
+  summary.maxConfirmedProfit = maxMetric(summary.maxConfirmedProfit, confirmation.profit);
+  const prefix = confirmation.side === "noBasket" ? "noBasket" : confirmation.side === "ask" ? "ask" : null;
+  if (prefix) {
+    summary.maxConfirmedCapitalUsd = maxMetric(
+      summary.maxConfirmedCapitalUsd,
+      confirmation.row?.[`${prefix}RiskCapitalUsd`],
+    );
+    summary.maxConfirmedRiskLossUsd = maxMetric(
+      summary.maxConfirmedRiskLossUsd,
+      confirmation.row?.[`${prefix}RiskMaxObservedLossUsd`],
+    );
+  }
+}
 async function writeSummary(outputDir, state) {
   state.summary.lastUpdatedAt = new Date().toISOString();
+  state.summary.confirmationPassRate = state.summary.confirmationAttempts > 0
+    ? state.summary.confirmedEpisodes / state.summary.confirmationAttempts
+    : null;
+  const durationStats = state.summary.episodeDurations;
+  durationStats.meanMs = durationStats.count > 0 ? durationStats.totalMs / durationStats.count : null;
   await fs.writeFile(
     path.join(outputDir, "monitor-summary.json"),
     `${JSON.stringify(state.summary, null, 2)}\n`,
@@ -541,6 +605,7 @@ async function pollOnce(options, state, outputDir) {
   const seen = trackEpisodes(rows, state.episodes, now);
   const closed = await closeMissingEpisodes(seen, state.episodes, path.join(outputDir, "opportunities.jsonl"), now);
   state.summary.closedEpisodes += closed.length;
+  for (const episode of closed) recordEpisodeDuration(state.summary, episode.durationMs);
 
   await appendJsonl(path.join(outputDir, "snapshots.jsonl"), {
     timestamp: new Date(now).toISOString(),
@@ -555,8 +620,8 @@ async function pollOnce(options, state, outputDir) {
     path.join(outputDir, "opportunities.jsonl"),
   );
   for (const confirmation of confirmations) {
+    updateConfirmationStats(state.summary, confirmation);
     if (confirmation.confirmed) {
-      state.summary.confirmedEpisodes += 1;
       console.log(`CONFIRMED ${confirmation.key} edge=${confirmation.edgeCents?.toFixed(4)}c profit=${confirmation.profit?.toFixed(4)}`);
     }
   }
@@ -570,6 +635,7 @@ async function finishOpenEpisodes(state, outputDir) {
   for (const episode of state.episodes.values()) {
     episode.endedAt = now;
     episode.durationMs = episode.lastSeenAt - episode.startedAt;
+    recordEpisodeDuration(state.summary, episode.durationMs);
     episode.open = true;
     await appendJsonl(file, {
       kind: "episode",
@@ -639,6 +705,17 @@ async function main(argv = process.argv.slice(2)) {
       openEpisodes: 0,
       closedEpisodes: 0,
       confirmedEpisodes: 0,
+      confirmationAttempts: 0,
+      failedConfirmations: 0,
+      confirmationPassRate: null,
+      confirmationFailureReasons: {},
+      lastConfirmationAt: null,
+      lastConfirmedAt: null,
+      maxConfirmedEdgeCents: null,
+      maxConfirmedProfit: null,
+      maxConfirmedCapitalUsd: null,
+      maxConfirmedRiskLossUsd: null,
+      episodeDurations: { count: 0, totalMs: 0, minMs: null, maxMs: null, meanMs: null },
       latestRows: [],
     },
   };

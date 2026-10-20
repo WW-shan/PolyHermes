@@ -1415,3 +1415,26 @@
 - Hormuz 候选快照：top ask sum 0.986，496.62 shares，净利润 3.0022，edge 0.60453c/share。
 - 24h 监控 v4 启动：PID `15632`，watchlist 30；首次二次确认 `confirmed=true`，确认时 age 2,449ms，496.60 shares，净利润 3.02476，edge 0.60909c。
 - 这是首个二次确认后仍高于 0.5c 的真实候选，但三腿非原子、失败腿回吐风险未解决，仍禁止实盘。
+### 14:35 非原子执行风险、Mock 执行器与实时复核
+
+- 新增 `complete-set-basket-risk.mjs`：YES/NO 支付矩阵、逐腿部分成交、撤单后最终股数、bid 深度不足、hold/flatten/sell-excess 三种失败策略，以及 `maxLossUsd` / `maxCapitalUsd` 双预算。
+- 新增 `analyze-complete-set-execution-risk.mjs`：只读拉取真实盘口，按实际深度成本生成风险报告；没有签名或提交订单的代码路径。
+- 新增 mock-only 顺序执行器：每次只提交一腿，确认完整成交后才继续；部分成交先撤单，再按 bid 回滚，保留未卖出库存并标记 `unhedged`。live/mock 之外的 adapter 直接拒绝。
+- 执行顺序改为便宜腿优先。原因是失败发生在后段时，已暴露的未对冲成本更小；这不是成交率优化，必须继续用真实延迟数据验证。
+- 实时 Hormuz 复核（14:22 +08:00）：3 outcomes，top ask sum 0.99，546.57 shares，entry/exit 各 0.2c 滑点，完整成交净 PnL -1.541957 USDC，最坏观测损失 40.9809 USDC，判定 `reject_no_profitable_complete_fill`。最小 5 share 也为 -0.027157 USDC。
+- 即使忽略额外 entry slippage，之前约 0.3179c/share 的完整利润也只有约 1.74 USDC，而两腿成交、第三腿失败的最坏观测损失约 41 USDC，风险收益比仍超过 20 倍。
+- ask-side 扫描结果已内嵌 `executionRisk`；监控 compact row、confirmation、episode 会记录 risk capital、worst observed loss、worst fills，并新增 confirmation pass rate 与 episode 时长统计。
+- Node 回归：50 tests / 50 pass / 0 fail。
+- 24h 监控 v4 继续运行：PID 15632，poll 92，lastPollErrors 0，confirmed=1，openEpisodes=1。
+- 当前仍禁止真实资金；下一步是等待 24h 完成审计，并重跑带 NO-basket 的跨类别扫描。
+### 15:25 盘口新鲜度修复、OpenAI 连续确认与真实年化
+
+- 发现并修复关键漏单：CLOB `timestamp` 被误当作抓取时间，导致安静但有效的盘口被判 stale。现在 `fetchedAt` 决定 actionable 新鲜度，`sourceUpdatedAt` 仅作参考；交叉/缺失盘口仍 fail-closed。
+- 修复后全类别扫描 staleEvaluations=0。
+- OpenAI IPO Closing Market Cap：7 个完整互斥档位，top ask sum 0.92；v3 监控从 06:50:49Z 到 07:20:48Z 连续 74 次轮询 actionable，最近 edge 4.3657c，未出现请求错误或二次确认失败。
+- 26.03 股：完整净利 1.1364 USDC，投入 24.8936 USDC，terminal ROI 4.565%，最晚结算 2028-01-01，max hold 437.9 天，最晚结算年化 3.791%。
+- 20 股：完整净利 0.6040 USDC，投入 19.3960 USDC，terminal ROI 3.114%，最晚结算年化 2.589%。
+- NegRisk 文档确认 `convertPositions` 是 NO -> 其它 YES + collateral；买入全部 YES 需要持有到结算，因此 OpenAI 不是可立即换回现金的翻仓套利。
+- Mock：全成交 +1.1974；最后腿失败并回滚 -2.4115；最后腿失败且无买盘 -13.8822。
+- 全类别扫描：4,712 市场 / 1,337 组 / 1,028 完整评估 / 3 个 ask 正收益 / 1 个 actionable / 0 个 NO-basket actionable；最佳最晚结算年化 3.791%。
+- 结论：策略数学上能赚钱，但当前是低收益、小容量、长资金占用；继续寻找短周期、大容量、可立即转换的结构。Node 回归 54/54。

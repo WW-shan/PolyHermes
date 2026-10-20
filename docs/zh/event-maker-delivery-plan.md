@@ -828,3 +828,35 @@ cd D:\Project\PolyHermes\backend
 - NegRisk 全 NO 方向已实现并扫描，当前无机会。
 - 24h 监控 v4 正在运行；当前只有一次确认，不能外推为稳定策略。
 - 仍禁止实盘。下一步必须先做三腿非原子执行与失败回滚模型，再决定是否需要真实小额 smoke。
+## 14. 2026-10-20 14:35 非原子执行风险与 Mock 闭环
+
+| ID | 任务 | 状态 | 验收证据 |
+|---|---|---|---|
+| CSA-19 | 完整集支付矩阵与部分成交风险模型 | 已完成 | `complete-set-basket-risk.mjs`；YES/NO payout、0/25/50/75/100% fill 穷举 |
+| CSA-20 | 最坏损失、资金上限与亏损预算 | 已完成 | 分离 `maxLossUsd` / `maxCapitalUsd`；非穷举场景 fail-closed |
+| CSA-21 | 便宜腿优先的顺序执行计划 | 已完成 | 按实际每股成本升序，失败后停止并回滚 |
+| CSA-22 | Mock basket executor | 已完成 | 完整成交、部分成交、撤单、平仓、残库存、预检拒绝全部有测试 |
+| CSA-23 | 实时 Hormuz 风险复核 | 已完成 | top ask sum 0.99；完整 PnL -1.541957；最坏观测损失 40.9809；reject |
+| CSA-24 | 风险指标进入扫描与监控 | 已完成代码 | ask/noBasket 结果带 capital/loss/worst fills；确认统计增加通过率和 episode 时长 |
+| TEST-CSA-RISK | Node 回归 | 已完成 | 50 tests / 50 pass / 0 fail |
+| CSA-25 | 24h 监控完成审计 | 运行中 | v4 PID 15632；poll 92；lastPollErrors 0；confirmed=1 |
+| LIVE-1 | 真实小额 Live smoke | 阻塞 | 当前候选完整成交已为负，且无账户、资金、授权、时间窗口 |
+
+- 报告：`docs/zh/event-maker-complete-set-execution-risk-2026-10-20.md`。
+- 执行链路本身已 mock 闭环，但“非原子多腿”的结构性风险没有消失：最坏损失只能由资金上限约束。
+- 当前不降低 0.5c 门槛，不启动真实资金；先等 v4 24h 结束并重跑带 NO-basket 的跨类别扫描。
+## 15. 2026-10-20 15:25 盘口新鲜度修复与 OpenAI 真实收益复核
+
+| ID | 任务 | 状态 | 验收证据 |
+|---|---|---|---|
+| CSA-26 | 区分 CLOB 最后变化时间与抓取时间 | 已完成 | `sourceUpdatedAt` + `fetchedAt`；旧 source 时间不再误判 stale |
+| CSA-27 | OpenAI 七档完整性人工复核 | 已完成 | 7 档完整覆盖 OpenAI 市值 + No IPO；NegRisk 一致 |
+| CSA-28 | OpenAI 实时盘口连续确认 | 已完成 | v3 监控 74 次轮询、约 30 分钟持续 actionable；edge 4.3657c |
+| CSA-29 | 资本锁定与年化收益模型 | 已完成 | 26.03 股净利 1.1364、资金 24.8936、最晚年化 3.791% |
+| CSA-30 | 全类别重扫 | 已完成 | 4,712 市场 / 1,337 组 / 1,028 评估 / 3 正收益 / 1 actionable |
+| CSA-31 | OpenAI mock 失败场景 | 已完成 | 全成交 +1.1974；最后腿无买盘 -13.8822 |
+| TEST-CSA-RISK-2 | Node 回归 | 已完成 | 54 tests / 54 pass / 0 fail |
+| CSA-32 | 24h 双类别监控 | 运行中 | Politics v6 PID 23984；Crypto+Finance v3 PID 6804 |
+
+- 结论：完整集套利确实能产生正收益，但当前最佳候选是低收益、长期占用资金的 carry trade，不是高收益高频策略。
+- 继续监控，不降低 0.5c 门槛；优先寻找短结算日、可立即 convert/merge、容量更大的结构。

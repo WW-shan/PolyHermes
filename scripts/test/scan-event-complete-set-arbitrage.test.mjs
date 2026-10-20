@@ -125,6 +125,9 @@ test("ask arbitrage is profitable after costs and rounds shares down to the orde
   assert.equal(result.actionable, true);
   assert.ok(Math.abs(result.maxShares - 10.12) < 1e-9);
   assert.ok(result.profit > 0.3);
+  assert.ok(result.executionRisk);
+  assert.equal(result.executionRisk.payoutKind, "yes");
+  assert.ok(result.executionRisk.worstScenario);
 });
 
 test("optimal size stops before deep levels that destroy the edge", () => {
@@ -148,12 +151,32 @@ test("optimal size stops before deep levels that destroy the edge", () => {
   assert.equal(result.maxShares, 10);
   assert.ok(Math.abs(result.profit - 0.3) < 1e-9);
 });
+test("NegRisk YES baskets expose terminal capital lockup and annualized yield", () => {
+  const books = [
+    entry("a", [{ price: 0.2, size: 20 }], [{ price: 0.3, size: 10 }]),
+    entry("b", [{ price: 0.2, size: 20 }], [{ price: 0.3, size: 10 }]),
+    entry("c", [{ price: 0.2, size: 20 }], [{ price: 0.3, size: 10 }]),
+  ];
+  const result = evaluateAskArb(books, 5, {
+    now: NOW,
+    eventEndDate: "2027-10-20T00:00:00Z",
+    minEdgeCents: 0,
+    minProfitUsd: 0,
+    mergeGasUsd: 0,
+  });
+  assert.equal(result.actionable, true);
+  assert.equal(result.executionRisk.conversionPath, "hold_to_resolution");
+  assert.equal(result.executionRisk.holding.capitalLocked, true);
+  assert.ok(result.executionRisk.holding.maxHoldDays > 0);
+  assert.ok(result.executionRisk.holding.terminalRoi > 0);
+  assert.ok(result.executionRisk.holding.annualizedRoiAtEnd != null);
+});
 test("stale books remain measurable but cannot become actionable", () => {
   const books = [
     entry("yes", [], [{ price: 0.48, size: 10 }], 0),
     entry("no", [], [{ price: 0.49, size: 10 }], 0),
   ];
-  books[1].book.updatedAt = NOW - 20_000;
+  books[1].book.fetchedAt = NOW - 20_000;
   const result = evaluateAskArb(books, 5, {
     now: NOW,
     maxBookAgeMs: 15_000,
@@ -166,6 +189,23 @@ test("stale books remain measurable but cannot become actionable", () => {
   assert.equal(result.reason, "stale_book");
 });
 
+test("an old source timestamp does not make a freshly fetched unchanged book stale", () => {
+  const books = [
+    entry("yes", [], [{ price: 0.48, size: 10 }], 0),
+    entry("no", [], [{ price: 0.49, size: 10 }], 0),
+  ];
+  books[1].book.sourceUpdatedAt = NOW - 600_000;
+  const result = evaluateAskArb(books, 5, {
+    now: NOW,
+    maxBookAgeMs: 15_000,
+    minEdgeCents: 0,
+    minProfitUsd: 0,
+    mergeGasUsd: 0,
+  });
+  assert.equal(result.actionable, true);
+  assert.deepEqual(result.health.staleBook, []);
+  assert.deepEqual(result.health.sourceStaleBook, ["no"]);
+});
 test("NegRisk NO basket has payout n-1 per share", () => {
   const books = [
     entry("no-a", [], [{ price: 0.64, size: 10 }]),

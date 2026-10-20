@@ -15,6 +15,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  analyzeBasketExecutionRisk,
+  computeHoldingYield,
+  orderLegsForSequentialExecution,
+  payoutMatrixFor,
+} from "./complete-set-basket-risk.mjs";
+
 const GAMMA_BASE = "https://gamma-api.polymarket.com";
 const CLOB_BASE = "https://clob.polymarket.com";
 
@@ -72,6 +79,7 @@ const DEFAULTS = Object.freeze({
   mergeGasUsd: 0.02,
   mintGasUsd: 0.02,
   sizeStep: 0.01,
+  riskExitSlippageCents: 0.2,
   concurrency: 8,
   output: null,
   csv: null,
@@ -142,6 +150,9 @@ export function parseArgs(argv) {
         break;
       case "--size-step":
         options.sizeStep = positiveNumberArg(arg, next(), 0);
+        break;
+      case "--risk-exit-slippage-cents":
+        options.riskExitSlippageCents = positiveNumberArg(arg, next(), 0, { allowZero: true });
         break;
       case "--concurrency":
         options.concurrency = Math.floor(positiveNumberArg(arg, next(), 0));
@@ -308,7 +319,7 @@ function validSize(value) {
   return parsed != null && parsed > 0 ? parsed : null;
 }
 
-export function parseBook(raw, tokenId) {
+export function parseBook(raw, tokenId, fetchedAt = Date.now()) {
   const parseLevels = (levels) => (Array.isArray(levels) ? levels : [])
     .map((level) => ({ price: validPrice(level.price), size: validSize(level.size) }))
     .filter((level) => level.price != null && level.size != null);
@@ -319,6 +330,8 @@ export function parseBook(raw, tokenId) {
     bids: parseLevels(raw?.bids).sort((a, b) => b.price - a.price),
     asks: parseLevels(raw?.asks).sort((a, b) => a.price - b.price),
     updatedAt: timestamp,
+    sourceUpdatedAt: timestamp,
+    fetchedAt,
     minOrderSize: finiteNumber(raw?.min_order_size) ?? 5,
     tickSize: finiteNumber(raw?.tick_size),
   };
@@ -414,21 +427,28 @@ export function maxPositiveShares(books, minShares, step, side = "ask", payoutPe
   return stepped + 1e-9 >= Math.max(minShares, step) ? stepped : null;
 }
 
-export function bookHealth(books, now, maxAgeMs) {
+export function bookHealth(books, now, maxAgeMs, maxSourceAgeMs = 300_000) {
   const missingBook = [];
   const crossedBook = [];
   const staleBook = [];
+  const sourceStaleBook = [];
   const futureTimestamp = [];
   const ages = [];
+  const sourceAges = [];
   for (const entry of books) {
     const book = entry.book;
     if (!book || !Array.isArray(book.asks) || !Array.isArray(book.bids)) {
       missingBook.push(book?.tokenId ?? entry.tokenId ?? "unknown");
       continue;
     }
-    const ageMs = book.updatedAt == null ? null : now - book.updatedAt;
+    const fetchedAt = book.fetchedAt ?? book.updatedAt;
+    const ageMs = fetchedAt == null ? null : now - fetchedAt;
+    const sourceUpdatedAt = book.sourceUpdatedAt ?? book.updatedAt;
+    const sourceAgeMs = sourceUpdatedAt == null ? null : now - sourceUpdatedAt;
     ages.push(ageMs);
+    sourceAges.push(sourceAgeMs);
     if (ageMs == null || ageMs > maxAgeMs) staleBook.push(book.tokenId);
+    if (sourceAgeMs != null && sourceAgeMs > maxSourceAgeMs) sourceStaleBook.push(book.tokenId);
     if (ageMs != null && ageMs < -120_000) futureTimestamp.push(book.tokenId);
     if (book.asks.length > 0 && book.bids.length > 0 && book.bids[0].price >= book.asks[0].price) {
       crossedBook.push(book.tokenId);
@@ -437,12 +457,17 @@ export function bookHealth(books, now, maxAgeMs) {
   const oldestBookAgeMs = ages.length === 0
     ? null
     : Math.max(...ages.map((age) => age == null ? Number.POSITIVE_INFINITY : age));
+  const oldestSourceAgeMs = sourceAges.length === 0
+    ? null
+    : Math.max(...sourceAges.map((age) => age == null ? Number.POSITIVE_INFINITY : age));
   return {
     ok: missingBook.length === 0 && crossedBook.length === 0 && futureTimestamp.length === 0,
     oldestBookAgeMs,
+    oldestSourceAgeMs,
     missingBook,
     crossedBook,
     staleBook,
+    sourceStaleBook,
     futureTimestamp,
   };
 }
@@ -485,6 +510,11 @@ export function evaluateAskArb(books, minShares, rawOptions = {}) {
   const available = profit > 1e-9;
   const edgeCents = maxShares > 0 ? (profit / maxShares) * 100 : 0;
   const reason = executionReason({ available, health, edgeCents, profit, options });
+  const executionRisk = assessAskExecutionRisk(books, maxShares, {
+    ...rawOptions,
+    payoutPerShare,
+    mergeGasUsd: gas,
+  });
   return {
     available,
     actionable: reason === "actionable",
@@ -500,11 +530,64 @@ export function evaluateAskArb(books, minShares, rawOptions = {}) {
     edgePerShare: maxShares > 0 ? profit / maxShares : 0,
     edgeCents,
     returnOnCapital: cost.total > 0 ? profit / cost.total : 0,
+    executionRisk,
     requires: rawOptions.requires ?? (books.length === 2 ? "binary_complete_set" : "all_neg_risk_yes_outcomes"),
     health,
   };
 }
 
+export function assessAskExecutionRisk(books, maxShares, rawOptions = {}) {
+  if (!Array.isArray(books) || books.length < 2 || !Number.isFinite(maxShares) || maxShares <= 0) return null;
+  const payoutPerShare = rawOptions.payoutPerShare ?? 1;
+  const legs = [];
+  for (const entry of books) {
+    const legCost = costForShares([entry], maxShares);
+    if (!legCost) return null;
+    const entryCashPerShare = legCost.cash / maxShares;
+    const topBid = entry.book.bids[0]?.price ?? 0;
+    legs.push({
+      tokenId: entry.book.tokenId,
+      entryPrice: entryCashPerShare,
+      entryFeeRate: entry.feeRate,
+      entryCashPerShare,
+      entryFeePerShare: legCost.fees / maxShares,
+      bidPrice: topBid,
+      bidFeeRate: entry.feeRate,
+      bidDepth: totalBidDepth(entry.book),
+    });
+  }
+  const payoutKind = books.length > 2 && Math.abs(payoutPerShare - (books.length - 1)) < 1e-9
+    ? "no"
+    : "yes";
+  const conversionPath = payoutKind === "no"
+    ? "convert_positions_immediately"
+    : books.length === 2 ? "merge_positions_immediately" : "hold_to_resolution";
+  const ordered = orderLegsForSequentialExecution(legs, payoutMatrixFor(payoutKind, legs.length));
+  const risk = analyzeBasketExecutionRisk({
+    legs: ordered.legs,
+    targetShares: maxShares,
+    payoutMatrix: ordered.payoutMatrix,
+    gasUsd: rawOptions.mergeGasUsd ?? 0,
+    liquidationSlippageCents: rawOptions.riskExitSlippageCents ?? 0.2,
+    executionMode: "sequential",
+    failClosedOnNonExhaustive: false,
+  });
+  const holding = computeHoldingYield({
+    profitUsd: risk.allFilled.holdPnl,
+    capitalUsd: risk.capitalAtRiskUsd,
+    endDate: rawOptions.eventEndDate,
+    now: rawOptions.now,
+    conversionPath,
+  });
+  return {
+    ...risk,
+    payoutKind,
+    conversionPath,
+    holding,
+    executionOrder: ordered.order,
+    orderRationale: ordered.rationale,
+  };
+}
 export function evaluateBidArb(books, minShares, rawOptions = {}) {
   const options = { ...DEFAULTS, ...rawOptions };
   const now = rawOptions.now ?? Date.now();
@@ -574,6 +657,7 @@ export function buildGroups(markets, options = DEFAULTS) {
         liquidity: 0,
         eventSlug: market.eventSlug,
         eventTitle: market.eventTitle || market.question,
+        endDate: market.endDate || null,
         discoveryTag: market.discoveryTag,
       };
       groups.set(key, group);
@@ -745,6 +829,7 @@ function failureRow(group, status, extra = {}) {
     conditionIds: group.type === "binary" ? group.conditionIds : [],
     eventTitle: group.eventTitle,
     eventSlug: group.eventSlug,
+    endDate: group.endDate ?? group.markets[0]?.endDate ?? null,
     question: group.type === "binary" ? group.markets[0]?.question ?? group.eventTitle : group.eventTitle,
     outcomeCount: group.markets.length,
     volume24hr: group.volume24hr,
@@ -857,8 +942,9 @@ export async function evaluateGroup(group, options) {
     })) : null;
   }
 
+  const eventEndDate = markets[0]?.endDate ?? group.endDate ?? null;
   const minShares = minSharesFor(markets, books, options);
-  const commonOptions = { ...options, now };
+  const commonOptions = { ...options, now, eventEndDate };
   const ask = evaluateAskArb(books, minShares, commonOptions);
   const bid = group.type === "binary" ? evaluateBidArb(books, minShares, commonOptions) : null;
   const noBasket = noBooks
@@ -882,6 +968,7 @@ export async function evaluateGroup(group, options) {
     conditionIds: markets.map((market) => market.conditionId),
     eventTitle: group.eventTitle,
     eventSlug: group.eventSlug,
+    endDate: eventEndDate,
     question: group.type === "binary" ? markets[0].question : group.eventTitle,
     outcomeCount: markets.length,
     volume24hr: group.volume24hr,
@@ -907,6 +994,9 @@ export function summarize(rows, options, startedAt, finishedAt = Date.now()) {
   const noBasketAvailable = ok.filter((row) => row.noBasket?.available);
   const noBasketActionable = noBasketAvailable.filter((row) => row.noBasket.actionable);
   const sortedAskActionable = [...askActionable].sort((a, b) => b.ask.profit - a.ask.profit);
+  const sortedAskAnnualized = [...askActionable]
+    .filter((row) => Number.isFinite(row.ask.executionRisk?.holding?.annualizedRoiAtEnd))
+    .sort((a, b) => b.ask.executionRisk.holding.annualizedRoiAtEnd - a.ask.executionRisk.holding.annualizedRoiAtEnd);
   const sortedBidActionable = [...bidActionable].sort((a, b) => b.bid.profit - a.bid.profit);
   const sortedNoBasketActionable = [...noBasketActionable].sort((a, b) => b.noBasket.profit - a.noBasket.profit);
   const askTopSums = ok.map((row) => row.ask?.topAskSum).filter((value) => Number.isFinite(value));
@@ -927,6 +1017,7 @@ export function summarize(rows, options, startedAt, finishedAt = Date.now()) {
     actionableAskProfit: askActionable.reduce((sum, row) => sum + row.ask.profit, 0),
     actionableBidProfit: bidActionable.reduce((sum, row) => sum + row.bid.profit, 0),
     actionableNoBasketProfit: noBasketActionable.reduce((sum, row) => sum + row.noBasket.profit, 0),
+    bestAnnualizedAskRoi: sortedAskAnnualized[0]?.ask.executionRisk?.holding?.annualizedRoiAtEnd ?? null,
     bestAskSum: askTopSums.length > 0 ? Math.min(...askTopSums) : null,
     bestBidSum: bidTopSums.length > 0 ? Math.max(...bidTopSums) : null,
     staleEvaluations: ok.filter((row) =>
@@ -939,14 +1030,31 @@ export function summarize(rows, options, startedAt, finishedAt = Date.now()) {
     topAskActionable: sortedAskActionable.slice(0, 20).map((row) => ({
       eventTitle: row.eventTitle,
       eventSlug: row.eventSlug,
+      endDate: row.endDate,
       groupType: row.groupType,
       profit: row.ask.profit,
       edgeCents: row.ask.edgeCents,
       maxShares: row.ask.maxShares,
+      conversionPath: row.ask.executionRisk?.conversionPath ?? null,
+      terminalRoi: row.ask.executionRisk?.holding?.terminalRoi ?? null,
+      annualizedRoiAtEnd: row.ask.executionRisk?.holding?.annualizedRoiAtEnd ?? null,
+      maxHoldDays: row.ask.executionRisk?.holding?.maxHoldDays ?? null,
+    })),
+    topAnnualizedAskActionable: sortedAskAnnualized.slice(0, 20).map((row) => ({
+      eventTitle: row.eventTitle,
+      eventSlug: row.eventSlug,
+      endDate: row.endDate,
+      profit: row.ask.profit,
+      edgeCents: row.ask.edgeCents,
+      maxShares: row.ask.maxShares,
+      terminalRoi: row.ask.executionRisk.holding.terminalRoi,
+      annualizedRoiAtEnd: row.ask.executionRisk.holding.annualizedRoiAtEnd,
+      maxHoldDays: row.ask.executionRisk.holding.maxHoldDays,
     })),
     topBidActionable: sortedBidActionable.slice(0, 20).map((row) => ({
       eventTitle: row.eventTitle,
       eventSlug: row.eventSlug,
+      endDate: row.endDate,
       profit: row.bid.profit,
       edgeCents: row.bid.edgeCents,
       maxShares: row.bid.maxShares,
@@ -954,6 +1062,7 @@ export function summarize(rows, options, startedAt, finishedAt = Date.now()) {
     topNoBasketActionable: sortedNoBasketActionable.slice(0, 20).map((row) => ({
       eventTitle: row.eventTitle,
       eventSlug: row.eventSlug,
+      endDate: row.endDate,
       payoutPerShare: row.noBasket.payoutPerShare,
       profit: row.noBasket.profit,
       edgeCents: row.noBasket.edgeCents,
@@ -970,10 +1079,10 @@ function csvEscape(value) {
 
 export function toCsv(rows) {
   const columns = [
-    "status", "actionable", "groupType", "conditionId", "question", "eventSlug", "outcomeCount",
+    "status", "actionable", "groupType", "conditionId", "question", "eventSlug", "endDate", "outcomeCount",
     "volume24hr", "feeRates", "feeSources", "minShares", "oldestBookAgeMs",
     "askAvailable", "askActionable", "askReason", "askTopSum", "askMaxShares", "askCash",
-    "askFees", "askGas", "askProfit", "askEdgeCents", "askStaleTokens",
+    "askFees", "askGas", "askProfit", "askEdgeCents", "askStaleTokens", "askConversionPath", "askTerminalRoi", "askAnnualizedRoiAtEnd", "askCapitalLockupDays",
     "bidAvailable", "bidActionable", "bidReason", "bidTopSum", "bidMaxShares",
     "bidRevenue", "bidFees", "bidGas", "bidProfit", "bidEdgeCents",
     "noBasketAvailable", "noBasketActionable", "noBasketReason", "noBasketPayout", "noBasketTopSum",
@@ -993,6 +1102,7 @@ export function toCsv(rows) {
       conditionId: row.conditionId,
       question: row.question,
       eventSlug: row.eventSlug,
+      endDate: row.endDate,
       outcomeCount: row.outcomeCount,
       volume24hr: row.volume24hr,
       feeRates: row.feeRates?.join("|"),
@@ -1010,6 +1120,10 @@ export function toCsv(rows) {
       askProfit: row.ask?.profit,
       askEdgeCents: row.ask?.edgeCents,
       askStaleTokens: stale.join("|"),
+      askConversionPath: row.ask?.executionRisk?.conversionPath,
+      askTerminalRoi: row.ask?.executionRisk?.holding?.terminalRoi,
+      askAnnualizedRoiAtEnd: row.ask?.executionRisk?.holding?.annualizedRoiAtEnd,
+      askCapitalLockupDays: row.ask?.executionRisk?.holding?.capitalLockupDays,
       bidAvailable: row.bid?.available,
       bidActionable: row.bid?.actionable,
       bidReason: row.bid?.reason,
