@@ -103,6 +103,8 @@ cd D:\Project\PolyHermes\backend
 | Geopolitics | 0 | 0 | — |
 | Combos | 0.05 | 0 | 0% |
 
+> 范围说明：以上为 Polymarket 预测市场 CLOB。Polymarket Perps 是另一套按 30 天交易量分层的 maker/taker 费率（$0 档 maker 0.0125%），不适用于本项目。
+
 官方 `Maker Rebates Program` 进一步说明：
 
 - rebate 每天以 pUSD 发放，累计至少 1 pUSD 才支付；
