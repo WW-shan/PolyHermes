@@ -619,3 +619,23 @@ cd D:\Project\PolyHermes\backend
 
 - 当前禁止真实资金交易；完整集/NegRisk 点快照没有扣费后可执行机会。
 - 24 小时监控未完成前，不能把当前结果解释为“全天没有机会”，也不能据此宣称策略完成。
+## 2026-10-20 13:30 修正、跨类别与 v6 审计
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| AUDIT-V6-1 | 12h v6 Shadow 审计通过，0 fill | 已完成 | `event-maker-safe-candidate-shadow-main-v6-20261020/shadow-audit.json` |
+| CSA-11 | 最优数量改为逐档边际利润 | 已完成 | `maxPositiveShares` 与回归测试 |
+| CSA-12 | 修正后完整集全量扫描 | 已完成 | 1,739 市场 / 820 组 / 1 个正收益候选 |
+| CSA-13 | Hormuz NegRisk 候选 1 秒三次复核 | 已完成 | 0.35162c，低于 0.5c 门槛 |
+| CSA-14 | 24h 完整集监控 v3 | 运行中 | PID 22668，output=`complete-set-monitor-24h-v3-20261020` |
+| CAL-1 | 日期单调性扫描器 | 已完成 | `scan-event-calendar-spread-arbitrage.mjs` |
+| CAL-2 | `on DATE` 假嵌套修复 | 已完成 | 独立日市场测试 |
+| CAL-3 | 持续事件方向修复 | 已完成 | 正/反向 token 选择测试 |
+| CAL-4 | 日期单调性最终快照 | 已完成 | 327 pairs / 0 正收益 / best ask sum 1.015 |
+| XCAT-1 | Crypto + Finance 完整集扫描 | 已完成 | 851 有效 / 2 个正收益均 stale / 0 actionable |
+| XCAT-2 | Sports 完整集扫描 | 已完成 | 410 有效 / 0 正收益 |
+| XCAT-3 | Sports/Crypto 连续监控 | 待执行 | 当前 24h 监控仅 Politics + Geopolitics |
+| LIVE-1 | 真实 Live smoke | 阻塞 | 仍无账户、资金、明确授权和可稳定越过门槛的策略 |
+
+- 0.5c 正式安全门槛保持不变。
+- 当前策略候选均未满足实盘条件。

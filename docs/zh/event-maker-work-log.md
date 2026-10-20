@@ -1394,3 +1394,17 @@
 - 连续监控 smoke：126 个市场、20 个组、10 个 proxy 候选、5 个 watchlist，15 秒无 request error，无可确认机会。
 - 报告：`docs/zh/event-maker-complete-set-arbitrage-2026-10-20.md`。
 - v6 Shadow 至 12:06 仍存活：fills=0、cycles=0、inventory=0、phase=FLAT、logIssues=0、stderr=0；预计 12:53 结束。
+### 13:30 最优数量修复、完整集候选与跨类别扫描
+
+- v6 Shadow 于 12:53 正常结束；审计通过：12h、8 quotes、8 cancels、0 fills、0 cycles、0 PnL、0 duplicate，`shadow-audit.json passed=true`。由于 0 fill，不能据此证明 maker edge。
+- 发现并修复 `maxPositiveShares` 的核心错误：旧算法选“累计利润仍为正的最大数量”，会把浅档正 edge 一直加到深档后磨平。现改为逐档边际利润最优化；新增回归测试。
+- 修正后 Politics + Geopolitics 全量扫描（1,739 市场 / 820 组 / 510 完整评估 / 72 预过滤）：发现 1 个正收益 NegRisk 完整集候选。
+- 候选：`Who wins the Senate pending Hormuz Agreement by Oct 23?`，3 outcomes，top ask sum 0.987，fee 1.6757，gas 0.02，310 shares，净利润 1.6289，edge 0.52545c/share，盘口年龄 997ms。
+- 人工间隔 1 秒复核 3 次：top ask sum 0.986，1,520.04 shares，净利润 5.34478，edge 0.35162c；稳定存在但低于 0.5c 正式门槛。不能实盘。
+- 24h 完整集监控 v3 已启动：PID `22668`，watchlist 30，poll 15s，discovery 10m；截至 13:27 poll=14、errorRows=0，Hormuz 候选持续出现但 askActionable=false（below_edge_buffer，当前约 0.474c）。
+- 新增日期单调性扫描器与相关测试；修正两个假信号：`on DATE` 独立日市场不能当嵌套日期；`continues through` 是持续/否定方向而非正向发生方向。
+- 日期单调性最终快照：1,735 市场 / 721 事件 / 327 pairs / 0 正收益，最低 top ask sum 1.015。
+- 跨类别完整集扫描：
+  - Crypto + Finance：1,980 市场 / 1,000 组 / 851 完整评估 / 2 个正收益但均 stale / 0 actionable。
+  - Sports：991 市场 / 500 组 / 410 完整评估 / 0 正收益 / 0 actionable。
+- 当前仍不实盘；完整集候选必须连续 24h 记录并越过 0.5c 二次确认门槛。

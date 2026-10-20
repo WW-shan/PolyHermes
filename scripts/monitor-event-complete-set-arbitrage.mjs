@@ -218,15 +218,21 @@ function compactRow(row) {
     actionable: Boolean(row.actionable),
   };
 }
-async function buildCandidateGroups(options) {
+export async function buildCandidateGroups(options) {
   clearRunCaches();
-  const raw = (await Promise.all(options.tags.map((tag) => discoverTag(tag, options.maxMarketsPerTag)))).flat();
+  console.log(`discovery stage: fetching tags=${options.tags.join(",")}`);
+  const tagResults = await Promise.allSettled(options.tags.map((tag) => discoverTag(tag, options.maxMarketsPerTag)));
+  const raw = tagResults.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  const tagFailures = tagResults.filter((result) => result.status === "rejected").map((result) => result.reason?.message ?? String(result.reason));
+  if (raw.length === 0) throw new Error(`all tag discovery failed: ${tagFailures.join(" | ")}`);
+  if (tagFailures.length > 0) console.warn(`partial tag discovery failure: ${tagFailures.join(" | ")}`);
   const byCondition = new Map();
   for (const item of raw) {
     const market = normalizeMarket(item);
     if (market) byCondition.set(market.conditionId, market);
   }
   const groups = buildGroups([...byCondition.values()], options);
+  console.log(`discovery stage: markets=${byCondition.size} groups=${groups.length}`);
   const prepared = await mapLimit(groups, options.concurrency, async (group) => {
     if (group.type === "binary") {
       return { group, proxy: proxySums(group) };
@@ -250,6 +256,7 @@ async function buildCandidateGroups(options) {
     }
   });
 
+  console.log(`discovery stage: prepared=${prepared.length}`);
   const candidates = prepared.filter((item) =>
     (item.proxy?.ask != null && item.proxy.ask <= options.candidateAskSumMax) ||
     (item.proxy?.bid != null && item.proxy.bid >= options.candidateBidSumMin));
@@ -649,7 +656,9 @@ async function main(argv = process.argv.slice(2)) {
       await pollOnce(options, state, outputDir);
     } catch (error) {
       state.summary.errorRows += 1;
-      console.error(`monitor cycle failed: ${error instanceof Error ? error.stack : error}`);
+      state.summary.lastError = error instanceof Error ? error.stack : String(error);
+      console.error(`monitor cycle failed: ${state.summary.lastError}`);
+      if (cycleStart >= nextDiscoveryAt) nextDiscoveryAt = Date.now() + Math.min(options.discoveryIntervalMs, 60_000);
     }
     if (Date.now() >= nextSummaryAt) {
       await writeSummary(outputDir, state);

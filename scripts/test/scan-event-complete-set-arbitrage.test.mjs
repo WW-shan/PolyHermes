@@ -127,6 +127,27 @@ test("ask arbitrage is profitable after costs and rounds shares down to the orde
   assert.ok(result.profit > 0.3);
 });
 
+test("optimal size stops before deep levels that destroy the edge", () => {
+  const books = [
+    entry("yes", [], [
+      { price: 0.48, size: 10 },
+      { price: 0.70, size: 10_000 },
+    ]),
+    entry("no", [], [
+      { price: 0.49, size: 10 },
+      { price: 0.70, size: 10_000 },
+    ]),
+  ];
+  const result = evaluateAskArb(books, 5, {
+    now: NOW,
+    minEdgeCents: 0,
+    minProfitUsd: 0,
+    mergeGasUsd: 0,
+  });
+  assert.equal(result.available, true);
+  assert.equal(result.maxShares, 10);
+  assert.ok(Math.abs(result.profit - 0.3) < 1e-9);
+});
 test("stale books remain measurable but cannot become actionable", () => {
   const books = [
     entry("yes", [], [{ price: 0.48, size: 10 }], 0),

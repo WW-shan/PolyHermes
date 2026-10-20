@@ -52,6 +52,8 @@ npm run test:complete-set
 
 ## 3. 全量快照结果
 
+> **2026-10-20 13:20 更正：** 本章数字来自旧的最大数量算法。该算法会把仓位一直加到深档，把本来为正的薄 edge 磨平。修正后的结果见第 8 节。
+
 执行时间：2026-10-20 11:50 +08:00  
 产物：
 
@@ -189,3 +191,99 @@ node scripts/monitor-event-complete-set-arbitrage.mjs `
 2. 若 24 小时仍为 0，扩展到 Sports/Crypto 等不同费用和盘口结构。
 3. 研究关联市场约束（例如同一事件的嵌套日期、资格条件和范围市场），寻找不止“完整集”一种结构性关系。
 4. 只有连续监控出现至少 0.5c 可确认 edge，且多腿失败损失可界定时，才进入 mock 执行和最小资金 smoke。
+## 8. 2026-10-20 13:20 关键修正与重新扫描
+
+### 8.1 最优数量算法错误
+
+旧实现寻找的是“累计利润仍大于 0 的最大股数”，而不是“利润最大的股数”。当顶层有正 edge、深档有负 edge 时，旧实现会一直吃到累计利润接近 0，最终错误地判定整个机会不赚钱。
+
+已改为逐档边际利润最优化：
+
+- ask-side：只要下一档 `price + fee < 1` 就继续；
+- bid-side：只要下一档 `price - fee > 1` 就继续；
+- 遇到第一档不满足边际条件立刻停止；
+- 最后再按 0.01 share 向下取整，并检查最小下单量。
+
+新增回归测试覆盖“前 10 股有 edge、后 10,000 股会把 edge 磨平”的情况。
+
+### 8.2 修正后的完整集全量扫描
+
+执行时间：2026-10-20 13:01 +08:00  
+产物：
+
+- `backend/build/research/complete-set-arb-20261020-v3/scan-prefilter.json`
+- `backend/build/research/complete-set-arb-20261020-v3/scan-prefilter.csv`
+
+参数：
+
+```text
+tags=politics,geopolitics
+markets=1,739
+groups=820
+maxBookAgeMs=30000
+prefilterAskSumMax=1.10
+prefilterBidSumMin=0.90
+minEdgeCents=0
+concurrency=4
+```
+
+结果：
+
+| 指标 | 数值 |
+|---|---:|
+| 完整评估 | 510 |
+| Gamma 预过滤 | 72 |
+| 不完整/关闭 | 238 |
+| 正收益 ask 套利 | 1 |
+| 正收益 bid mint 套利 | 0 |
+| 最低 top ask sum | 0.982 |
+| 最高 top bid sum | 0.999 |
+| 盘口过期评估 | 140 |
+
+### 8.3 唯一正收益候选
+
+`Who wins the Senate pending Hormuz Agreement by Oct 23?`
+
+三个互斥结果：
+
+1. Hormuz agreement + Republicans win Senate；
+2. Hormuz agreement + Democrats win Senate；
+3. No Hormuz agreement。
+
+该事件是完整的 NegRisk 分区。快照结果：
+
+| 指标 | 数值 |
+|---|---:|
+| top ask sum | 0.987 |
+| 最大股数 | 310.00 |
+| 现金成本 | 306.67538 |
+| taker fee | 1.67571392 |
+| gas buffer | 0.02 |
+| 净利润 | 1.62890608 |
+| edge | **0.52545c/share** |
+| 盘口年龄 | 997ms |
+| 状态 | actionable |
+
+### 8.4 1 秒级人工复核
+
+随后连续 3 次、间隔 1 秒重新拉取可执行盘口：
+
+| 次数 | top ask sum | 最大股数 | 净利润 | edge |
+|---|---:|---:|---:|---:|
+| 1 | 0.986 | 1,520.04 | 5.34478 | 0.35162c |
+| 2 | 0.986 | 1,520.04 | 5.34478 | 0.35162c |
+| 3 | 0.986 | 1,520.04 | 5.34478 | 0.35162c |
+
+结论：
+
+- 该机会在数秒内确实存在且可复现；
+- 但 edge 从 0.525c 回落到 **0.352c**，低于正式 0.5c 安全门槛；
+- 三腿独立成交，不是原子 basket；
+- 因此 **不能因为数学上为正就直接实盘**。
+
+### 8.5 当前判定
+
+- 这是目前第一个真实的、可复现的完整集候选，不是旧报告里的“完全为零”。
+- 但在 0.5c 门槛下，人工复核样本未通过。
+- 正式 0.5c 门槛不放宽。
+- 24 小时监控将记录该事件是否反复出现、能否持续到第二次确认、以及容量与盘口年龄。

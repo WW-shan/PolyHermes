@@ -19,7 +19,10 @@ const GAMMA_BASE = "https://gamma-api.polymarket.com";
 const CLOB_BASE = "https://clob.polymarket.com";
 
 export const TAG_IDS = {
+  sports: "1",
   politics: "2",
+  crypto: "21",
+  finance: "120",
   geopolitics: "100265",
 };
 
@@ -60,6 +63,8 @@ const DEFAULTS = Object.freeze({
   maxGroups: 1000,
   maxOutcomesPerGroup: 256,
   minVolume24h: 1000,
+  prefilterAskSumMax: 1.10,
+  prefilterBidSumMin: 0.90,
   minEdgeCents: 0.5,
   minProfitUsd: 0.01,
   maxBookAgeMs: 15_000,
@@ -109,6 +114,12 @@ export function parseArgs(argv) {
         break;
       case "--min-volume":
         options.minVolume24h = positiveNumberArg(arg, next(), 0, { allowZero: true });
+        break;
+      case "--prefilter-ask-sum":
+        options.prefilterAskSumMax = positiveNumberArg(arg, next(), 0);
+        break;
+      case "--prefilter-bid-sum":
+        options.prefilterBidSumMin = positiveNumberArg(arg, next(), 0, { allowZero: true });
         break;
       case "--min-edge-cents":
         options.minEdgeCents = positiveNumberArg(arg, next(), 0, { allowZero: true });
@@ -253,6 +264,7 @@ export function normalizeMarket(raw) {
     id: raw.id == null ? null : String(raw.id),
     conditionId,
     question: raw.question || conditionId,
+    description: raw.description || "",
     slug: raw.slug || "",
     eventId: raw.events?.[0]?.id == null ? null : String(raw.events[0].id),
     eventSlug: raw.events?.[0]?.slug || "",
@@ -361,22 +373,41 @@ export function floorToStep(value, step) {
   return Math.floor((value + 1e-12) / step) * step;
 }
 
-function maxPositiveShares(maxDepth, minShares, step, predicate) {
-  if (!(maxDepth > 0) || !Number.isFinite(maxDepth)) return null;
-  const start = Math.ceil((Math.max(minShares, step) - 1e-12) / step) * step;
-  if (start > maxDepth + 1e-9) return null;
-  if (!predicate(start)) return null;
-  if (predicate(maxDepth)) return floorToStep(maxDepth, step);
+export function maxPositiveShares(books, minShares, step, side = "ask") {
+  if (!Array.isArray(books) || books.length === 0) return null;
+  const levelsByBook = books.map((entry) => side === "ask" ? entry.book?.asks : entry.book?.bids);
+  if (levelsByBook.some((levels) => !Array.isArray(levels) || levels.length === 0)) return null;
+  const indices = books.map(() => 0);
+  const remaining = levelsByBook.map((levels) => levels[0].size);
+  let shares = 0;
 
-  let low = start;
-  let high = maxDepth;
-  for (let i = 0; i < 80; i += 1) {
-    const mid = (low + high) / 2;
-    if (predicate(mid)) low = mid;
-    else high = mid;
+  while (true) {
+    if (indices.some((index, bookIndex) => index >= levelsByBook[bookIndex].length)) break;
+    let marginal = 0;
+    for (let index = 0; index < books.length; index += 1) {
+      const level = levelsByBook[index][indices[index]];
+      const feeRate = books[index].feeRate;
+      if (!Number.isFinite(feeRate) || feeRate < 0) return null;
+      const fee = feeRate * level.price * (1 - level.price);
+      marginal += side === "ask" ? level.price + fee : level.price - fee;
+    }
+    const positive = side === "ask" ? marginal < 1 - 1e-12 : marginal > 1 + 1e-12;
+    if (!positive) break;
+    let take = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < remaining.length; index += 1) take = Math.min(take, remaining[index]);
+    if (!(take > 1e-12) || !Number.isFinite(take)) break;
+    shares += take;
+    for (let index = 0; index < remaining.length; index += 1) {
+      remaining[index] -= take;
+      if (remaining[index] <= 1e-12) {
+        indices[index] += 1;
+        remaining[index] = levelsByBook[index][indices[index]]?.size ?? 0;
+      }
+    }
   }
-  const stepped = floorToStep(low, step);
-  return stepped + 1e-9 >= minShares ? stepped : null;
+
+  const stepped = floorToStep(shares, step);
+  return stepped + 1e-9 >= Math.max(minShares, step) ? stepped : null;
 }
 
 export function bookHealth(books, now, maxAgeMs) {
@@ -431,11 +462,7 @@ export function evaluateAskArb(books, minShares, rawOptions = {}) {
     return { available: false, actionable: false, reason: "missing_ask", topAskSum: null, health };
   }
 
-  const maxDepth = Math.min(...books.map((entry) => totalAskDepth(entry.book)));
-  const maxShares = maxPositiveShares(maxDepth, minShares, options.sizeStep, (shares) => {
-    const cost = costForShares(books, shares);
-    return cost != null && shares - cost.total > 1e-9;
-  });
+  const maxShares = maxPositiveShares(books, minShares, options.sizeStep, "ask");
   if (maxShares == null) {
     return {
       available: false,
@@ -483,11 +510,7 @@ export function evaluateBidArb(books, minShares, rawOptions = {}) {
     return { available: false, actionable: false, reason: "missing_bid", topBidSum: null, health };
   }
 
-  const maxDepth = Math.min(...books.map((entry) => totalBidDepth(entry.book)));
-  const maxShares = maxPositiveShares(maxDepth, minShares, options.sizeStep, (shares) => {
-    const result = revenueForShares(books, shares);
-    return result != null && result.net > 1e-9;
-  });
+  const maxShares = maxPositiveShares(books, minShares, options.sizeStep, "bid");
   if (maxShares == null) {
     return {
       available: false,
@@ -733,6 +756,17 @@ export async function evaluateGroup(group, options) {
       return failureRow(group, "incomplete_or_closed_market");
     }
     markets = [market];
+    const proxyAskSum = market.bestAsk != null && market.bestBid != null
+      ? market.bestAsk + (1 - market.bestBid)
+      : null;
+    const proxyBidSum = market.bestAsk != null && market.bestBid != null
+      ? market.bestBid + (1 - market.bestAsk)
+      : null;
+    if (Number.isFinite(options.prefilterAskSumMax) && proxyAskSum != null &&
+        proxyAskSum > options.prefilterAskSumMax &&
+        (!Number.isFinite(options.prefilterBidSumMin) || proxyBidSum == null || proxyBidSum < options.prefilterBidSumMin)) {
+      return failureRow(group, "prefiltered", { proxyAskSum, proxyBidSum });
+    }
     const [first, second] = await Promise.all([getBook(market.tokens[0]), getBook(market.tokens[1])]);
     const fees = await Promise.all([
       resolveFeeRate(market, market.tokens[0]),
@@ -761,6 +795,14 @@ export async function evaluateGroup(group, options) {
     group.conditionIds = markets.map((market) => market.conditionId);
     group.volume24hr = markets.reduce((sum, market) => sum + market.volume24hr, 0);
     group.liquidity = markets.reduce((sum, market) => sum + market.liquidity, 0);
+
+    const eventAskPrices = markets.map((market) => market.bestAsk);
+    const proxyAskSum = eventAskPrices.every(Number.isFinite)
+      ? eventAskPrices.reduce((sum, price) => sum + price, 0)
+      : null;
+    if (Number.isFinite(options.prefilterAskSumMax) && proxyAskSum != null && proxyAskSum > options.prefilterAskSumMax) {
+      return failureRow(group, "prefiltered", { proxyAskSum, proxyBidSum: null, outcomeCount: markets.length });
+    }
 
     const fetched = await mapLimit(markets, Math.min(4, options.concurrency), async (market) => {
       const [book, fee] = await Promise.all([
@@ -962,6 +1004,8 @@ async function main(argv = process.argv.slice(2)) {
     console.log("  --max-groups 1000");
     console.log("  --max-outcomes-per-group 256");
     console.log("  --min-volume 1000");
+  console.log("  --prefilter-ask-sum 1.10");
+  console.log("  --prefilter-bid-sum 0.90");
     console.log("  --min-edge-cents 0.5");
     console.log("  --min-profit-usd 0.01");
     console.log("  --max-book-age-ms 15000");

@@ -773,3 +773,52 @@ cd D:\Project\PolyHermes\backend
 ### 11.4 实盘阻塞项
 
 仍需要用户提供 `accountId`、资金上限、明确授权、运行时间窗口和市场范围；在上述条件满足前只允许 Shadow/mock/离线回测。
+## 12. 2026-10-20 13:30 修正后检查点
+
+### 12.1 v6 Shadow 审计
+
+- v6 运行 12 小时正常结束。
+- 8 次挂单、8 次撤单、0 fill、0 cycle、0 PnL。
+- `shadow-audit.json` `passed=true`，没有 log/stderr/duplicate 问题。
+- 由于没有 fill，v6 不能作为 maker edge 验证。
+
+### 12.2 完整集修正
+
+- 修复最优数量算法：从“累计利润仍大于 0 的最大数量”改为逐档边际利润最优化。
+- 修正后 Politics + Geopolitics 全量扫描出现 1 个真实 NegRisk 候选：
+  - `Who wins the Senate pending Hormuz Agreement by Oct 23?`
+  - 3 outcomes，top ask sum 0.987；
+  - 310 shares，净利润 1.63 USDC，0.525c/share；
+  - 1 秒后连续 3 次复核为 0.352c/share；
+  - 低于 0.5c 正式门槛，禁止实盘。
+- 24h 监控 v3 正在运行：
+  - PID `22668`；
+  - output `backend/build/research/complete-set-monitor-24h-v3-20261020`；
+  - watchlist 30，poll 15 秒，discovery 10 分钟；
+  - Hormuz 候选持续出现，但当前仍为 `below_edge_buffer`。
+
+### 12.3 日期单调性
+
+- 新增同事件日期单调性扫描器。
+- 修正两个假信号：
+  - `on DATE` 的独立日市场不是 `by DATE` 嵌套市场；
+  - `continues through DATE` 是持续/否定事件，方向与“X happens by DATE”相反。
+- 最终 Politics + Geopolitics 快照：327 pairs，0 正收益，最低 top ask sum 1.015。
+
+### 12.4 跨类别
+
+- Crypto + Finance：851 个完整评估，2 个正收益但盘口均 stale，0 actionable。
+- Sports：410 个完整评估，0 正收益。
+- 跨类别连续监控尚未启动。
+
+### 12.5 下一步
+
+1. 等完整集 24h 监控产出：
+   - Hormuz 候选出现频率；
+   - 持续时间；
+   - 二次确认通过率；
+   - 最大可成交容量。
+2. 对 0.35–0.50c 的候选不做实盘，不用降低门槛换成交。
+3. 如果 24h 仍无可确认机会，启动 Crypto/Finance 与日期单调性连续监控。
+4. 研究三腿非原子执行的失败成本；在无法界定前不进入真实资金。
+5. 实盘仍需要用户提供账户、资金上限、明确授权、时间窗口和市场范围。
