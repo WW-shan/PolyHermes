@@ -50,6 +50,7 @@
 | +1c aggressive | 10/9 | 1 | 0 | -1.05 |
 | +1c join-bid | 5/5 | 0 | 0 | — |
 | +1c passive | 8/8 | 0 | 0 | — |
+| +1c wide-universe (minVolume 1000) | 28/26 | 0 | 0 | — |
 
 - 首笔成交：`US x Iran ceasefire continues through October 22?` BUY @0.953，104.93 股；最新 bid 0.945 / ask 0.946，浮亏约 -0.84。
 - 24h 完整集监控：crypto/finance 27 opportunities / 11 actionable，但全部 worstPnl < 0（部分成交裸风险）；politics 0。

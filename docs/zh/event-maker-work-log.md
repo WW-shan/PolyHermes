@@ -1786,3 +1786,9 @@
 - Geopolitics: n=101, markout -0.446, neg 50.5%；Politics: n=32, -0.575, neg 59.4%。
 - >=500k: n=116, -0.488；100k-500k: n=17, -0.406；<0.95: -1.128；0.95-0.97: -0.419。
 - 结论：没有任何子集能选出正 markout；机械 maker 的负 markout 是系统性的，不是选品问题。
+### 04:25 扩大市场池：minVolume 1000 / 28 市场
+
+- 原 13 个合格市场，成交机会少；新增 wide-universe 臂 minVolume=1000，发现 38 个、选中 28 个、26 active。
+- 参数：MaxMarkets=30、cap=3000、+1c、bid+1tick。
+- 目的：验证成交机会不足是否是瓶颈，并比较低成交量市场 markout。
+- watcher 26652，monitor 26684（五臂）。
