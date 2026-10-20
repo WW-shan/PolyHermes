@@ -78,3 +78,20 @@ q20 的 4 个通过配置为：
 - 高价带网格：ackend/build/research/event-maker-highprob-{12h,1d,2d,3d,4d,5d,6d,7d}-20261020-summary.csv
 - 基础失败率：ackend/build/research/event-maker-tail-base-rate-20261020.json
 - 命令：-PresearchGridProfile=high-prob，其余参数与正式 Shadow 一致。
+## 7. 2026-10-20 09:56 发现冒烟：当前可用性
+
+用正式参数（`minPrice=0.99`、`maxPrice=0.999`、`minRemainingMinutes=2880`、`maxRemainingMinutes=10080`、`tailWindowMinutes=480`）跑了一次 `waitForMarketMinutes=0` 的真实发现：
+
+```text
+uniqueMarkets=0 qualified=0 activityPassed=0 returned=0
+Politics: 1 页 100 行，qualified=0，volumeFloorReached=true
+Geopolitics: 1 页 100 行，qualified=0，volumeFloorReached=true
+```
+
+结论：
+
+- **当前没有满足高价带 + 100k 成交额 + 2d–7d 剩余时间 + 活动门槛的市场。**
+- 这不是回测失败，而是流动性/可用性问题：高价带的机会在时间上是稀疏的。
+- 不能据此降低活动门槛、价格带或 volume 门槛；也不能把 `waitForMarketMinutes=0` 的空结果当作策略无效。
+- 需要一次长时间 `waitForMarketMinutes` 的前瞻 Shadow（建议 7 天以上），才能知道真实出现频率和 fill 率。
+- 如果长期仍无市场，说明这个方向的容量不足，应重新评估，而不是放宽门槛。
