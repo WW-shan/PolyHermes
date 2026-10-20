@@ -932,3 +932,4 @@ cd D:\Project\PolyHermes\backend
 - 最大盈利 round trip 多为 geopolitics 事件重定价（0.23→0.976、0.057→0.999、0.70→0.83）；最大亏损集中在 0.8–0.99。
 - 更准确判断：目标是**事件驱动 + maker 执行 + 大库存周转**，不是纯被动债券做市。
 - 仅复刻 0.95–0.99 挂单持有无法解释其 0.5–0.8/geopolitics 利润；下一步必须做逐笔库存账本或承认当前 BOND 只是另一个低收益假设。
+- BOND 运行手册：`docs/zh/event-maker-bond-runbook-2026-10-20.md`（配置、启动/停止、产物、审计清单、Live 门槛）。
