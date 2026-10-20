@@ -491,6 +491,25 @@ cd D:\Project\PolyHermes\backend
 - 限制：单一成交样本不能证明策略；继续观察退出、结算和更多市场。
 - 02:17 快照：bid **0.939** / ask **0.944**，entry 0.953，unrealized PnL **-1.47 USDC**；+1c 目标 0.963、+3c 目标 0.983 均未触发。这是首笔逆选择样本，说明成交后可能立即浮亏，不能只看成交数。
 
+### 4.6.12 目标账户的亏损退出是 10%–24% 的大止损，不是机械小止损（2026-10-21）
+
+从逐笔账本的 worst round trips 看，目标账户的亏损退出并不是 -1c/-2c 的机械止损：
+
+| 市场 | 买入 → 卖出 | ROI | 持有时间 |
+|---|---|---:|---:|
+| Strait of Hormuz traffic returns to normal by Dec 31? | 0.72 → 0.60 | -16.7% | 1.85 天 |
+| Bab el-Mandeb Strait effectively closed by Dec 31? | 0.83 → 0.72 | -13.3% | 7.68 天 |
+| Iran agrees to surrender enriched uranium by Dec 31? | 0.55 → 0.44 | -20.0% | 5.2 小时 |
+| MicroStrategy sells any Bitcoin by May 31? | 0.86 → 0.65 | -24.4% | 16.6 小时 |
+| Strait of Hormuz traffic returns to normal by end of April? | 0.72 → 0.581 | -19.3% | 30 分钟 |
+
+结论：
+
+1. 他的止损幅度通常是 **10%–24%**，持有从 30 分钟到 8 天不等；这更像“事件逻辑被打破后离场”，不是固定点数止损。
+2. 如果我们加 -1c/-2c 的机械止损，会远早于他离场，可能把本来会反弹的仓位砍掉，反而破坏 edge。
+3. 因此固定 +1c/+3c 模型只能复刻他的“正常盈利路径”，无法复刻“事件判断 + 大止损”这部分；这也是为什么回测 ROI 与他的真实表现不会完全一致。
+4. 结论：机械基线可以跑 Shadow 验证，但不要期望它等于目标账户的全部收益；真正的 alpha 有一部分来自事件判断，短期无法自动化。
+
 ## 5. 结论与风险
 
 **可借鉴的部分（尚未验证可盈利）：**

@@ -1100,3 +1100,9 @@ cd D:\Project\PolyHermes\backend
 - +3c / +1c 两臂均在 `US x Iran ceasefire continues through October 22?` 成交 BUY @0.953，104.93 股。
 - 成交后 LONG；卖出限价等待 best ask 达到 entry+1c/+3c。
 - 多市场挂单（10/10 active）与成交状态机已验证；继续观察退出与结算。
+### 19.14 目标账户大止损行为（2026-10-21）
+
+- worst round trips 的亏损 ROI 为 -13% 到 -24%，持有 30 分钟到 8 天；不是 -1c/-2c 机械止损。
+- 更像事件逻辑破坏后的主动离场；机械小止损会过早砍仓，可能破坏 edge。
+- 固定 +1c/+3c 模型只能复刻正常盈利路径，无法复刻事件判断 + 大止损。
+- 结论：机械基线用于 Shadow 验证，但不能期望等于目标账户全部收益。
