@@ -437,6 +437,21 @@ cd D:\Project\PolyHermes\backend
 4. 我们的模型没有 18.4% 的负价差退出，因此既低估了小亏损，也错过了“提前止损避免结算归零”的收益；净影响只能靠 Shadow 实测。
 5. 统计上两个臂都未证明（亏损率 CI 上界 > 盈亏平衡），所以当前只能继续 Shadow，不能上实盘。
 
+### 4.6.9 已知建模差异：回测入场价 vs Shadow 挂单价（2026-10-21）
+
+回测与 Shadow 的入场口径并不完全相同，必须明确：
+
+- **回测**：`entry limit = floor(last trade reference price - entryOffset, tick)`，只用公开成交价，没有历史盘口。
+- **Shadow/Live**：`planBuy = bestBid + improveTicks × tick`（当前 `improveTicks=1`），即比最优买价高 1 个 tick，仍在卖价之下，属于 maker 挂单。
+
+实例（2026-10-21 01:48，+3c 臂快照）：bid `0.976` / ask `0.980`，Shadow BUY 挂在 `0.977`，正是 bid + 1 tick。若当时最后成交价接近 ask，回测会假设在 `0.977–0.980` 入场，比 Shadow 高 0–0.3c。
+
+含义：
+
+1. 回测的入场更“贴近成交价”，成交概率可能更高，但入场价更差；Shadow 更被动、入场价更好，但 fill rate 可能更低。
+2. 因此回测的 49% fill rate **不能直接外推**到 Shadow；真实 fill rate 必须以 Shadow 为准。
+3. 这也是为什么两个 7 天 Shadow 臂是必要的：它们测的是真实挂单规则，而不是回测的近似。
+
 ## 5. 结论与风险
 
 **可借鉴的部分（尚未验证可盈利）：**

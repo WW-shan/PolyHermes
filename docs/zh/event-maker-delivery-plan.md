@@ -1066,3 +1066,8 @@ cd D:\Project\PolyHermes\backend
 - +1c 复刻 ROI，但周转过快、无止损；+3c 复刻持有期，但 ROI 高 2.5–3 倍。
 - 目标账户是动态退出 + 主动止损，固定退出只能近似；需 Shadow A/B 验证。
 - 证据：`event-maker-bond-scalp-1c-focus-20261021-focus-cycles.csv`、`bond-scalp-1c-risk-20261021.json`。
+### 19.10 回测与 Shadow 入场口径差异（2026-10-21）
+
+- 回测：`floor(last trade - offset, tick)`；Shadow：`bestBid + improveTicks × tick`（当前 improveTicks=1）。
+- 实例：bid 0.976 / ask 0.980，Shadow 挂 0.977；回测可能假设 0.977–0.980。
+- 结论：回测 fill rate 不能直接外推到 Shadow，真实成交率以 Shadow 为准。
