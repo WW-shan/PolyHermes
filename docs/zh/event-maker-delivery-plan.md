@@ -1042,3 +1042,9 @@ cd D:\Project\PolyHermes\backend
 - 目标账户价差中位 +1c、p90 +3c；固定 +3c 会高估，不能当作主复刻。
 - 已并行启动两个 7 天 Shadow：+3c（01:08，`...-v2`）和 +1c（01:29，`...-1c-...`），各带 watcher。
 - 验收：比较两臂真实 fill rate、平均退出价、结算占比、MAE 和实际 ROI；+1c 应接近 1%，+3c 若显著高于 3% 先怀疑成交假设。
+### 19.7 持续监控（2026-10-21）
+
+- `scripts/monitor-bond-shadows.ps1`，PID 17676，每 30 分钟审计两个 Shadow 目录。
+- 输出 `backend/build/research/bond-shadow-audit-series.jsonl`。
+- 字段：markets / fills / cycles / activeOrders / inventoryShares / realizedPnl / realizedRoi / flags。
+- 退出审计：+3c watcher PID 19216，+1c watcher PID 23192。

@@ -407,6 +407,12 @@ cd D:\Project\PolyHermes\backend
    - `+3c`（上行变体）：验证尾部能否真实成交。
 5. 两个 7 天 Shadow 已并行启动（2026-10-21 01:08 +3c、01:29 +1c），各自带自动审计 watcher。
 
+### 4.6.7 持续监控（2026-10-21）
+
+- 新增 `scripts/monitor-bond-shadows.ps1`：每 30 分钟对两个 Shadow 目录跑一次离线审计，把 `markets/fills/cycles/activeOrders/inventoryShares/realizedPnl/realizedRoi/flags` 追加到 `backend/build/research/bond-shadow-audit-series.jsonl`。
+- monitor PID 17676；两个 arm 的退出审计 watcher 分别为 19216（+3c）和 23192（+1c）。
+- 这样不必等 7 天：若数小时内仍 0 fill，或出现 duplicate fill key / 异常 ROI，可提前发现。
+
 ## 5. 结论与风险
 
 **可借鉴的部分（尚未验证可盈利）：**

@@ -1671,3 +1671,8 @@
 - +1c 的卖出/结算结构更接近高周转：0.95–0.97 132/1，0.97–0.99 100/1；+3c 结算明显增多。
 - 01:29 启动 +1c 7 天 Shadow（10 市场 / 20 token，requote 300s，maxOrderAge 1800s，output `...-1c-shadow-7d-20261021`），wrapper PID 24864、app PID 5196；watcher PID 23192。
 - 与 01:08 的 +3c 臂并行做 A/B，比较真实 fill、退出价、结算占比和 ROI。
+### 01:32 两个 Shadow 臂的持续监控
+
+- 新增 `scripts/monitor-bond-shadows.ps1`，每 30 分钟审计两个 Shadow 目录，写 `bond-shadow-audit-series.jsonl`。
+- monitor PID 17676；首条记录：+3c 8 市场 / 1 active / 0 fill；+1c 10 市场 / 1 active / 0 fill。
+- 目的：提前发现 0 fill、重复 fill key、异常 ROI，不必等 7 天。
