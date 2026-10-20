@@ -883,3 +883,14 @@ cd D:\Project\PolyHermes\backend
 - 已新增 `scripts/start-complete-set-monitors.ps1`，用隐藏后台进程并显式注入代理环境变量。
 - 续跑至原始终点 `2026-10-21T06:50:16Z`：v6 PID 11804、v3 PID 23072；两套均已正常轮询且 errorRows=0。
 - 中断前已确认：v6 2 次（Next leader）；v3 11 次（OpenAI 6、Anthropic 3、BTC vs Gold 2）。
+## 17. 2026-10-20 21:46 债券型复刻（adonpoli 风格）
+
+- 纠正：目标策略不是完整集套利，而是**高概率债券 carry + maker 库存周转**。
+- 公开账户：组合 20,092.56 USDC；390 个已平仓；累计买入 5.63M；已实现 +29.9k；单次周转 0.532%；281 盈 / 86 亏。
+- 新增 `BOND` 回测 profile；4,189 市场 7 天数据：
+  - 0.95–0.97 hold：88 成交，ROI +4.10%，train +4.05% / test +4.13%，0 结算亏损；
+  - 0.97–0.99 hold：170 成交，ROI +1.81%，train +1.80% / test +1.82%，0 结算亏损；
+  - 100bps maker fee 下 0.95–0.97 仍 +2.32%。
+- 风险：MAE 到 -92%～-95%，样本内 0 结算亏损不等于尾部不存在；他的 86 个亏损记录证明尾部真实。
+- 已启动 BOND Shadow：PID 24440，5 个市场，WS 10 token，输出 `event-maker-bond-shadow-20261020-v2`，运行 120 分钟。
+- 下一步：Shadow 结束后审计 fill rate、平均成交价、MAE、结算亏损；若 fill 足够，扩大到 2–4 周并覆盖 50–100 个结算事件。

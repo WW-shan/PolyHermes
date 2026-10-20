@@ -209,26 +209,36 @@ private fun buildGrid(
             0.985 to 0.995,
             0.99 to 0.999
         )
+        GridProfile.BOND -> listOf(
+            0.90 to 0.95,
+            0.95 to 0.97,
+            0.97 to 0.99,
+            0.99 to 0.999
+        )
     }
     val offsets = when (gridProfile) {
         GridProfile.DEFAULT -> listOf(0.0, 0.25, 0.5, 1.0)
         GridProfile.WIDE_EXIT -> listOf(0.0, 0.25, 0.5, 1.0)
         GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(0.0, 0.25, 0.5, 1.0)
         GridProfile.HIGH_PROB -> listOf(0.0, 0.25, 0.5)
+        GridProfile.BOND -> listOf(0.0, 0.25, 0.5)
     }
     val spreads = when (gridProfile) {
         GridProfile.DEFAULT -> listOf(0.5, 1.0, 2.0)
         GridProfile.WIDE_EXIT -> listOf(2.0, 3.0, 5.0, 8.0, 10.0)
         GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
         GridProfile.HIGH_PROB -> listOf(0.5, 1.0, 2.0, 3.0)
+        // 100c exit spread means never sell: hold the bond to resolution.
+        GridProfile.BOND -> listOf(100.0)
     }
     val queues = when (gridProfile) {
         GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0)
         GridProfile.HIGH_PROB -> listOf(5.0, 10.0, 20.0, 50.0)
+        GridProfile.BOND -> listOf(1.0, 2.0, 5.0, 10.0, 20.0)
         else -> listOf(1.0, 2.0, 5.0, 10.0, 20.0, 50.0)
     }
-    val cycles = if (gridProfile == GridProfile.CANDIDATE_NEIGHBORHOOD || gridProfile == GridProfile.HIGH_PROB) listOf(1) else listOf(1, 3)
-    val requotes = if (gridProfile == GridProfile.HIGH_PROB) listOf(300L) else listOf(0L, 300L)
+    val cycles = if (gridProfile == GridProfile.CANDIDATE_NEIGHBORHOOD || gridProfile == GridProfile.HIGH_PROB || gridProfile == GridProfile.BOND) listOf(1) else listOf(1, 3)
+    val requotes = if (gridProfile == GridProfile.HIGH_PROB || gridProfile == GridProfile.BOND) listOf(300L) else listOf(0L, 300L)
     val result = mutableListOf<EventMakerConfig>()
     for ((minPrice, maxPrice) in bands) {
         for (offset in offsets) {
@@ -385,7 +395,8 @@ private enum class GridProfile(val apiName: String) {
     DEFAULT("default"),
     WIDE_EXIT("wide-exit"),
     CANDIDATE_NEIGHBORHOOD("candidate-neighborhood"),
-    HIGH_PROB("high-prob");
+    HIGH_PROB("high-prob"),
+    BOND("bond");
 
     companion object {
         fun parse(value: String?): GridProfile {

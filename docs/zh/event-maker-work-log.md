@@ -1482,3 +1482,33 @@
 - 续跑进程：v6 PID `11804`，目录 `complete-set-monitor-24h-v6-resume-20261020-212607`；v3 PID `23072`，目录 `complete-set-monitor-24h-crypto-finance-v3-resume-20261020-212607`。
 - 续跑验证：两套均已进入正常轮询，watchlist=30、errorRows=0；v3 首个轮询即再次确认 OpenAI（5.6984c / 1.4833 USDC）与 Bitcoin vs Gold vs S&P（1.4877c / 3.3920 USDC）。
 - 结论：这不是策略失败，而是监控进程生命周期问题；已改为可脱离会话的启动方式，避免重复。
+### 21:35-21:46 纠正策略认知：adonpoli 是债券 carry，不是完整集套利
+
+- 公开账户事实（Data API）：
+  - 组合价值 20,092.56 USDC；
+  - 390 个已平仓，累计买入 5,626,529 USDC，已实现 +29,919.56，单次周转 ROI 0.532%；
+  - 281 盈 / 86 亏；16 个月中 13 个月为正、3 个月为负。
+- 价格带（已平仓）：0–0.5 ROI -0.49%、0.5–0.8 +1.90%、0.8–0.9 +0.18%、0.9–0.95 +0.72%、0.95–0.97 +0.22%、0.97–0.99 +0.82%、0.99–1.00 +0.25%。
+- 最近 5,500 条 activity 覆盖 232 天：REWARD 2,316 + MAKER_REBATE 537 + YIELD 8.66 + TAKER_REBATE 10 ≈ 2,872 USDC，约占同期总收益 15%。
+- 关键纠正：0.532% 不是年化，而是**每次周转**；按 5.63M / 20.1k ≈ 280 次周转，累计约 149%。他的核心是“高概率债券 + maker 成交 + 高周转 + 分散”，不是完整集套利。
+
+### 21:40 BOND 回测 profile 与结果
+
+- 在 `EventMakerBacktestCli.kt` 新增 `BOND("bond")` grid profile：
+  - 价格带 0.90–0.95 / 0.95–0.97 / 0.97–0.99 / 0.99–0.999；
+  - `exitSpread=100c` 表示不主动卖、持有到结算；
+  - queueFactor 1/2/5/10/20；maxCycles=1。
+- 命令：`gradlew eventMakerBacktest -PresearchGridProfile=bond -PresearchDataset=...7d... -PresearchEntryHorizonSeconds=604800`。
+- 结果（真实 taker SELL 流才成交）：
+  - 0.95–0.97, off0, q1：160 eligible / 88 filled，PnL +360.78，ROI **4.10%**，train 4.05% / test 4.13%，0 结算亏损，MAE -92.6%；
+  - 0.97–0.99, off0, q1：260 / 170，PnL +308.17，ROI **1.81%**，train 1.80% / test 1.82%，0 结算亏损，MAE -95.4%；
+  - maker fee 100bps 下 0.95–0.97 仍为 **2.32%**。
+- 证据：`backend/build/research/event-maker-bond-20261020-summary.csv`、`...-fee-sensitivity.csv`。
+- 报告：`docs/zh/leader-bond-strategy-replication-2026-10-20.md`。
+
+### 21:44 BOND Shadow 启动
+
+- 新增 `scripts/start-bond-shadow.ps1`，用隐藏后台 Gradle 进程启动。
+- 配置：0.95–0.99、exitSpread=100c、maxCycles=1、order 100 USDC、minVolume=10k、maxRemaining=30d、5 个市场。
+- 首次发现：12 个合格市场，选中 5 个，WS 订阅 10 个 token；进程 PID 24440，输出 `backend/build/research/event-maker-bond-shadow-20261020-v2`。
+- 运行 120 分钟；目标是观察真实盘口下的挂单、成交、MAE 和结算行为。
