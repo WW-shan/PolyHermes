@@ -27,7 +27,8 @@ const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-3c-cap1000-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-1c-cap1000-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-1c-joinbid-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-1c-passive-shadow-7d-20261021'
+  'backend/build/research/event-maker-bond-scalp-1c-passive-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-1c-wide-universe-shadow-7d-20261021'
 ];
 const dirs = (arg('dirs') || defaultDirs.join(',')).split(',').map(s => s.trim()).filter(Boolean);
 const lines = [];
