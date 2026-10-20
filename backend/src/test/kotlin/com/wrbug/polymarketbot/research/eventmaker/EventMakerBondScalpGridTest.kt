@@ -23,4 +23,25 @@ class EventMakerBondScalpGridTest {
         assertEquals(setOf(300L), grid.map { it.requoteSeconds }.toSet())
         assertTrue(grid.all { it.makerFeeRate == 0.0 })
     }
+
+    @Test
+    fun `scalp wide grid covers the leader's multi-band universe`() {
+        val grid = scalpWideGridForTest()
+
+        // 6 bands x 2 offsets x 3 exits x 3 queue factors x 1 cycle cap x 1 requote.
+        assertEquals(108, grid.size)
+        assertEquals(
+            setOf(
+                0.5 to 0.8,
+                0.8 to 0.9,
+                0.9 to 0.95,
+                0.95 to 0.97,
+                0.97 to 0.99,
+                0.99 to 0.999
+            ),
+            grid.map { it.minPrice to it.maxPrice }.toSet()
+        )
+        assertEquals(setOf(1.0, 2.0, 3.0), grid.map { it.exitSpreadCents }.toSet())
+        assertEquals(setOf(3), grid.map { it.maxCycles }.toSet())
+    }
 }
