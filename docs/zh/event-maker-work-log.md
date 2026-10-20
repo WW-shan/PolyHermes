@@ -1331,3 +1331,11 @@
 - 实现：回测 `minRemainingSeconds`、Live/Shadow `tailWindowMinutes`，触发原因 `tail_window`；新增 4 条测试；全量 103 suites / 566 tests / 0 failures / 0 errors / 2 skipped。
 - 明确弱点：8h 门槛紧邻唯一已观察亏损的成交时点（6.65h），存在过拟合风险；不能用它证明尾部已消除。
 - 下一步：v6 结束后启动 `shadowTailWindowMinutes=480` 的 v7 前瞻 Shadow。
+
+### 09:10 结构性 EV 复核：7/8 窗口无条件负期望
+
+- 用数据集统计每个入场窗口内 `[0.97,0.99)` favorite 的最终失败率：12h 2.85%、1d 1.60%、2d 1.67%、3d 1.66%、4d 2.56%、5d 2.58%、6d 2.36%、7d 0%（216 个市场）。
+- 候选每赢一回合约 +1.02%、输一回 -100%，盈亏平衡亏损率约 1.01%。除 7d 小样本外，无条件 EV 全部为负（-0.59% 到 -1.86%/回合）。
+- 1d 的 57 个成交在 p=1.60% 下出现 0 亏损的概率约 39.9%，所以“0 结算亏损”不构成 edge 证据。
+- 结论：这是结构问题，不是参数问题。必须找到事前可识别、能把成交池失败率压到 1% 以下的筛选，或提高每回合收益/改变收益结构；在此之前不能实盘。
+- 新增可复现脚本 `scripts/analyze-event-maker-tail-base-rate.cjs` 与 `event-maker-tail-base-rate-20261020.json`；详见 `event-maker-tail-window-2026-10-20.md` 第 9 节。
