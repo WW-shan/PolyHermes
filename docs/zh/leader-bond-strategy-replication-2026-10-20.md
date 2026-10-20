@@ -154,6 +154,28 @@ cd D:\Project\PolyHermes\backend
 - `backend/build/research/leader-bond-style-backtest-20261020-repro.json`
 - `backend/build/research/leader-bond-style-backtest-20261020-band-summary.csv`
 - `scripts/analyze-leader-bond-style.cjs`
+
+### 4.1.2 2026-10-21 官方实时复核（第二次）
+
+实时抓取（2026-10-21）：
+
+- `https://docs.polymarket.com/trading/fees`（页面 `dateModified=2026-10-20T03:05:04.124Z`）原文：**“Makers are never charged fees. Only takers pay fees.”**
+- 费率表：Crypto / Sports / Finance / Politics / Economics / Culture / Weather / Other / Mentions / Tech / Combos 的 **Maker Fee Rate 全部为 0**；Geopolitics 的 taker 也是 0。
+- `https://docs.polymarket.com/market-data/market-details` 字段定义：`feeSchedule.takerOnly = true` 表示 “fees are charged to the taker side only, and makers pay no fee”。
+
+实时 Gamma 抽样（按 volume 排序的前 100 个开放市场）：
+
+- 98/98 个带 `feeSchedule` 的市场均为 `takerOnly=true`（另 2 个无 `feeSchedule`，即免费市场）；
+- `rate` 分布：0（20 个）、0.05（78 个）；没有任何 maker 费字段；
+- 旧字段 `makerBaseFee=1000` / `takerBaseFee=1000` 仍会出现在部分市场对象里，但不是生效费率，忽略。
+
+结论：
+
+1. **maker 挂单成交 0 手续费，这一点确定。** 官方定义为 makers never charged，不是某个活动的临时状态。
+2. 只有 **post-only / resting maker** 成交算 maker；市价单、FAK/IOC、主动卖出都算 taker，按 `rate × p × (1-p)` 付费。
+3. Geopolitics 全免费（taker 也 0），因此也没有 maker rebate；其他类别 maker 还能分到 taker fee 的 15%–25% 返佣（每天 pUSD 结算，累计 ≥ $1 才发）。
+4. 对我们的策略：BOND / BOND_SCALP 的 maker 入场 0 费假设正确；**手续费不是瓶颈，负 markout / 逆向选择才是**。BOND_SCALP 的主动卖出退出要按 taker 费另算。
+
 ## 4.2 全价格带与尾部复核（2026-10-20 22:20）
 
 前面的 4.10% 是“队列约束成交模型”的结果：160 个合格市场只成交 88 个，且这 88 个恰好全部是最终赢家。这个数字不能直接当作稳定收益，必须同时看 0.90–0.95、全 eligible 成交和统计置信区间。

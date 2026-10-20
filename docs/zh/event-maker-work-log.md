@@ -1804,3 +1804,11 @@
 - 5 个 open positions 全部为 No/favorite，价格带 0.84–0.95，仓位 $2,500–$10,000。
 - Bab el-Mandeb Oct 31 No 0.9499→0.976（+2.74%）；Dec 31 No 0.85→0.84（-1.18%）仍在持有。
 - 结论：真实操作是跨 band、大仓位、动态持有；我们的 $100 模型只覆盖很小一部分。
+
+### 2026-10-21 官方费率实时复核：maker 0 费
+
+- 实时抓取官方 Fees 页（`dateModified=2026-10-20T03:05:04.124Z`）：“Makers are never charged fees. Only takers pay fees.”
+- 官方费率表所有类别 Maker Fee Rate = 0；Geopolitics 的 taker 也 = 0。
+- Gamma 按 volume 排序前 100 个开放市场抽样：98 个带 `feeSchedule`，98/98 均为 `takerOnly=true`（另 2 个无 `feeSchedule`，即免费）；rate 仅 0（20 个）/ 0.05（78 个），没有 maker 费字段。
+- `makerBaseFee=1000` / `takerBaseFee=1000` 是历史遗留字段，不能用于成本计算。
+- 含义：maker 0 费确认；BOND 回测 `makerFeeRate=0` 正确；BOND_SCALP 主动卖出按 taker 计费；负 markout / 逆向选择才是主要风险，手续费不是瓶颈。
