@@ -1448,3 +1448,25 @@
 - 提交：`89a5c03 feat: scan all complete-set markets with keyset pagination`。
 - 进行中：全市场扫描 maxMarkets/maxGroups=100000、minVolume=0、book age 30s、并发 12；输出目录 `backend/build/research/complete-set-all-markets-20261020`。
 - 监控：Politics+Geopolitics v6 与 Crypto+Finance v3 均继续存活；Crypto+Finance 在 06:50–07:53Z 的 147/148 个可用快照中，OpenAI 7 档完全集均可套利，ask top sum 0.920–0.937，edge 3.56–4.80c，但容量仅约 26 股且资金最长锁至 2028-01-01。
+### 17:00-17:45 全市场批量盘口扫描与实时顺序 paper 执行
+
+- 优化：CLOB 单本 `/book` 改为官方 `POST /books` 批量预取（最多 500 token/批），按组分块、评估后释放缓存。全市场扫描从 75 分钟以上未完成降到 **14.8 分钟**。
+- 全市场结果：**99,956 市场 / 60,954 组 / 42,070 完整评估 / 315 个盘口批次 / 0 预取错误**。
+- 正收益 ask：4 个；actionable：3 个；bid-side / NO-basket actionable：0。
+- 候选：
+  - World Cup 2030：807.22 股，完整利润 24.3442，资金 782.8758，最坏持有损失 378.0934；资金占用最长可到 2027 年底/2030 endDate。
+  - OpenAI：26.03 股，完整利润 1.3462，最晚年化 4.527%，但容量仅约 25 USDC。
+  - Next leader：10 股，利润 0.0651，22 腿，容量太小。
+  - Bitcoin vs Gold vs S&P 500：0.3132c，未达 0.5c 门槛。
+- 新增 `scripts/paper-execute-complete-set.mjs`：逐腿重新读取真实盘口、1 秒间隔模拟 taker 成交、失败后按实时 bid 模拟平仓；无签名、无下单。
+- Paper 正常执行全部通过：
+  - World Cup 100 股：+4.0520 USDC；
+  - OpenAI 20 股：+1.0333 USDC；
+  - Next leader 10 股：+0.1334 USDC（22/22 腿）。
+- Paper 故障注入：
+  - World Cup 最后一腿失败：按 bid 平仓后 -18.8467 USDC；完全无买盘持有约 -45.6985 USDC；
+  - OpenAI 最后一腿失败：前 6 腿全部平仓后 -1.9831 USDC。
+- 结论：能赚，但没有可规模化、高收益、短周期的候选；完整利润明显小于非原子失败损失。
+- 报告：`docs/zh/complete-set-all-market-scan-2026-10-20.md`。
+- 测试：Node 全套回归 68 tests / 68 pass（含 batch 与 paper 执行纯函数测试）。
+- 24h 监控 v6/v3 仍运行；尚未到 2026-10-21 06:50Z 结束时间。

@@ -2,16 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildBookPrefetchChunks,
   buildGroups,
+  clearBookCache,
   costForShares,
   discoverAllMarkets,
   discoverTag,
+  getBook,
   evaluateAskArb,
   evaluateBidArb,
   feeRateOf,
   normalizeMarket,
   parseArgs,
   parseBook,
+  prefetchBooks,
+  prefetchTokenIdsForGroup,
   revenueForShares,
   validateNegRiskEvent,
 } from "../scan-event-complete-set-arbitrage.mjs";
@@ -54,7 +59,10 @@ test("parseArgs accepts named and numeric tags and preserves safety defaults", (
   assert.equal(parsed.maxGroups, 12);
   assert.equal(parsed.minEdgeCents, 0.5);
   assert.equal(parsed.maxBookAgeMs, 15_000);
+  assert.equal(parsed.bookBatchSize, 500);
   assert.throws(() => parseArgs(["--tags", "unknown-tag"]), /unsupported tag/);
+  assert.equal(parseArgs(["--tags", "politics", "--book-batch-size", "120"]).bookBatchSize, 120);
+  assert.throws(() => parseArgs(["--tags", "politics", "--book-batch-size", "501"]), /book-batch-size/);
 });
 
 test("all-markets mode skips tag validation and uses the global discovery limit", () => {
@@ -120,6 +128,56 @@ test("all-markets discovery fails closed on a repeated keyset cursor", async () 
     };
   }), /repeated a cursor/);
   assert.equal(calls, 2);
+});
+
+test("book prefetch selects every needed token and chunks to the batch limit", () => {
+  const binaryGroup = { type: "binary", markets: [{ tokens: ["y", "n"] }] };
+  assert.deepEqual(prefetchTokenIdsForGroup(binaryGroup), ["y", "n"]);
+
+  const negRiskGroup = {
+    type: "negRisk",
+    markets: [
+      { yesTokenId: "y1", noTokenId: "n1", bestBid: 0.4 },
+      { yesTokenId: "y2", noTokenId: "n2", bestBid: 0.7 },
+    ],
+  };
+  assert.deepEqual(prefetchTokenIdsForGroup(negRiskGroup, { prefilterNoBidSumMin: 1 }), ["y1", "n1", "y2", "n2"]);
+  assert.deepEqual(prefetchTokenIdsForGroup(negRiskGroup, { prefilterNoBidSumMin: 1.2 }), ["y1", "y2"]);
+
+  const chunked = buildBookPrefetchChunks([
+    { type: "binary", markets: [{ tokens: ["a", "b"] }] },
+    { type: "binary", markets: [{ tokens: ["c", "d"] }] },
+    { type: "binary", markets: [{ tokens: ["e", "f"] }] },
+  ], { bookBatchSize: 3 });
+  assert.equal(chunked.length, 3);
+  assert.deepEqual(chunked.map((chunk) => chunk.tokenIds), [["a", "b"], ["c", "d"], ["e", "f"]]);
+});
+
+test("batch book prefetch deduplicates tokens and populates the cache", async () => {
+  clearBookCache();
+  const calls = [];
+  const result = await prefetchBooks(["a", "a", "b"], {
+    maxBatchSize: 2,
+    fetchBatch: async (tokenIds) => {
+      calls.push(tokenIds);
+      return tokenIds.map((tokenId) => ({
+        asset_id: tokenId,
+        timestamp: "1800000000000",
+        bids: [{ price: "0.4", size: "10" }],
+        asks: [{ price: "0.6", size: "10" }],
+        min_order_size: "5",
+        tick_size: "0.01",
+      }));
+    },
+  });
+  assert.deepEqual(calls, [["a", "b"]]);
+  assert.equal(result.requested, 2);
+  assert.equal(result.cached, 2);
+  assert.equal(result.errors.length, 0);
+  const book = await getBook("a");
+  assert.equal(book.tokenId, "a");
+  assert.equal(book.asks[0].price, 0.6);
+  clearBookCache();
 });
 
 test("fee rates never silently become zero when enabled without a schedule", () => {

@@ -82,6 +82,7 @@ const DEFAULTS = Object.freeze({
   sizeStep: 0.01,
   riskExitSlippageCents: 0.2,
   concurrency: 8,
+  bookBatchSize: 500,
   output: null,
   csv: null,
 });
@@ -161,6 +162,9 @@ export function parseArgs(argv) {
       case "--concurrency":
         options.concurrency = Math.floor(positiveNumberArg(arg, next(), 0));
         break;
+      case "--book-batch-size":
+        options.bookBatchSize = Math.floor(positiveNumberArg(arg, next(), 0));
+        break;
       case "--output":
         options.output = next();
         break;
@@ -177,6 +181,7 @@ export function parseArgs(argv) {
   if (!options.allMarkets && options.tags.length === 0) throw new Error("at least one tag is required");
   if (!options.allMarkets) for (const tag of options.tags) tagIdFor(tag);
   if (options.sizeStep > 1) throw new Error("--size-step must be <= 1");
+  if (options.bookBatchSize > 500) throw new Error("--book-batch-size must be <= 500");
   return options;
 }
 
@@ -191,12 +196,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchJson(url, attempts = 4) {
+async function fetchJson(url, attempts = 4, init = {}) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const response = await fetch(url, {
-        headers: { "User-Agent": "PolyHermes-research/1.0", Accept: "application/json" },
+        ...init,
+        headers: {
+          "User-Agent": "PolyHermes-research/1.0",
+          Accept: "application/json",
+          ...(init.headers ?? {}),
+        },
         signal: AbortSignal.timeout(30_000),
       });
       if (!response.ok) {
@@ -685,6 +695,48 @@ export function evaluateBidArb(books, minShares, rawOptions = {}) {
   };
 }
 
+export function prefetchTokenIdsForGroup(group, options = DEFAULTS) {
+  if (group.type === "binary") {
+    return [...new Set((group.markets[0]?.tokens ?? []).filter(Boolean))];
+  }
+  const markets = group.markets ?? [];
+  const bidPrices = markets.map((market) => market.bestBid);
+  const needsNoSide = Number.isFinite(options.prefilterNoBidSumMin) &&
+    bidPrices.length > 0 && bidPrices.every(Number.isFinite) &&
+    bidPrices.reduce((sum, price) => sum + price, 0) > options.prefilterNoBidSumMin;
+  const tokens = [];
+  for (const market of markets) {
+    if (market.yesTokenId) tokens.push(market.yesTokenId);
+    if (needsNoSide && market.noTokenId) tokens.push(market.noTokenId);
+  }
+  return [...new Set(tokens)];
+}
+
+export function buildBookPrefetchChunks(groups, options = DEFAULTS) {
+  const maxTokens = Math.max(1, options.bookBatchSize ?? DEFAULTS.bookBatchSize);
+  const chunks = [];
+  let current = { groups: [], tokenIds: [], tokenSet: new Set() };
+  const flush = () => {
+    if (current.groups.length === 0) return;
+    chunks.push({ groups: current.groups, tokenIds: current.tokenIds });
+    current = { groups: [], tokenIds: [], tokenSet: new Set() };
+  };
+  for (const group of groups) {
+    const tokenIds = prefetchTokenIdsForGroup(group, options);
+    const wouldExceed = current.tokenIds.length > 0 && current.tokenSet.size + tokenIds.filter((id) => !current.tokenSet.has(id)).length > maxTokens;
+    if (wouldExceed) flush();
+    current.groups.push(group);
+    for (const tokenId of tokenIds) {
+      if (current.tokenSet.has(tokenId)) continue;
+      current.tokenSet.add(tokenId);
+      current.tokenIds.push(tokenId);
+    }
+    if (current.tokenIds.length >= maxTokens) flush();
+  }
+  flush();
+  return chunks;
+}
+
 export function buildGroups(markets, options = DEFAULTS) {
   const groups = new Map();
   for (const market of markets) {
@@ -836,6 +888,41 @@ export function getBook(tokenId) {
     bookCache.set(tokenId, request);
   }
   return bookCache.get(tokenId);
+}
+
+async function fetchBookBatch(tokenIds) {
+  const raw = await fetchJson(`${CLOB_BASE}/books`, 4, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tokenIds.map((token_id) => ({ token_id }))),
+  });
+  const rows = Array.isArray(raw) ? raw : raw?.books;
+  if (!Array.isArray(rows)) throw new Error("invalid batch order-book response");
+  return rows;
+}
+
+export async function prefetchBooks(tokenIds, {
+  maxBatchSize = 500,
+  fetchBatch = fetchBookBatch,
+} = {}) {
+  const unique = [...new Set(tokenIds.filter((tokenId) => typeof tokenId === "string" && tokenId))];
+  let cached = 0;
+  const errors = [];
+  for (let offset = 0; offset < unique.length; offset += maxBatchSize) {
+    const batch = unique.slice(offset, offset + maxBatchSize);
+    try {
+      const rows = await fetchBatch(batch);
+      for (const raw of rows) {
+        const tokenId = String(raw?.asset_id ?? raw?.assetId ?? raw?.token_id ?? "");
+        if (!tokenId) continue;
+        bookCache.set(tokenId, Promise.resolve(parseBook(raw, tokenId)));
+        cached += 1;
+      }
+    } catch (error) {
+      errors.push({ tokens: batch.length, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { requested: unique.length, cached, errors };
 }
 
 async function getFeeRate(tokenId) {
@@ -1245,6 +1332,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("  --mint-gas-usd 0.02");
     console.log("  --size-step 0.01");
     console.log("  --concurrency 8");
+    console.log("  --book-batch-size 500          Batch order-book tokens per POST /books");
     console.log("  --output PATH");
     console.log("  --csv PATH");
     return;
@@ -1268,7 +1356,22 @@ async function main(argv = process.argv.slice(2)) {
   options.discoveredMarkets = byCondition.size;
   const groups = buildGroups([...byCondition.values()], options);
   console.log(`markets=${byCondition.size} groups=${groups.length}`);
-  const rows = await mapLimit(groups, options.concurrency, (group) => evaluateGroup(group, options));
+  const chunks = buildBookPrefetchChunks(groups, options);
+  console.log(`bookChunks=${chunks.length} batchSize=${options.bookBatchSize}`);
+  const rows = [];
+  let prefetchErrors = 0;
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    clearBookCache();
+    const prefetched = await prefetchBooks(chunk.tokenIds, { maxBatchSize: options.bookBatchSize });
+    prefetchErrors += prefetched.errors.length;
+    const chunkRows = await mapLimit(chunk.groups, options.concurrency, (group) => evaluateGroup(group, options));
+    rows.push(...chunkRows);
+    if ((index + 1) % 20 === 0 || index + 1 === chunks.length) {
+      console.log(`progress groups=${rows.length}/${groups.length} chunks=${index + 1}/${chunks.length} prefetchErrors=${prefetchErrors}`);
+    }
+  }
+  clearBookCache();
   const summary = summarize(rows, options, startedAt);
   const snapshot = { summary, results: rows };
 

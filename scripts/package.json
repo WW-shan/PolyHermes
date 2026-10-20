@@ -12,7 +12,12 @@
     "test:complete-set-monitor": "node --test test/monitor-event-complete-set-arbitrage.test.mjs",
     "test:complete-set": "node --test test",
     "test:complete-set-risk": "node --test test/complete-set-basket-risk.test.mjs test/analyze-complete-set-execution-risk.test.mjs",
-    "analyze:complete-set-risk": "node analyze-complete-set-execution-risk.mjs"
+    "analyze:complete-set-risk": "node analyze-complete-set-execution-risk.mjs",
+    "test:leader-pnl": "node --test test/leader-pnl-snapshot.test.mjs",
+    "snapshot:leader-pnl": "node snapshot-leader-pnl.mjs",
+    "scan:complete-set:all": "node scan-event-complete-set-arbitrage.mjs --all-markets --max-markets-per-tag 100000 --max-groups 100000 --min-volume 0 --concurrency 12",
+    "test:paper-execute": "node --test test/paper-execute-complete-set.test.mjs",
+    "paper:complete-set": "node paper-execute-complete-set.mjs"
   },
   "dependencies": {
     "@ethersproject/wallet": "^5.7.0",

@@ -860,3 +860,19 @@ cd D:\Project\PolyHermes\backend
 
 - 结论：完整集套利确实能产生正收益，但当前最佳候选是低收益、长期占用资金的 carry trade，不是高收益高频策略。
 - 继续监控，不降低 0.5c 门槛；优先寻找短结算日、可立即 convert/merge、容量更大的结构。
+## 16. 2026-10-20 17:45 全市场与实时顺序 paper 验证
+
+| ID | 任务 | 状态 | 验收证据 |
+|---|---|---|---|
+| CSA-26 | Gamma keyset 全市场发现 | 已完成 | 99,956 市场；`complete-set-all-markets-20261020/scan.json` |
+| CSA-27 | CLOB `/books` 批量预取 | 已完成 | 315 批；0 预取错误；全量 14.8 分钟 |
+| CSA-28 | 全量 ask/bid/NO-basket 扫描 | 已完成 | 4 正收益 / 3 actionable / 0 bid / 0 NO-basket |
+| CSA-29 | 实时盘口逐腿顺序 paper 执行 | 已完成 | `scripts/paper-execute-complete-set.mjs`；三候选全成交 |
+| CSA-30 | 真实盘口故障注入与失败平仓 | 已完成 | World Cup -18.8467；OpenAI -1.9831 |
+| CSA-31 | 全市场收益/风险结论 | 已完成 | `docs/zh/complete-set-all-market-scan-2026-10-20.md` |
+| CSA-32 | 24h 监控结束审计 | 运行中 | v6 PID 23984、v3 PID 6804；预计 2026-10-21 06:50Z 结束 |
+| LIVE-2 | 真实签名/提交流程 | 阻塞 | 仍需用户提供 accountId、资金上限、明确授权、时间窗口、市场范围 |
+
+- 当前没有值得直接投入大资金的完整集机会：最大绝对利润 World Cup 约 24.34 USDC，但最坏持有损失约 378 USDC；OpenAI 年化约 4.53%，容量仅约 26 股。
+- Paper 验证证明执行间隔 1 秒时盘口仍可成交，但不证明真实成交；未签名、未提交、无链上对账。
+- 下一步：等 24h 监控结束，审计候选持续时间和二次确认通过率；若仍只有低收益长锁仓候选，则不进入真实资金。
