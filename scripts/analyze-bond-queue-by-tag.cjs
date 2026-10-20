@@ -26,6 +26,7 @@ const maxCycles = numArg('max-cycles', 3);
 const requoteSeconds = numArg('requote-seconds', 300);
 const maxOrderAgeSeconds = numArg('max-order-age-seconds', 1800);
 const stopSlippageTicks = numArg('stop-slippage-ticks', 1);
+const stopConfirmSeconds = numArg('stop-confirm-seconds', 0);
 const maxHoldingDays = numArg('max-holding-days', 0);
 const flowExitWindowSeconds = numArg('flow-exit-window-seconds', 0);
 const flowExitMaxSignedFlow = numArg('flow-exit-max-signed-flow', -0.4);
@@ -104,7 +105,7 @@ function simulateMarket(market, ref, targetCents, stopCents, minPrice, maxPrice)
       if(trade.side && trade.side.toUpperCase()==='SELL' && trade.price <= buyOrder.limit + 1e-9) {
         buyOrder.vol += trade.size;
         if(buyOrder.vol + 1e-9 >= queueFactor * buyOrder.shares) {
-          inventory = { entryTs: trade.timestamp, entryPrice: buyOrder.limit, shares: buyOrder.shares };
+          inventory = { entryTs: trade.timestamp, entryPrice: buyOrder.limit, shares: buyOrder.shares, stopSince: null };
           sellPrice = roundUpToTick(Math.min(0.999, buyOrder.limit + targetCents/100), tick);
           sellPlacedTs = trade.timestamp; sellVol = 0; buyOrder = null;
         }
@@ -144,11 +145,23 @@ function simulateMarket(market, ref, targetCents, stopCents, minPrice, maxPrice)
       if(stopCents > 0) {
         const stopPrice = Math.max(0.001, inventory.entryPrice - stopCents/100);
         if(trade.price <= stopPrice + 1e-9) {
-          const exitPrice = Math.max(0.001, trade.price - tick*stopSlippageTicks);
-          const fee = inventory.shares * takerFeeRate(market.tag) * exitPrice * (1-exitPrice);
-          const pnl = (exitPrice - inventory.entryPrice)*inventory.shares - fee;
-          cycles.push({entryTs:inventory.entryTs, entryPrice:inventory.entryPrice, shares:inventory.shares, exitTs:trade.timestamp, exitPrice, exitType:'STOP', pnl, fee, holdingSeconds:Math.max(0,trade.timestamp-inventory.entryTs)});
-          inventory=null; stoppedOut=true; break;
+          if (stopConfirmSeconds <= 0) {
+            const exitPrice = Math.max(0.001, trade.price - tick*stopSlippageTicks);
+            const fee = inventory.shares * takerFeeRate(market.tag) * exitPrice * (1-exitPrice);
+            const pnl = (exitPrice - inventory.entryPrice)*inventory.shares - fee;
+            cycles.push({entryTs:inventory.entryTs, entryPrice:inventory.entryPrice, shares:inventory.shares, exitTs:trade.timestamp, exitPrice, exitType:'STOP', pnl, fee, holdingSeconds:Math.max(0,trade.timestamp-inventory.entryTs)});
+            inventory=null; stoppedOut=true; break;
+          }
+          if (inventory.stopSince == null) inventory.stopSince = trade.timestamp;
+          if (trade.timestamp - inventory.stopSince >= stopConfirmSeconds) {
+            const exitPrice = Math.max(0.001, trade.price - tick*stopSlippageTicks);
+            const fee = inventory.shares * takerFeeRate(market.tag) * exitPrice * (1-exitPrice);
+            const pnl = (exitPrice - inventory.entryPrice)*inventory.shares - fee;
+            cycles.push({entryTs:inventory.entryTs, entryPrice:inventory.entryPrice, shares:inventory.shares, exitTs:trade.timestamp, exitPrice, exitType:'STOP', pnl, fee, holdingSeconds:Math.max(0,trade.timestamp-inventory.entryTs)});
+            inventory=null; stoppedOut=true; break;
+          }
+        } else {
+          inventory.stopSince = null;
         }
       }
       const sellAge = trade.timestamp - (sellPlacedTs ?? inventory.entryTs);
@@ -219,7 +232,7 @@ for(let bi=0;bi<BAND_LABELS.length;bi++){
     }
   }
 }
-fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,notional,entryOffset,queueFactor,maxCycles,requoteSeconds,maxOrderAgeSeconds,stopSlippageTicks,maxHoldingDays,flowExitWindowSeconds,flowExitMaxSignedFlow,flowExitMinPriceDropCents,flowExitMinHoldingSeconds,entryMomentumMinCents,entryMomentumMaxCents,entryMomentumLookbackSeconds,results},null,2));
+fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,notional,entryOffset,queueFactor,maxCycles,requoteSeconds,maxOrderAgeSeconds,stopSlippageTicks,stopConfirmSeconds,maxHoldingDays,flowExitWindowSeconds,flowExitMaxSignedFlow,flowExitMinPriceDropCents,flowExitMinHoldingSeconds,entryMomentumMinCents,entryMomentumMaxCents,entryMomentumLookbackSeconds,results},null,2));
 console.log('band tag tgt stop elig filled fill% cyc win% meanRoi roiCI worst lossRate lossCI stop settleLoss');
 for(const r of results){console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.stopCents).padStart(3),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(4),(100*r.fillRate).toFixed(1).padStart(5),String(r.cycles).padStart(3),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),(100*r.lossRate).toFixed(1).padStart(5),`[${(100*r.lossRateCi95[0]).toFixed(1)},${(100*r.lossRateCi95[1]).toFixed(1)}]`.padStart(11),String(r.stopCount).padStart(4),String(r.settleLossCount).padStart(3)].join(' '));}
 console.log('wrote '+outputPath);

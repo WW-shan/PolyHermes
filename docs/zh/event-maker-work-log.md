@@ -1879,3 +1879,31 @@
 - 0.97–0.99 Geopolitics +3c：全部 +1.82%；1h 0..+1c +1.81%；1h -1..0 +1.83%。
 - 0.95–0.97 Politics：1h -1..0 为 +3.11%（仅 6 笔），但 1h 0..+1c 为 -2.90%，不稳定。
 - 结论：1h 动量过滤不能稳定改善 Geopolitics；目标账户最强的 24h 跌 >2c 子集无法用当前数据集验证（盘前历史太短）。
+### 07:15 目标账户 inventory：多档建仓、多档卖出
+
+- 新增 `scripts/analyze-leader-inventory.mjs`，重算 126 个 asset / 5,155 笔 TRADE。
+- 82.5% 的 asset 有买有卖；每 asset 买入次数中位 7.5、卖出中位 3；最大持仓中位 ~7,000 股、平均 ~3,323 股；最终持仓中位 ~0.009 股（基本平掉）。
+- 持有时间中位 70.5 小时（~2.9 天）。
+- 结论：他不是一次性买入持有，而是多档库存周转/做市；单笔 BOND_SCALP 只覆盖很小一部分。
+
+### 07:20 多档 ladder 回测：0.97–0.99 Geopolitics +3c 最优
+
+- 新增 `scripts/analyze-bond-ladder.cjs`：参考价下方 0/0.5/1/2c 四档 maker BUY，每档 $100，成交后挂 +target maker SELL，卖出后回补。
+- 0.97–0.99 Geopolitics +3c：263 lots，263 buys / 235 sells，fill rate 76.2%，mean ROI **+2.34%**，CI [2.25%, 2.42%]，0 结算亏损，平均最大库存 ~$213。
+- 0.97–0.99 Geopolitics +2c +1.89%；+1c +1.03%。
+- 0.95–0.97 Geopolitics +3c ladder 仅 -0.07%（单档 +3.17% 更好）。
+- 0.97–0.99 Politics +3c -0.04%；0.99–1.0 只有 +0.33%。
+- 结论：0.97–0.99 Geopolitics +3c ladder 是目前最好的机械候选；0.95–0.97 继续用单档 touch。
+
+### 07:25 资源集中到 5 个 LIVE 臂
+
+- 退役全 tag 的 `3c/1c-cap1000`、`1c/3c-97099`（共 9 fills，markout 全负，未实现 -$3.93）；输出目录保留。
+- 启动 4 个 Geopolitics-only 0.97–0.99 +3c offset 臂：off00 / off05 / off10 / off20，合起来近似 4 档 ladder。
+- 保留 `3c-geo-9597`（0.95–0.97 Geopolitics 单档 +3c）。
+- 当前 LIVE：`3c-geo-9597`、`3c-geo-97099-off00/05/10/20`。
+- 注意：4 个 offset 臂是独立进程，不是同一引擎的原子 ladder 账本；真实实盘前需要把 ladder 做进同一个引擎。
+### 07:30 ladder 臂改为 maxCycles=10
+
+- 4 个 Geopolitics 0.97–0.99 offset 臂重启，`maxCyclesPerMarket=10`，以接近 ladder 的持续回补；每臂最多 $400 库存。
+- 当前实盘 Geopolitics 0.97–0.99 池只有 8 个 qualified，单臂选中 2–3 个市场；回测的 160 个 eligible 是 7 天累计，不是同时可交易。
+- 结论：容量受当前事件供给限制；live 样本会比回测小很多，不能用回测 160 市场估算收益。
