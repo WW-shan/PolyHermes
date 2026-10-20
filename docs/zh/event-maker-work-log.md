@@ -1780,3 +1780,9 @@
 - 新增 `docs/zh/leader-strategy-final-assessment-2026-10-21.md`。
 - 结论：机械复刻只能覆盖 0.95–0.999 窄切片，统计未证明；目标账户正 markout 来自事件判断/信息优势；低价格带机械为负。
 - 建议：不建议大资金；最多小资金跑 +1c 主复刻，严格日亏损；继续 Shadow 2–4 周。
+### 04:10 markout 按市场特征分组：所有子集都为负
+
+- 新增 `scripts/analyze-shadow-markout-by-market.cjs`，对 +1c focus 的 133 cycles 按 tag/volume/price 分组。
+- Geopolitics: n=101, markout -0.446, neg 50.5%；Politics: n=32, -0.575, neg 59.4%。
+- >=500k: n=116, -0.488；100k-500k: n=17, -0.406；<0.95: -1.128；0.95-0.97: -0.419。
+- 结论：没有任何子集能选出正 markout；机械 maker 的负 markout 是系统性的，不是选品问题。
