@@ -43,6 +43,18 @@ foreach ($rel in $dirList) {
     }
   }
   $actionable = @($opps | Where-Object { $_.best -and $_.best.actionable -eq $true }).Count
+  $riskFreeCount = 0
+  $nakedRiskCount = 0
+  foreach ($o in $opps) {
+    $b = $o.best
+    if ($null -eq $b) { continue }
+    $askAct = $b.askActionable -eq $true
+    $bidAct = $b.bidActionable -eq $true
+    if (-not ($askAct -or $bidAct)) { continue }
+    $askOk = $askAct -and ($null -eq $b.askRiskWorstPnlUsd -or [double]$b.askRiskWorstPnlUsd -ge 0)
+    $bidOk = $bidAct -and ($null -eq $b.bidRiskWorstPnlUsd -or [double]$b.bidRiskWorstPnlUsd -ge 0)
+    if ($askOk -or $bidOk) { $riskFreeCount++ } else { $nakedRiskCount++ }
+  }
   $kinds = @{}
   foreach ($o in $opps) { $k = [string]$o.kind; if ($k) { if ($kinds.ContainsKey($k)) { $kinds[$k]++ } else { $kinds[$k] = 1 } } }
   $reasons = @{}
@@ -55,7 +67,7 @@ foreach ($rel in $dirList) {
     }
     if ($r) { if ($reasons.ContainsKey($r)) { $reasons[$r]++ } else { $reasons[$r] = 1 } }
   }
-  $verdict = if ($actionable -gt 0) { "ACTIONABLE_FOUND" } elseif ($null -eq $summary) { "MISSING_SUMMARY" } else { "NO_ACTIONABLE_OPPORTUNITY" }
+  $verdict = if ($riskFreeCount -gt 0) { "RISK_FREE_ACTIONABLE_FOUND" } elseif ($nakedRiskCount -gt 0) { "PARTIAL_BASKET_NAKED_RISK_ONLY" } elseif ($null -eq $summary) { "MISSING_SUMMARY" } else { "NO_ACTIONABLE_OPPORTUNITY" }
   $results += [pscustomobject]@{
     output = $rel
     startedAt = if ($summary) { $summary.startedAt } else { $null }
@@ -72,6 +84,8 @@ foreach ($rel in $dirList) {
     maxConfirmedProfit = if ($summary) { $summary.maxConfirmedProfit } else { $null }
     opportunities = $opps.Count
     actionable = $actionable
+    riskFreeActionable = $riskFreeCount
+    nakedRiskActionable = $nakedRiskCount
     opportunityKinds = $kinds
     rejectionReasons = $reasons
     verdict = $verdict

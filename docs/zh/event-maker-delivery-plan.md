@@ -1071,3 +1071,14 @@ cd D:\Project\PolyHermes\backend
 - 回测：`floor(last trade - offset, tick)`；Shadow：`bestBid + improveTicks × tick`（当前 improveTicks=1）。
 - 实例：bid 0.976 / ask 0.980，Shadow 挂 0.977；回测可能假设 0.977–0.980。
 - 结论：回测 fill rate 不能直接外推到 Shadow，真实成交率以 Shadow 为准。
+### 19.11 完整集监控的 actionable 是假阳性：部分成交裸风险（2026-10-21）
+
+检查 crypto/finance 24h monitor 的 16 条 `opportunities.jsonl`：
+
+- 10 条 confirmation 记录，5 条 `best.actionable=true`。
+- 但这 5 条全部 `askRiskWorstPnlUsd < 0`：
+  - Bitcoin vs. Gold vs. S&P 500：edge 1.49c，capital 224.6，worst fills `228/228/0`，worst PnL **-59.52**。
+  - OpenAI IPO Closing Market Cap：edge 5.7–5.8c，capital ~24.5，worst PnL **-13.96**。
+- 原因：negRisk 篮子只成交 2/3 条腿，第 3 条腿 0 股，等于裸风险；不是风险自由完整集。
+- 结论：`actionable=true` 只代表 edge 过缓冲，不代表 risk-free；必须同时满足 `askRiskWorstPnlUsd >= 0` 且 worst fills 覆盖所有腿。
+- 已更新 `watch-complete-set-monitors.ps1`：区分 `riskFreeActionable` 与 `nakedRiskActionable`；只有 riskFree>0 才判 `ACTIONABLE_FOUND`，否则 `PARTIAL_BASKET_NAKED_RISK_ONLY`。

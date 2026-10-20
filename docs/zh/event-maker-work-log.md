@@ -1693,3 +1693,9 @@
 - 回测入场用最后成交价向下取整；Shadow 用 bestBid + 1 tick。
 - 实例：bid 0.976 / ask 0.980，Shadow BUY @0.977；回测可能假设 0.977–0.980。
 - 结论：回测 fill rate 不能直接外推，Shadow 实测为准；已写入报告 4.6.9。
+### 01:52 完整集监控 actionable 假阳性
+
+- crypto/finance 监控 16 条机会中 5 条 `best.actionable=true`，但全部 `askRiskWorstPnlUsd < 0`。
+- Bitcoin vs Gold vs S&P：worst fills 228/228/0，worst PnL -59.52；OpenAI IPO：worst PnL -13.96。
+- 原因：negRisk 篮子只成交 2/3 腿，第 3 腿 0 股，属于裸风险，不是完整集套利。
+- 更新 `watch-complete-set-monitors.ps1`：区分 riskFreeActionable / nakedRiskActionable；watcher 重启为 PID 9708。
