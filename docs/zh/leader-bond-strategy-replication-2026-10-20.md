@@ -410,7 +410,7 @@ cd D:\Project\PolyHermes\backend
 ### 4.6.7 持续监控（2026-10-21）
 
 - 新增 `scripts/monitor-bond-shadows.ps1`：每 30 分钟对两个 Shadow 目录跑一次离线审计，把 `markets/fills/cycles/activeOrders/inventoryShares/realizedPnl/realizedRoi/flags` 追加到 `backend/build/research/bond-shadow-audit-series.jsonl`。
-- 当前三臂 monitor PID 20600；退出审计 watcher 为 21160（+3c aggressive）、26520（+1c aggressive）、25484（+1c passive）。
+- 当前四臂 monitor PID 10748；退出审计 watcher 为 21160（+3c aggressive）、26520（+1c aggressive）、25484（+1c passive）、18188（+1c join-bid）。
 - 这样不必等 7 天：若数小时内仍 0 fill，或出现 duplicate fill key / 异常 ROI，可提前发现。
 
 ### 4.6.8 与目标账户行为对账：固定 +1c / +3c 都不是完整复刻（2026-10-21）
@@ -592,6 +592,21 @@ cd D:\Project\PolyHermes\backend
 2. 组合的退出分布约一半 +1c、一半 +3c，比单臂更接近他的“中位 +1c / p90 +3c”。
 3. 组合仍缺少他的 **18.4% 负价差退出**；这部分是 discretionary loss-cutting，机械模型无法复刻。
 4. 实操：live 可把资金分成两半，分别跑 +1c 和 +3c 目标；或在同一市场先卖一半 +1c、剩余挂 +3c（ladder），后者需要 live 支持部分卖出。
+
+### 4.6.17 挂单位置 A/B：aggressive / join-bid / passive（2026-10-21）
+
+| 臂 | 挂单价 | 市场 / active | 首笔 | 60s markout |
+|---|---|---|---:|---:|
+| aggressive | bid + 1 tick | 10 / 9 | 已成交 | **-1.0%** |
+| join-bid | best bid | 5 / 5 | 0 | — |
+| passive | bid - 0.25c | 8 / 8 | 0 | — |
+
+发现：
+
+1. **join-bid 有 3 个市场因 `entry_queue_too_deep` 被拒绝**（bid size > 500 股），说明真正 join 队列时深度可能太大，成交概率低。
+2. passive 挂在 bid 下方，queue ahead=0，能覆盖 8 个市场，但成交更慢。
+3. aggressive 成交最快，但首笔 markout -1.0%，质量最差。
+4. 结论：**成交速度与入场质量存在明显 trade-off**；需要等 join-bid / passive 的真实成交数据，判断哪个能在可接受时间内拿到正 markout。
 
 ## 5. 结论与风险
 

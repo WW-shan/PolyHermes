@@ -1138,3 +1138,14 @@ cd D:\Project\PolyHermes\backend
 - 退出分布约一半 1c、一半 3c，更接近 leader 的中位/p90。
 - 仍缺 leader 的 18.4% 负价差退出（discretionary loss-cutting）。
 - 实操：资金分两半跑两个目标，或同市场先卖一半 +1c、剩余挂 +3c（需 live 部分卖出支持）。
+### 19.19 挂单位置 A/B：aggressive / join-bid / passive（2026-10-21）
+
+| 臂 | 挂单价 | 市场/active | 首笔 | 60s markout |
+|---|---|---|---:|---:|
+| aggressive | bid + 1 tick | 10/9 | 已成交 | -1.0% |
+| join-bid | best bid | 5/5 | 0 | — |
+| passive | bid - 0.25c | 8/8 | 0 | — |
+
+- join-bid 有 3 个市场因 entry_queue_too_deep 被拒绝，join 队列深度太大。
+- aggressive 成交最快但 markout 最差；join-bid/passive 需等成交数据。
+- 结论：成交速度与入场质量存在 trade-off。

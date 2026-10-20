@@ -1745,3 +1745,10 @@
 - 50/50 组合：ROI ≈ 2.14%，持有中位 ≈ 2.17 天，接近 leader 的 2.02 天。
 - 组合比单臂更接近他的中位/p90，但仍缺 18.4% 负价差退出。
 - 实操：资金分两半跑两个目标，或同市场 ladder（先卖一半 +1c，剩余 +3c）。
+### 03:20 挂单位置 A/B：aggressive / join-bid / passive
+
+- aggressive（bid+1tick）：10 市场 / 9 active / 已成交 / 60s markout -1.0%。
+- join-bid（bid）：5 市场 / 5 active / 0 fill；3 个市场 entry_queue_too_deep。
+- passive（bid-0.25c）：8 市场 / 8 active / 0 fill。
+- 结论：成交速度与入场质量 trade-off；等 join-bid/passive 成交数据。
+- monitor 重启 PID 10748，四臂；watcher 18188（join-bid）。
