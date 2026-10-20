@@ -1676,3 +1676,8 @@
 - 新增 `scripts/monitor-bond-shadows.ps1`，每 30 分钟审计两个 Shadow 目录，写 `bond-shadow-audit-series.jsonl`。
 - monitor PID 17676；首条记录：+3c 8 市场 / 1 active / 0 fill；+1c 10 市场 / 1 active / 0 fill。
 - 目的：提前发现 0 fill、重复 fill key、异常 ROI，不必等 7 天。
+### 01:33 完整集 24h 监控自动终审
+
+- 新增 `scripts/watch-complete-set-monitors.ps1`，PID 7832。
+- 等 PID 11804 / 23072 退出后自动审计两个 `monitor-summary.json` 与 `opportunities.jsonl`，写 `complete-set-monitor-final-audit.json`。
+- 判定：有 actionable 才是 ACTIONABLE_FOUND；否则 NO_ACTIONABLE_OPPORTUNITY；同时保留 errorRows 与 lastPollErrors 供区分瞬态错误。
