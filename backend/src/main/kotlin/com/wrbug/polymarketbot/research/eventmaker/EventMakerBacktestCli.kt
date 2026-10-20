@@ -87,6 +87,18 @@ fun main(args: Array<String>) {
             "${activityGate.minRecentNotional2h}/${activityGate.minRecentTradesPerSide2h} " +
             "(zero values mean the live Shadow/Live activity gate is NOT modelled)"
     )
+    if (options.focusOnly) {
+        val focusName = options.focusConfig ?: error("--focus-only requires --focus-config")
+        val config = configs.firstOrNull { it.name == focusName }
+            ?: error("focus config not found: $focusName")
+        val result = engine.run(markets, config)
+        val baseName = options.output.fileName.toString()
+        writeSummaryCsv(options.output.resolveSibling("$baseName-summary.csv"), listOf(result.first))
+        writeMarketCsv(options.output.resolveSibling("$baseName-focus-markets.csv"), result.second)
+        writeCycleCsv(options.output.resolveSibling("$baseName-focus-cycles.csv"), result.second)
+        printSummary("focus-only", result.first)
+        return
+    }
     println("configs=${configs.size}; simulating ${markets.size} markets")
     val summaries = configs.map { engine.run(markets, it).first }
     writeSummaryCsv(options.output.resolveSibling(options.output.fileName.toString() + "-summary.csv"), summaries)
@@ -196,7 +208,7 @@ private fun buildGrid(
     }
     val offsets = when (gridProfile) {
         GridProfile.DEFAULT -> listOf(0.0, 0.25, 0.5, 1.0)
-        GridProfile.WIDE_EXIT -> listOf(0.25, 0.5, 1.0)
+        GridProfile.WIDE_EXIT -> listOf(0.0, 0.25, 0.5, 1.0)
         GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(0.0, 0.25, 0.5, 1.0)
     }
     val spreads = when (gridProfile) {
@@ -409,6 +421,7 @@ private data class CliOptions(
     val dataset: Path?,
     val refreshDataset: Boolean,
     val focusConfig: String?,
+    val focusOnly: Boolean,
     val output: Path
 ) {
     companion object {
@@ -431,6 +444,7 @@ private data class CliOptions(
                 dataset = option("dataset")?.let(Paths::get),
                 refreshDataset = args.contains("--refresh-dataset"),
                 focusConfig = option("focus-config"),
+                focusOnly = args.contains("--focus-only"),
                 flowGuard = FlowGuardSettings(
                     windowSeconds = option("flow-guard-window-seconds")?.toLongOrNull() ?: 0L,
                     maxSignedFlow = option("flow-guard-max-signed-flow")?.toDoubleOrNull() ?: -0.4,

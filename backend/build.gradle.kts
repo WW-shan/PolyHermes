@@ -156,6 +156,9 @@ tasks.register<JavaExec>("eventMakerBacktest") {
     providers.gradleProperty("researchFocusConfig").orNull?.let {
         argsList += listOf("--focus-config", it)
     }
+    if (providers.gradleProperty("researchFocusOnly").orNull == "true") {
+        argsList += "--focus-only"
+    }
     if (providers.gradleProperty("researchRefreshDataset").orNull == "true") {
         argsList += "--refresh-dataset"
     }
