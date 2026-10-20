@@ -1556,3 +1556,10 @@
 - 证据：`backend/build/research/leader-bond-style-backtest-20261020-repro.json`、`event-maker-bond-20261020-summary.csv`。
 - 已更新报告 `leader-bond-strategy-replication-2026-10-20.md` 第 4.2/5 节和交付计划第 18 节。
 - BOND Shadow PID 24440 继续运行；当前 5 个市场、4 FLAT、1 BUY_PENDING、0 fill。
+
+### 23:05 BOND 7 天续跑已武装
+
+- 新增 `scripts/continue-bond-validation.ps1`：等待当前 2h BOND Shadow（wrapper 24440 / Java 7304）退出，先跑全量 Gradle 测试，通过后启动 7 天 BOND Shadow。
+- 后台 continuation wrapper PID `22292`；日志 `backend/build/research/bond-continuation-20261020.log`，测试日志 `bond-continuation-tests-20261020.log`。
+- 7 天 Shadow 输出目录：`backend/build/research/event-maker-bond-shadow-7d-20261020`；参数 0.95–0.99、exitSpread=100c、maxCycles=1、order 100 USDC、最多 20 市场。
+- 目的：在 2h 0 fill 的基础上，积累真实盘口挂单、成交、结算和 MAE；不降低 post-only/队列门槛。
