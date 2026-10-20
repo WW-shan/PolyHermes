@@ -1,4 +1,4 @@
-﻿param(
+param(
   [int]$Minutes = 120,
   [double]$MinPrice = 0.95,
   [double]$MaxPrice = 0.97,
@@ -7,7 +7,8 @@
   [double]$MinVolume = 10000,
   [int]$MaxRemainingMinutes = 43200,
   [string]$Output = "build/research/event-maker-bond-shadow-20261020",
-  [string]$Proxy = "http://127.0.0.1:10808"
+  [string]$Proxy = "http://127.0.0.1:10808",
+  [int]$FlowGuardWindowSeconds = 3600
 )
 $ErrorActionPreference = "Stop"
 $backend = Join-Path (Split-Path -Parent $PSScriptRoot) "backend"
@@ -32,6 +33,7 @@ $argsList = @(
   "-PshadowEntryOffsetCents=0",
   "-PshadowRequoteSeconds=120",
   "-PshadowMaxOrderAgeSeconds=3600",
+  "-PshadowFlowGuardWindowSeconds=$FlowGuardWindowSeconds",
   "-PshadowFillVolumeFactor=1",
   "-PshadowOutput=$Output",
   "--console=plain"

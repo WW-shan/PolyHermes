@@ -1592,3 +1592,11 @@
 - 自动标记：无 fill/cycle、重复成交、lastErrors、ROI>1%、有库存但无活跃订单。
 - 已对当前 2h Shadow 运行：5 市场、4 FLAT、1 BUY_PENDING、0 cycles，flag=`NO_FILLS_OR_CYCLES`。
 - 运行方式：`npm run audit:bond-shadow -- --dir <output> --output <output>\audit.json`。
+
+### 23:34 修正 7 天续跑的 flow guard 口径
+
+- 发现：BOND 回测默认 `flowGuardWindowSeconds=0`，但 `EventMakerShadowCli` 默认 3600；当前 2h Shadow 实际带 flow guard，和回测不一致。
+- 修改 `scripts/start-bond-shadow.ps1`：新增 `FlowGuardWindowSeconds` 参数并传入 `shadowFlowGuardWindowSeconds`。
+- 修改 `scripts/continue-bond-validation.ps1`：7 天臂默认 `FlowGuardWindowSeconds=0`，与 BOND 回测口径一致。
+- 原 continuation PID 22292 已停止，新 PID 9368 已武装；日志记录 `flowGuard=0`。
+- 当前形成 A/B：2h 臂 guard=3600（更保守），7d 臂 guard=0（与回测一致）；不降低其他门槛。

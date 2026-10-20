@@ -20,6 +20,7 @@
 | maxRemainingMinutes | 43,200（30 天） |
 | staleBookSeconds | 30 |
 | maxOrderAgeSeconds | 3,600 |
+| flowGuardWindowSeconds | 0（7d 臂，与回测一致；2h 臂为 3600 的 A/B） |
 
 ## 2. 启动
 
