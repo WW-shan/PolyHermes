@@ -154,6 +154,18 @@ function aggregate(items, keyFn) {
 }
 
 const allClosed = [...roundTrips, ...settlements];
+const spreadsCents = roundTrips.map(r => (r.sellPrice - r.buyPrice) * 100);
+const roundTripStats = {
+  count: roundTrips.length,
+  medianSpreadCents: median(spreadsCents),
+  p90SpreadCents: percentile(spreadsCents, 0.9),
+  meanSpreadCents: spreadsCents.length ? spreadsCents.reduce((a,b)=>a+b,0) / spreadsCents.length : 0,
+  negativeSpreadShare: spreadsCents.filter(s=>s<0).length / Math.max(1,spreadsCents.length),
+  underHalfCentShare: spreadsCents.filter(s=>s>=0 && s<0.5).length / Math.max(1,spreadsCents.length),
+  halfToOneCentShare: spreadsCents.filter(s=>s>=0.5 && s<1).length / Math.max(1,spreadsCents.length),
+  oneToTwoCentShare: spreadsCents.filter(s=>s>=1 && s<2).length / Math.max(1,spreadsCents.length),
+  overTwoCentShare: spreadsCents.filter(s=>s>=2).length / Math.max(1,spreadsCents.length)
+};
 const activityByType = {};
 for (const row of activity) {
   const type = String(row.type ?? 'UNKNOWN');
@@ -184,6 +196,7 @@ const report = {
     ledgerVsClosedApiPnl: allClosedPnl - closedApiRealized
   },
   activity: activityByType,
+  roundTripStats,
   bands: aggregate(allClosed, r => band(r.buyPrice)),
   outcomes: aggregate(allClosed, r => r.outcome || 'unknown'),
   categories: aggregate(allClosed, r => category(r.title)),

@@ -974,3 +974,45 @@ cd D:\Project\PolyHermes\backend
 - 新增脚本：`scripts/snapshot-leader-ledger.mjs`、`scripts/analyze-leader-ledger.mjs`。
 - 下一步若要复刻，需研究事件选择、跨价格带库存周转和退出纪律；单靠 0.95–0.99 持有不够。
 - 类别归因：Geopolitics matched PnL +13,112 / ROI +0.825%；Politics +2,481 / +1.33%；Crypto -186 / -0.35%；Sports -140 / -0.69%。下一步应收缩到政治/地缘事件，而不是全类别。
+
+
+## 19. 2026-10-21 BOND_SCALP 主动退出与 7d Shadow
+
+### 19.1 背景
+
+目标账户 matched round-trip 价差中位数 +1.0c、p90 +3.0c，18.4% 为负价差主动退出；纯 hold-to-settlement 无法复刻这种周转。因此新增 `GridProfile.BOND_SCALP`。
+
+### 19.2 验收矩阵
+
+| 项目 | 结果 | 判定 |
+|---|---|---|
+| profile 可解析 | `bond-scalp` | PASS |
+| 价格带 | 0.90–0.95 / 0.95–0.97 / 0.97–0.99 / 0.99–0.999 | PASS |
+| entry offset | 0 / 0.25c | PASS |
+| exit | +1c / +2c / +3c | PASS |
+| queueFactor | 1 / 2 / 5 | PASS |
+| maxCycles | 3 / 10 | PASS |
+| requote | 300s | PASS |
+| 0.95–0.97 off0 +3c q2 c3 | 79/90, ROI +3.20%, train +3.19% / test +3.20%, 0 结算亏损 | PASS（队列模型） |
+| 0.97–0.99 off0.25 +3c q2 c3 | 78/79, ROI +2.20%, train +2.13% / test +2.28%, 0 结算亏损 | PASS（队列模型） |
+| 全 eligible +3c 0.95–0.97 | n159, 平均 ROI +1.82%, 亏损率 1.26% | PASS（保守成交） |
+| 全 eligible +3c 0.97–0.99 | n261, 平均 ROI +1.44%, 亏损率 0.38% | PASS（保守成交） |
+| 0.90–0.95 +3c | 平均 ROI -1.58%, 亏损率 4.66% | REJECT，不做 |
+| 7d Shadow 启动 | 2026-10-21 01:08（v2），8 市场 / 16 token，WS 已订阅，requote=300s / maxOrderAge=1800s | RUNNING |
+| 7d Shadow 审计 | 待运行结束 | PENDING |
+
+### 19.3 已知限制
+
+- 队列模型 100% 胜率、0 结算亏损，明显优于目标账户约 81% 胜率，属于乐观估计。
+- 全 eligible 模型仍假设每笔都成交，真实 fill rate 需 Shadow 验证。
+- 主动卖出若为 taker，100bps 成本下 0.95–0.97 ROI 从 3.20% 降至 1.22%，仍为正但腰斩。
+- 未计 maker rebate / liquidity reward，也未计滑点与网络延迟。
+
+### 19.4 产物
+
+- `backend/build/research/event-maker-bond-scalp-20261021-summary.csv`
+- `backend/build/research/event-maker-bond-scalp-20261021-robust-cycles.csv`
+- `backend/build/research/event-maker-bond-scalp-20261021-fee-sensitivity.csv`
+- `backend/build/research/event-maker-bond-scalp-20261021-top-cycles.csv`
+- `backend/build/research/leader-bond-style-backtest-20261021-repro.json`
+- `backend/build/research/event-maker-bond-scalp-shadow-7d-20261021/`

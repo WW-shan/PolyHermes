@@ -181,6 +181,19 @@ fun main(args: Array<String>) {
         .forEach { printSummary("robust", it) }
 }
 
+/**
+ * Test hook: keeps the BOND_SCALP grid definition stable. Production code uses
+ * [buildGrid] through the CLI; this wrapper only avoids exposing private types.
+ */
+internal fun bondScalpGridForTest(): List<EventMakerConfig> = buildGrid(
+    entryHorizonSeconds = 604_800L,
+    activityGate = ActivityGate(0, 0.0, 0, 0, 0.0, 0),
+    flowGuard = FlowGuardSettings(0L, 0.0, 0.0),
+    gridProfile = GridProfile.BOND_SCALP,
+    maxOrderAgeSeconds = 1_800L,
+    minRemainingSeconds = 0L
+)
+
 private fun buildGrid(
     entryHorizonSeconds: Long,
     activityGate: ActivityGate,
@@ -215,6 +228,12 @@ private fun buildGrid(
             0.97 to 0.99,
             0.99 to 0.999
         )
+        GridProfile.BOND_SCALP -> listOf(
+            0.90 to 0.95,
+            0.95 to 0.97,
+            0.97 to 0.99,
+            0.99 to 0.999
+        )
     }
     val offsets = when (gridProfile) {
         GridProfile.DEFAULT -> listOf(0.0, 0.25, 0.5, 1.0)
@@ -222,6 +241,7 @@ private fun buildGrid(
         GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(0.0, 0.25, 0.5, 1.0)
         GridProfile.HIGH_PROB -> listOf(0.0, 0.25, 0.5)
         GridProfile.BOND -> listOf(0.0, 0.25, 0.5)
+        GridProfile.BOND_SCALP -> listOf(0.0, 0.25)
     }
     val spreads = when (gridProfile) {
         GridProfile.DEFAULT -> listOf(0.5, 1.0, 2.0)
@@ -230,15 +250,21 @@ private fun buildGrid(
         GridProfile.HIGH_PROB -> listOf(0.5, 1.0, 2.0, 3.0)
         // 100c exit spread means never sell: hold the bond to resolution.
         GridProfile.BOND -> listOf(100.0)
+        GridProfile.BOND_SCALP -> listOf(1.0, 2.0, 3.0)
     }
     val queues = when (gridProfile) {
         GridProfile.CANDIDATE_NEIGHBORHOOD -> listOf(10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0)
         GridProfile.HIGH_PROB -> listOf(5.0, 10.0, 20.0, 50.0)
         GridProfile.BOND -> listOf(1.0, 2.0, 5.0, 10.0, 20.0)
+        GridProfile.BOND_SCALP -> listOf(1.0, 2.0, 5.0)
         else -> listOf(1.0, 2.0, 5.0, 10.0, 20.0, 50.0)
     }
-    val cycles = if (gridProfile == GridProfile.CANDIDATE_NEIGHBORHOOD || gridProfile == GridProfile.HIGH_PROB || gridProfile == GridProfile.BOND) listOf(1) else listOf(1, 3)
-    val requotes = if (gridProfile == GridProfile.HIGH_PROB || gridProfile == GridProfile.BOND) listOf(300L) else listOf(0L, 300L)
+    val cycles = when (gridProfile) {
+        GridProfile.CANDIDATE_NEIGHBORHOOD, GridProfile.HIGH_PROB, GridProfile.BOND -> listOf(1)
+        GridProfile.BOND_SCALP -> listOf(3, 10)
+        else -> listOf(1, 3)
+    }
+    val requotes = if (gridProfile == GridProfile.HIGH_PROB || gridProfile == GridProfile.BOND || gridProfile == GridProfile.BOND_SCALP) listOf(300L) else listOf(0L, 300L)
     val result = mutableListOf<EventMakerConfig>()
     for ((minPrice, maxPrice) in bands) {
         for (offset in offsets) {
@@ -396,7 +422,8 @@ private enum class GridProfile(val apiName: String) {
     WIDE_EXIT("wide-exit"),
     CANDIDATE_NEIGHBORHOOD("candidate-neighborhood"),
     HIGH_PROB("high-prob"),
-    BOND("bond");
+    BOND("bond"),
+    BOND_SCALP("bond-scalp");
 
     companion object {
         fun parse(value: String?): GridProfile {

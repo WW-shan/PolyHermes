@@ -1629,3 +1629,28 @@
 - Other +2,563 / +0.815%；Macro/Finance +148 / +0.19%；Crypto -186 / -0.35%；Sports -140 / -0.69%。
 - 结论：利润几乎全部来自 Politics/Geopolitics；Crypto/Sports 在样本内为负。可学习的第一步是收缩市场选择到政治/地缘事件，而不是继续调 0.95–0.99 价格带。
 - 已更新报告 4.5 节、交付计划 18.4 节。
+
+### 01:00 BOND_SCALP profile 与主动退出回测
+
+- 新增 `GridProfile.BOND_SCALP`（0.90–0.999、off 0/0.25c、exit +1/+2/+3c、q1/2/5、cycles 3/10、requote 300s）。
+- 0.95–0.97 off0 +3c q2 c3：79/90 filled，ROI +3.20%，train +3.19% / test +3.20%，0 结算亏损，MAE -66.8%。
+- 0.97–0.99 off0.25 +3c q2 c3：78/79 filled，ROI +2.20%，train +2.13% / test +2.28%，0 结算亏损，MAE -95.3%。
+- 全 eligible +3c：0.95–0.97 n159 平均 +1.82% / 亏损率 1.26%；0.97–0.99 n261 平均 +1.44% / 亏损率 0.38%；0.90–0.95 仍为 -1.58%，排除。
+- 证据：`event-maker-bond-scalp-20261021-*.csv`、`leader-bond-style-backtest-20261021-repro.json`。
+
+### 01:05 停止 BOND hold 7d，启动 BOND_SCALP 7d
+
+- 原 BOND hold Shadow（exitSpread=100c）与目标账户行为不符，手动停止；停止时 0 fill / 0 cycle，标记 `NO_FILLS_OR_CYCLES`。
+- 2026-10-21 00:57 启动首轮 BOND_SCALP 7d Shadow：0.95–0.99、+3c、maxCycles=3、fillVolumeFactor=2、flowGuard=0、最多 20 市场。
+- 01:07 审计首轮：8 市场、1 active order、0 fill / 0 cycle；发现 requote=120s、maxOrderAge=3600s 与回测的 300s / 1800s 不一致，停止首轮。
+- 01:08 用修正参数重启（`...-20261021-v2`）：requote=300s、maxOrderAge=1800s，其余相同。
+- 启动选中 8 市场 / 16 token，WS_OPEN、WS_SUBSCRIBED，已挂 maker BUY。
+- 进程：wrapper PID 2476、Gradle java 11084、app java 10360；输出目录 `event-maker-bond-scalp-shadow-7d-20261021-v2`。
+
+### 01:10 官方费率二次复核：maker 确实 0 费
+
+- 官方新地址 `https://docs.polymarket.com/trading/fees`（旧地址 308 跳转），文档 dateModified 2026-10-20T03:05:04Z。
+- 原文：**Makers are never charged fees. Only takers pay fees.** 全类别 Maker Fee Rate = 0。
+- Gamma 的 `makerBaseFee=1000` 是旧字段，不是实际 maker 费；实际看 `feeSchedule.takerOnly=true`。
+- Geopolitics `feesEnabled=false`，taker 也免费；rebate 是每日 pUSD 返佣池，不是每笔返现。
+- 已更新报告 4.1.1 节。

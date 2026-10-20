@@ -81,14 +81,15 @@ cd D:\Project\PolyHermes\backend
 | 0.97–0.99, off0, q1 | 260 | 170 | 170 | 100% | +308.17 | **1.81%** | 1.80% | 1.82% | 0 | -95.4% |
 | 0.97–0.99, off0, q2 | 260 | 147 | 147 | 100% | +266.33 | 1.81% | 1.81% | 1.82% | 0 | -95.4% |
 
-## 4.1 官方费率确认（2026-10-20）
+## 4.1 官方费率确认（2026-10-20 首次，2026-10-21 复核）
 
 官方来源（已实时抓取）：
 
-- Fees: https://docs.polymarket.com/trading/fees
+- Fees: https://docs.polymarket.com/trading/fees （旧地址 `/polymarket-learn/trading/fees` 已 308 跳转到此）
+- Market Details / Trading Fees: https://docs.polymarket.com/market-data/market-details
 - Maker Rebates Program: https://docs.polymarket.com/programs/maker-rebates
 
-官方 `Fees` 页面原文：
+官方 `Fees` 页面原文（文档 dateModified = 2026-10-20T03:05:04Z）：
 
 > **Makers are never charged fees. Only takers pay fees.**
 
@@ -105,26 +106,33 @@ cd D:\Project\PolyHermes\backend
 
 > 范围说明：以上为 Polymarket 预测市场 CLOB。Polymarket Perps 是另一套按 30 天交易量分层的 maker/taker 费率（$0 档 maker 0.0125%），不适用于本项目。
 
+### 4.1.1 2026-10-21 复核：maker 确实 0 费
+
+**结论：maker 挂单成交完全不收费，这一点已由官方文档和实时 Gamma 双重确认。**
+
+关键坑：Gamma 市场对象里仍能看到 `makerBaseFee=1000` / `takerBaseFee=1000` 这类**历史遗留字段**，它们不是实际生效的 maker 费。实际生效的是新的 `feeSchedule`：
+
+| 市场 | feesEnabled | feeSchedule |
+|---|---:|---|
+| FC Barcelona 2026-10-20（Sports） | true | `{"rate":0.05,"exponent":1,"takerOnly":true,"rebateRate":0.15}` |
+| Shakhtar Donetsk（Sports） | true | `{"rate":0.03,"exponent":1,"takerOnly":true,"rebateRate":0.25}` |
+| US x Iran ceasefire（Geopolitics） | false | null（无任何费用） |
+
+- `takerOnly=true` 是官方“只有 taker 付费、maker 不付费”的机器可读字段，因此 **post-only/resting maker 成交 = 0 手续费**。
+- 计算成本时必须读 `feeSchedule`，**不能**用 `makerBaseFee=1000`；后者只是旧字段。
+- Geopolitics 市场 `feesEnabled=false`，taker 也免费；其他类别只有主动吃单（taker）按 `rate × p × (1-p)` 计费。
+
 官方 `Maker Rebates Program` 进一步说明：
 
 - rebate 每天以 pUSD 发放，累计至少 1 pUSD 才支付；
 - 返佣不是“每笔免手续费”，而是把某市场 taker fee 的一部分放入返佣池，再按各 maker 的 fee-equivalent 份额分配；
 - 因此 `rebateRate=0.25` 表示该市场 taker fee 的 25% 进入返佣池，不表示每个 maker 自动拿回自己手续费的 25%。
 
-实查当前 Gamma（2026-10-20）：
-
-| 市场 | feesEnabled | feeType | takerOnly | rate | rebateRate |
-|---|---:|---|---:|---:|---:|
-| FC Barcelona 2026-10-20 | true | sports_fees_v3 | true | 0.05 | 0.15 |
-| Flávio Bolsonaro 巴西总统 | true | politics_fees | true | 0.04 | 0.25 |
-| Shakhtar Donetsk 欧冠冠军 | true | sports_fees_v2 | true | 0.03 | 0.25 |
-| US x Iran ceasefire | false | — | — | — | — |
-
 对策略的含义：
 
-- **maker 挂单成交确实 0 手续费**；BOND 回测的 `makerFeeRate=0` 口径正确。
+- **maker 挂单成交确实 0 手续费**；BOND / BOND_SCALP 回测的 `makerFeeRate=0` 口径正确。
 - 只有 post-only/resting maker 成交才享受 0 费；主动吃单、FAK/IOC 对冲或卖出属于 taker，必须按上表 taker rate 计费。
-- BOND 的 `exitSpread=100c` 是持有到结算，不产生 taker 卖出手续费；若改成主动卖出，必须另算 taker fee。
+- BOND 的 `exitSpread=100c` 是持有到结算，不产生 taker 卖出手续费；BOND_SCALP 的主动卖出退出若要立即成交，应按 taker 费做敏感性分析。
 - 下面的 100bps 表只是成本压力测试，不是当前 maker 费率。
 - 回测未计 maker rebate 和 liquidity reward，因此没有高估手续费；但返佣份额在 Shadow/Live 实测前不能当作确定收益。
 
@@ -277,6 +285,60 @@ cd D:\Project\PolyHermes\backend
 3. 我们的 BOND 0.95–0.97 队列回测 +4.10%，仍是目标账户同 band matched ROI +1.26% 的约 3.3 倍，是 closed-position ROI +0.225% 的约 18 倍；仍明显高估。
 4. 更准确的画像：**高周转、多价格带的事件交易/做市混合策略**，依靠事件选择、库存周转和退出纪律。当前 0.95–0.99 持有模型只是其中一个窄切片，不能称为完整复刻。
 
+## 4.6 BOND_SCALP 主动退出回测（2026-10-21）
+
+背景：目标账户 matched round-trip 价差中位数 +1.0c、p90 +3.0c，且 18.4% 是负价差主动退出；纯 hold-to-settlement 的 BOND 不能复刻这种周转。因此新增 `GridProfile.BOND_SCALP`：
+
+- 价格带：0.90–0.95、0.95–0.97、0.97–0.99、0.99–0.999
+- entry offset：0 / 0.25c
+- exit：+1c / +2c / +3c（limit sell，不持有到结算）
+- queueFactor：1 / 2 / 5
+- maxCycles：3 / 10
+- requote：300s
+
+### 4.6.1 队列模型结果（Gradle BOND_SCALP）
+
+| 配置 | 成交/循环 | fill rate | ROI | train / test | 结算亏损 | MAE | 盈亏平衡亏损率 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 0.95–0.97, off0, +3c, q2, c3 | 79/90 | 49.4% | **+3.20%** | +3.19% / +3.20% | 0 | -66.8% | 3.10% |
+| 0.97–0.99, off0.25, +3c, q2, c3 | 78/79 | 30.0% | **+2.20%** | +2.13% / +2.28% | 0 | -95.3% | 2.15% |
+
+- 0.95–0.97 的 q5 版本 ROI 更高（+3.22%），但 fill rate 只有 26.3%，成交假设更脆弱，不作为首选。
+- 队列模型 90 个 cycle 0 结算亏损、100% 胜率，明显优于目标账户约 81% 胜率；**这是模型乐观，不是实盘保证**。
+
+### 4.6.2 全 eligible 成交上限模型（更保守的成交假设）
+
+`scripts/analyze-leader-bond-style.cjs` 新增 +3c exit 后：
+
+| 价格带 | n | 平均 ROI | 亏损率 | 卖出/结算 | 盈亏平衡亏损率 |
+|---|---:|---:|---:|---:|---:|
+| 0.95–0.97, +3c | 159 | +1.82% | 1.26% | 157 / 2 | 3.03% |
+| 0.97–0.99, +3c | 261 | +1.44% | 0.38% | 254 / 7 | 1.80% |
+| 0.90–0.95, +3c | 193 | -1.58% | 4.66% | 184 / 9 | 3.14% |
+
+结论：
+
+1. +3c 主动退出在 0.95–0.99 两个 band 都为正，且比 hold 的收益/风险结构更接近目标账户的 +1c/+3c 行为。
+2. 0.90–0.95 即使主动退出仍为负（-1.58%），继续排除。
+3. 队列模型 +3.20% / +2.20% 仍高于全 eligible 模型 +1.82% / +1.44%，也高于目标账户 matched ROI +1.26% / +0.85%；差距来自成交假设，需 Shadow 实测。
+4. taker 卖出成本敏感性（0.95–0.97, q2, +3c）：maker 0bps 3.20% → 10bps 3.00% → 25bps 2.71% → 50bps 2.21% → 100bps 1.22%。若退出必须立即吃单，100bps 仍为正但收益腰斩。
+
+证据：
+
+- `backend/build/research/event-maker-bond-scalp-20261021-summary.csv`
+- `backend/build/research/event-maker-bond-scalp-20261021-robust-cycles.csv`
+- `backend/build/research/event-maker-bond-scalp-20261021-fee-sensitivity.csv`
+- `backend/build/research/event-maker-bond-scalp-20261021-top-cycles.csv`
+- `backend/build/research/leader-bond-style-backtest-20261021-repro.json`
+
+### 4.6.3 当前 Shadow
+
+- 首轮 BOND_SCALP 7d Shadow（00:57，`...-20261021`）在启动约 10 分钟后停止：0 fill / 0 cycle，`audit-stopped.json` 标记 `NO_FILLS_OR_CYCLES`。停止原因是发现它与回测参数不一致（requote 120s、maxOrderAge 3600s），先统一参数再跑。
+- 2026-10-21 01:08 重启 BOND_SCALP 7d Shadow（`...-20261021-v2`）：0.95–0.99、+3c、maxCycles=3、fillVolumeFactor=2、flowGuard=0、**requote 300s、maxOrderAge 1800s**、最多 20 市场，与回测配置一致。
+- 启动时选中 8 个市场 / 16 个 token，WS 已订阅；已挂出第一个 maker BUY。
+- 进程：wrapper PID 2476、Gradle java 11084、app java 10360；输出目录 `backend/build/research/event-maker-bond-scalp-shadow-7d-20261021-v2`。
+- 7 天后用 `scripts/audit-bond-shadow.cjs` 审计 fill rate、平均入场/退出价、MAE、结算亏损、重复 fill key 和真实 ROI；单笔 ROI 若远高于 1%，先怀疑队列/成交假设。
+
 ## 5. 结论与风险
 
 **可借鉴的部分（尚未验证可盈利）：**
@@ -291,13 +353,13 @@ cd D:\Project\PolyHermes\backend
 - 0.97–0.99 的 95% CI 上限 2.14% 也略高于 1.90% 盈亏平衡率，只能算边界性正期望。
 - 0.90–0.95 在队列模型为 -1.23%、全 eligible 模型为 -3.39%，10% 左右亏损率高于 7.22% 盈亏平衡率，明确不能做。
 - 回测 MAE 到 -92%～-100%，持仓过程中可能接近归零；他的 86 个亏损记录证明尾部真实存在。
-- 成交率只有约 55%–71%（88/160、170/260、233/329），依赖队列和真实 taker 流；queueFactor 越大成交越少。
+- 成交率依赖队列和真实 taker 流：BOND hold 约 55%–71%（88/160、170/260、233/329）；BOND_SCALP 队列模型只有 49.4%（0.95–0.97）/ 30.0%（0.97–0.99）；queueFactor 越大成交越少。
 - 回测是 2024–2026 的样本内结果，必须经过 Shadow 真实盘口验证。
 
 **结论升级：** 当前 BOND 只是理想化假设模型，不是已验证的目标账户复刻；目标账户 0.95–0.97 已平仓 ROI +0.225%、matched ROI +1.26%；我们的队列回测 +4.10%，分别约 18 倍 / 3.3 倍。7 天 Shadow 只用于验证真实盘口成交和库存账本，不能据此直接实盘。
 
 **下一步：**
-1. 只对 `0.95–0.99` 启动 Shadow：`exitSpread=100c`、`maxCycles=1`、order 100 USDC、多市场分散；不碰 0.90–0.95。
+1. 只对 `0.95–0.99` 跑 BOND_SCALP Shadow：`exitSpread=+3c`、`maxCycles=3`、order 100 USDC、多市场分散；不碰 0.90–0.95。
 2. 记录真实 fill rate、平均成交价、MAE、结算亏损、maker rebate 和 liquidity reward。
 3. 至少 2–4 周、覆盖 50–100 个结算事件；在亏损率置信区间下界高于盈亏平衡率之前，不进入真实资金。
 4. 0.5–0.8 价格带的账户收益不能由当前“买入持有”模型复刻，若要做必须另建主动周转/退出模型。

@@ -41,7 +41,8 @@ const EXITS = [
   { label: 'hold', cents: null },
   { label: '+0.5c', cents: 0.5 },
   { label: '+1c', cents: 1.0 },
-  { label: '+2c', cents: 2.0 }
+  { label: '+2c', cents: 2.0 },
+  { label: '+3c', cents: 3.0 }
 ];
 
 function referenceAt(market, timestamp) {

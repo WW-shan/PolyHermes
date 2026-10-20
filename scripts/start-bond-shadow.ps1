@@ -8,7 +8,15 @@ param(
   [int]$MaxRemainingMinutes = 43200,
   [string]$Output = "build/research/event-maker-bond-shadow-20261020",
   [string]$Proxy = "http://127.0.0.1:10808",
-  [int]$FlowGuardWindowSeconds = 3600
+  [int]$FlowGuardWindowSeconds = 3600,
+  [double]$ExitSpreadCents = 100,
+  [int]$MaxCyclesPerMarket = 1,
+  [double]$FillVolumeFactor = 1,
+  [double]$EntryOffsetCents = 0,
+  [int]$MinSpreadTicks = 1,
+  [int]$MaxQueue = 500,
+  [int]$RequoteSeconds = 120,
+  [int]$MaxOrderAgeSeconds = 3600
 )
 $ErrorActionPreference = "Stop"
 $backend = Join-Path (Split-Path -Parent $PSScriptRoot) "backend"
@@ -21,26 +29,45 @@ $argsList = @(
   "-PshadowMinutes=$Minutes",
   "-PshadowMinPrice=$MinPrice",
   "-PshadowMaxPrice=$MaxPrice",
-  "-PshadowExitSpreadCents=100",
-  "-PshadowMaxCyclesPerMarket=1",
+  "-PshadowExitSpreadCents=$ExitSpreadCents",
+  "-PshadowMaxCyclesPerMarket=$MaxCyclesPerMarket",
   "-PshadowOrderNotional=$OrderNotional",
   "-PshadowMaxMarkets=$MaxMarkets",
   "-PshadowMinVolume=$MinVolume",
   "-PshadowMinRemainingMinutes=120",
   "-PshadowMaxRemainingMinutes=$MaxRemainingMinutes",
-  "-PshadowMinSpreadTicks=1",
+  "-PshadowMinSpreadTicks=$MinSpreadTicks",
+  "-PshadowMaxQueue=$MaxQueue",
   "-PshadowImproveTicks=1",
-  "-PshadowEntryOffsetCents=0",
-  "-PshadowRequoteSeconds=120",
-  "-PshadowMaxOrderAgeSeconds=3600",
+  "-PshadowEntryOffsetCents=$EntryOffsetCents",
+  "-PshadowRequoteSeconds=$RequoteSeconds",
+  "-PshadowMaxOrderAgeSeconds=$MaxOrderAgeSeconds",
   "-PshadowFlowGuardWindowSeconds=$FlowGuardWindowSeconds",
-  "-PshadowFillVolumeFactor=1",
+  "-PshadowFillVolumeFactor=$FillVolumeFactor",
   "-PshadowOutput=$Output",
   "--console=plain"
 )
 $logDir = Join-Path $backend $Output
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $proc = Start-Process -FilePath (Join-Path $backend "gradlew.bat") -ArgumentList $argsList -WorkingDirectory $backend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir "stdout.log") -RedirectStandardError (Join-Path $logDir "stderr.log") -PassThru
-$info = [pscustomobject]@{ startedAt = (Get-Date).ToUniversalTime().ToString("o"); pid = $proc.Id; minutes = $Minutes; minPrice = $MinPrice; maxPrice = $MaxPrice; output = $logDir }
+$info = [pscustomobject]@{
+  startedAt = (Get-Date).ToUniversalTime().ToString("o")
+  pid = $proc.Id
+  minutes = $Minutes
+  minPrice = $MinPrice
+  maxPrice = $MaxPrice
+  orderNotional = $OrderNotional
+  maxMarkets = $MaxMarkets
+  exitSpreadCents = $ExitSpreadCents
+  maxCyclesPerMarket = $MaxCyclesPerMarket
+  fillVolumeFactor = $FillVolumeFactor
+  entryOffsetCents = $EntryOffsetCents
+  minSpreadTicks = $MinSpreadTicks
+  maxQueue = $MaxQueue
+  requoteSeconds = $RequoteSeconds
+  maxOrderAgeSeconds = $MaxOrderAgeSeconds
+  flowGuardWindowSeconds = $FlowGuardWindowSeconds
+  output = $logDir
+}
 $info | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $logDir "run.json") -Encoding UTF8
 $info | ConvertTo-Json -Depth 3
