@@ -1723,3 +1723,8 @@
 - favorite token 30 分钟双边流量极薄，多数成交在便宜 No 侧。
 - 首笔成交 markout：60s -1.05、300s -1.99 USDC，逆选择明显。
 - 结论：ungated 两臂继续基线，等活动窗口再测 gated 版本。
+### 02:45 监控增强：持续记录 markout
+
+- `monitor-bond-shadows.ps1` 新增 markout60Count/mean、markout300Mean、markout60NegativeShare。
+- 首条记录：两个臂 markout60=-1.05、markout300=-1.99、负占比 100%。
+- monitor 重启 PID 21168；后续每 30 分钟记录一次。

@@ -1106,3 +1106,9 @@ cd D:\Project\PolyHermes\backend
 - 更像事件逻辑破坏后的主动离场；机械小止损会过早砍仓，可能破坏 edge。
 - 固定 +1c/+3c 模型只能复刻正常盈利路径，无法复刻事件判断 + 大止损。
 - 结论：机械基线用于 Shadow 验证，但不能期望等于目标账户全部收益。
+### 19.15 监控增强：持续记录 markout（2026-10-21 02:45）
+
+- `monitor-bond-shadows.ps1` 新增 `markout60Count` / `markout60Mean` / `markout300Mean` / `markout60NegativeShare`。
+- 首条记录：两个 cap1000 臂 `markout60=-1.05`、`markout300=-1.99`、负占比 **100%**。
+- monitor 重启 PID 21168；序列 `bond-shadow-cap1000-audit-series.jsonl`。
+- 意义：不必等 7 天，数小时内即可看到成交质量是否持续为负。

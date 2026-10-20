@@ -34,6 +34,26 @@ while ($true) {
       continue
     }
     $a = Get-Content -LiteralPath $audit -Raw | ConvertFrom-Json
+    $markoutPath = Join-Path $dir "markouts.csv"
+    $m60Count = 0
+    $m60Mean = $null
+    $m300Mean = $null
+    $m60NegShare = $null
+    if (Test-Path $markoutPath) {
+      $mrows = @(Import-Csv -LiteralPath $markoutPath)
+      $m60 = @($mrows | Where-Object { [string]$_.horizon_seconds -eq "60" })
+      $m300 = @($mrows | Where-Object { [string]$_.horizon_seconds -eq "300" })
+      $m60Count = $m60.Count
+      if ($m60.Count -gt 0) {
+        $vals = @($m60 | ForEach-Object { [double]$_.markout_pnl })
+        $m60Mean = ($vals | Measure-Object -Average).Average
+        $m60NegShare = @($vals | Where-Object { $_ -lt 0 }).Count / $vals.Count
+      }
+      if ($m300.Count -gt 0) {
+        $vals300 = @($m300 | ForEach-Object { [double]$_.markout_pnl })
+        $m300Mean = ($vals300 | Measure-Object -Average).Average
+      }
+    }
     $record = [pscustomobject]@{
       at = (Get-Date).ToUniversalTime().ToString("o")
       output = $rel
@@ -44,6 +64,10 @@ while ($true) {
       inventoryShares = $a.state.inventoryShares
       realizedPnl = $a.state.realizedPnl
       realizedRoi = $a.state.realizedRoi
+      markout60Count = $m60Count
+      markout60Mean = $m60Mean
+      markout300Mean = $m300Mean
+      markout60NegativeShare = $m60NegShare
       flags = ($a.flags -join ';')
     }
     $record | ConvertTo-Json -Compress | Add-Content -LiteralPath $seriesPath -Encoding UTF8
