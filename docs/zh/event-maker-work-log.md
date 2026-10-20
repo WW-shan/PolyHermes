@@ -1733,3 +1733,9 @@
 - 新增 SCALP_WIDE profile（0.5–0.999，108 配置）+ 单测；4,189 市场回测完成。
 - 最佳 ROI：0.5–0.8 -9.67%（75 结算亏损）、0.8–0.9 -5.77%（24）、0.9–0.95 -0.19%、0.95–0.97 +3.22%、0.97–0.99 +2.23%、0.99–0.999 +0.70%。
 - 结论：低价格带的正收益是 leader 的事件判断，不是机械 scalp；继续聚焦 0.95–0.99。
+### 03:00 入场质量对账与被动挂单臂
+
+- 新增 leader entryTiming：买入前 1h 各 bucket 的 60s markout 全为正（+0.13% ~ +0.72%）。
+- 我们首笔 Shadow 60s markout 约 -1.0%，说明 improveTicks=1 可能过于激进。
+- start-bond-shadow.ps1 新增 ImproveTicks；启动被动臂 improveTicks=0、entryOffset=0.25c，8 市场 / 8 active。
+- watcher 25484，monitor 20600；三臂 A/B 比较 fill rate 与 markout。

@@ -134,6 +134,61 @@ const matchedCost = roundTrips.reduce((s,r)=>s+r.buyPrice*r.shares,0);
 const allClosedPnl = [...roundTrips, ...settlements].reduce((s,r)=>s+r.pnl,0);
 const allClosedCost = [...roundTrips, ...settlements].reduce((s,r)=>s+r.buyPrice*r.shares,0);
 const allEconomicPnl = allClosedPnl + openMarkPnl;
+
+// --- Entry timing context -------------------------------------------------
+const tradePricesByAsset = new Map();
+for (const t of trades) {
+  const asset = String(t.asset ?? '');
+  const price = num(t.price);
+  if (!asset || price <= 0 || price >= 1) continue;
+  if (!tradePricesByAsset.has(asset)) tradePricesByAsset.set(asset, []);
+  tradePricesByAsset.get(asset).push({ timestamp: num(t.timestamp), price });
+}
+for (const arr of tradePricesByAsset.values()) arr.sort((a, b) => a.timestamp - b.timestamp);
+function lastPriceAtOrBefore(arr, ts) {
+  let lo = 0, hi = arr.length - 1, ans = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (arr[mid].timestamp <= ts) { ans = arr[mid].price; lo = mid + 1; } else hi = mid - 1; }
+  return ans;
+}
+function firstPriceAtOrAfter(arr, ts) {
+  let lo = 0, hi = arr.length - 1, ans = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (arr[mid].timestamp >= ts) { ans = arr[mid].price; hi = mid - 1; } else lo = mid + 1; }
+  return ans;
+}
+function entryBucket(deltaCents) {
+  if (deltaCents == null) return 'unknown';
+  if (deltaCents < -2) return '<-2c';
+  if (deltaCents < -1) return '-2..-1c';
+  if (deltaCents < 0) return '-1..0c';
+  if (deltaCents <= 1) return '0..+1c';
+  return '>+1c';
+}
+const entryTiming = {};
+for (const rt of roundTrips) {
+  const arr = tradePricesByAsset.get(String(rt.asset)) ?? [];
+  const p1h = lastPriceAtOrBefore(arr, rt.buyAt - 3600);
+  const p24h = lastPriceAtOrBefore(arr, rt.buyAt - 86400);
+  const p60 = firstPriceAtOrAfter(arr, rt.buyAt + 60);
+  const d1h = p1h == null ? null : (rt.buyPrice - p1h) * 100;
+  const d24h = p24h == null ? null : (rt.buyPrice - p24h) * 100;
+  const m60 = p60 == null ? null : (p60 - rt.buyPrice) / rt.buyPrice;
+  for (const [prefix, delta] of [['1h', d1h], ['24h', d24h]]) {
+    const key = prefix + ':' + entryBucket(delta);
+    if (!entryTiming[key]) entryTiming[key] = { key, count: 0, wins: 0, roiSum: 0, markout60Sum: 0, markout60Count: 0 };
+    const b = entryTiming[key];
+    b.count += 1;
+    if (rt.pnl > 0) b.wins += 1;
+    b.roiSum += rt.roi;
+    if (m60 != null) { b.markout60Sum += m60; b.markout60Count += 1; }
+  }
+}
+const entryTimingReport = Object.values(entryTiming).map(b => ({
+  key: b.key,
+  count: b.count,
+  winRate: b.count ? b.wins / b.count : 0,
+  meanRoi: b.count ? b.roiSum / b.count : 0,
+  markout60Mean: b.markout60Count ? b.markout60Sum / b.markout60Count : null
+})).sort((a, b) => a.key.localeCompare(b.key));
 const closedApiRealized = closed.reduce((s,r)=>s+num(r.realizedPnl),0);
 const closedApiBought = closed.reduce((s,r)=>s+num(r.totalBought),0);
 const openApiCashPnl = positions.reduce((s,r)=>s+num(r.cashPnl),0);
@@ -197,6 +252,7 @@ const report = {
   },
   activity: activityByType,
   roundTripStats,
+  entryTiming: entryTimingReport,
   bands: aggregate(allClosed, r => band(r.buyPrice)),
   outcomes: aggregate(allClosed, r => r.outcome || 'unknown'),
   categories: aggregate(allClosed, r => category(r.title)),

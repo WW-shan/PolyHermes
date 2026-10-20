@@ -410,7 +410,7 @@ cd D:\Project\PolyHermes\backend
 ### 4.6.7 持续监控（2026-10-21）
 
 - 新增 `scripts/monitor-bond-shadows.ps1`：每 30 分钟对两个 Shadow 目录跑一次离线审计，把 `markets/fills/cycles/activeOrders/inventoryShares/realizedPnl/realizedRoi/flags` 追加到 `backend/build/research/bond-shadow-audit-series.jsonl`。
-- 当前 cap1000 臂的 monitor PID 26068（旧 17676 已停止）；退出审计 watcher 为 21160（+3c）和 26520（+1c）。
+- 当前三臂 monitor PID 20600；退出审计 watcher 为 21160（+3c aggressive）、26520（+1c aggressive）、25484（+1c passive）。
 - 这样不必等 7 天：若数小时内仍 0 fill，或出现 duplicate fill key / 异常 ROI，可提前发现。
 
 ### 4.6.8 与目标账户行为对账：固定 +1c / +3c 都不是完整复刻（2026-10-21）
@@ -551,6 +551,30 @@ cd D:\Project\PolyHermes\backend
 2. 0.9–0.95 接近 0（-0.19%），train -3.04% / test +1.81%，不稳定。
 3. 只有 **0.95–0.999** 为正（+3.22% / +2.23% / +0.70%），但 fill rate 只有 14%–26%，且统计上仍未证明。
 4. 结论：不要把策略扩展到低价格带；继续聚焦 0.95–0.99，把“事件判断”视为当前无法机械复刻的 alpha。
+
+### 4.6.15 入场质量对账：leader 的 60s markout 全为正，我们首笔为 -1%（2026-10-21）
+
+新增 entryTiming 分析（`analyze-leader-ledger.mjs`），按买入前 1 小时价格变化分组：
+
+| 买入前 1h | n | 胜率 | mean ROI | 60s markout |
+|---|---:|---:|---:|---:|
+| < -2c | 447 | 76.5% | +1.32% | **+0.43%** |
+| -2..-1c | 426 | 70.7% | +1.35% | **+0.72%** |
+| -1..0c | 695 | 74.2% | +0.46% | **+0.13%** |
+| 0..+1c | 1,869 | 72.7% | +1.00% | **+0.20%** |
+| > +1c | 367 | 67.0% | +1.63% | **+0.58%** |
+
+关键对比：
+
+- 目标账户无论买在下跌还是上涨后，60s markout **全部为正**（+0.13% ~ +0.72%）。
+- 我们首笔 Shadow 成交 60s markout 约 **-1.0%**。
+- 说明问题不只是“选品”，而是**入场质量**：当前 `improveTicks=1`（bid + 1 tick）可能过于激进，容易被知情卖单打成逆选择。
+
+应对：
+
+- `start-bond-shadow.ps1` 新增 `ImproveTicks` 参数。
+- 启动被动臂：`improveTicks=0`、`entryOffset=0.25c`（挂在 best bid 下方约 1 tick），+1c exit，cap 1000。
+- 目的：用更被动的挂单换取更好的入场价和 markout；fill rate 会下降，需要与主动臂对比。
 
 ## 5. 结论与风险
 

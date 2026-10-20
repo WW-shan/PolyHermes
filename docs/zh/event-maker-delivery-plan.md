@@ -1126,3 +1126,9 @@ cd D:\Project\PolyHermes\backend
 - 新增 `SCALP_WIDE` profile（108 配置）+ 单测，全量测试通过。
 - 低价格带的正收益是目标账户的事件判断/主动管理，不是机械 scalp。
 - 继续聚焦 0.95–0.99；不要把策略扩展到低价格带。
+### 19.17 入场质量与被动挂单 A/B（2026-10-21）
+
+- Leader 买入前 1h 无论涨跌，60s markout 全为正（+0.13% ~ +0.72%）。
+- 我们首笔 Shadow 60s markout 约 -1.0%，说明 improveTicks=1 可能过于激进。
+- 新增 `ImproveTicks` 参数；启动被动臂 improveTicks=0、entryOffset=0.25c。
+- 三臂 A/B：+3c aggressive、+1c aggressive、+1c passive；比较 fill rate 与 markout。
