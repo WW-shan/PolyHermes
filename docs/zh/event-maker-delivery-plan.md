@@ -1161,3 +1161,8 @@ cd D:\Project\PolyHermes\backend
 - 首笔成交市场最新 bid 0.945 / ask 0.946，entry 0.953，浮亏 -0.84，未触发 +1c/+3c 退出。
 - crypto/finance 24h monitor：27 条 opportunities，11 条 actionable，但全部 `worstPnl < 0`（部分成交裸风险）；politics 0 条。
 - 结论：没有风险自由完整集；继续等 join-bid/passive 成交与 markout 数据。
+### 19.21 四臂状态报告脚本（2026-10-21 03:35）
+
+- 新增 `scripts/report-bond-shadow-status.cjs`，汇总四臂的 markets / active / fills / cycles / inventory / realizedPnl / markout60 / markout300 / neg60。
+- 当前：aggressive 两臂各 1 fill（markout -1.05 / -1.99，neg60 100%）；join-bid 5/5 active 0 fill；passive 8/8 active 0 fill。
+- 输出 `backend/build/research/bond-shadow-status-20261021.md`，可随时重跑。

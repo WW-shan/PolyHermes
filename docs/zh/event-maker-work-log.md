@@ -1758,3 +1758,8 @@
 - 首笔市场最新 bid 0.945 / ask 0.946，entry 0.953，浮亏 -0.84，未触发退出。
 - crypto/finance 24h monitor：27 opportunities / 11 actionable，全部 worstPnl < 0（部分成交裸风险）；politics 0。
 - 结论：无风险自由完整集；继续等 join-bid/passive 成交数据。
+### 03:35 新增四臂状态报告脚本
+
+- 新增 `scripts/report-bond-shadow-status.cjs`，一键汇总四臂 markets/active/fills/cycles/inventory/realizedPnl/markout60/markout300/neg60。
+- 当前：aggressive 两臂各 1 fill（markout -1.05 / -1.99，neg60 100%）；join-bid 5/5 active 0 fill；passive 8/8 active 0 fill。
+- 输出 `bond-shadow-status-20261021.md`，后续可直接重跑。
