@@ -659,6 +659,41 @@ class EventMakerLiveEngineTest {
         assertEquals("market_expired", result.canceled.single().reason)
         assertNull(state.activeOrder)
     }
+    @Test
+    fun `resting buy is cancelled inside the tail window and not replaced`() = runTest {
+        val start = System.currentTimeMillis()
+        val tailConfig = config.copy(tailWindowMinutes = 60)
+        val state = EventMakerLiveState(market(endTimestamp = start / 1000L + 7_200), tailConfig)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(tailConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, start))
+        engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, start)
+        assertNotNull(state.activeOrder)
+
+        val later = start + 90 * 60_000L
+        state.onBook(book(0.95, 0.97, later))
+        val result = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, later)
+
+        assertEquals("tail_window", result.canceled.single().reason)
+        assertNull(state.activeOrder)
+        assertTrue(result.placed.isEmpty())
+    }
+
+    @Test
+    fun `flat state does not quote inside the tail window`() = runTest {
+        val start = System.currentTimeMillis()
+        val tailConfig = config.copy(tailWindowMinutes = 60)
+        val state = EventMakerLiveState(market(endTimestamp = start / 1000L + 1_800), tailConfig)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(tailConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.95, 0.97, start))
+
+        val result = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, start)
+
+        assertTrue(result.placed.isEmpty())
+        assertNull(state.activeOrder)
+        assertEquals(0, port.placeCount)
+    }
     private fun book(bid: Double, ask: Double, now: Long) = MarketBook(
         tokenId = "token",
         bids = listOf(BookLevel(bid, 100.0)),

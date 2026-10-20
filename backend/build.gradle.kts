@@ -144,6 +144,9 @@ tasks.register<JavaExec>("eventMakerBacktest") {
     providers.gradleProperty("researchMaxOrderAgeSeconds").orNull?.let {
         argsList += listOf("--max-order-age-seconds", it)
     }
+    providers.gradleProperty("researchMinRemainingSeconds").orNull?.let {
+        argsList += listOf("--min-remaining-seconds", it)
+    }
     providers.gradleProperty("researchGridProfile").orNull?.let {
         argsList += listOf("--grid-profile", it)
     }
@@ -224,6 +227,7 @@ tasks.register<JavaExec>("eventMakerShadow") {
     argsList += listOf("--exit-spread-cents", providers.gradleProperty("shadowExitSpreadCents").orNull ?: "1")
     argsList += listOf("--requote-seconds", providers.gradleProperty("shadowRequoteSeconds").orNull ?: "120")
     argsList += listOf("--max-order-age-seconds", providers.gradleProperty("shadowMaxOrderAgeSeconds").orNull ?: "3600")
+    argsList += listOf("--tail-window-minutes", providers.gradleProperty("shadowTailWindowMinutes").orNull ?: "0")
     argsList += listOf("--flow-guard-window-seconds", providers.gradleProperty("shadowFlowGuardWindowSeconds").orNull ?: "3600")
     argsList += listOf("--flow-guard-max-signed-flow", providers.gradleProperty("shadowFlowGuardMaxSignedFlow").orNull ?: "-0.4")
     argsList += listOf("--flow-guard-min-price-drop-cents", providers.gradleProperty("shadowFlowGuardMinPriceDropCents").orNull ?: "0.5")

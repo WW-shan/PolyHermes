@@ -41,6 +41,12 @@ data class EventMakerConfig(
     val requoteSeconds: Long = 120,
     val maxOrderAgeSeconds: Long = 3600,
     /**
+     * Pre-trade tail window: stop quoting (and cancel a resting BUY) once fewer
+     * than this many minutes remain before market close. This avoids late
+     * gap-to-zero flows using only the public close timestamp. 0 disables it.
+     */
+    val tailWindowMinutes: Long = 0,
+    /**
      * Causal adverse-flow guard. It blocks/cancels BUY quotes when the favorite
      * token has net taker SELL flow and a material price drop in this trailing
      * window. A zero window disables the guard.
@@ -81,6 +87,10 @@ data class EventMakerConfig(
         require(exitImproveTicks >= 0)
         require(requoteSeconds > 0)
         require(maxOrderAgeSeconds >= requoteSeconds)
+        require(tailWindowMinutes >= 0)
+        require(tailWindowMinutes == 0L || tailWindowMinutes < minRemainingMinutes) {
+            "tailWindowMinutes must be smaller than minRemainingMinutes"
+        }
         require(flowGuardWindowSeconds >= 0)
         require(flowGuardMaxSignedFlow in -1.0..1.0)
         require(flowGuardMinPriceDropCents >= 0.0)

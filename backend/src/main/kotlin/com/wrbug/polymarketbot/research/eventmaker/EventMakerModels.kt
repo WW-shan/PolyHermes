@@ -75,7 +75,16 @@ data class EventMakerConfig(
     val minRecentTradesPerSide30m: Int = 0,
     val minRecentTrades2h: Int = 0,
     val minRecentNotional2h: Double = 0.0,
-    val minRecentTradesPerSide2h: Int = 0
+    val minRecentTradesPerSide2h: Int = 0,
+    /**
+     * Optional runtime tail window: a resting BUY is cancelled and no new BUY is
+     * quoted once fewer than this many seconds remain before market close. The
+     * live Shadow/Live path can apply the same rule. Zero disables it.
+     *
+     * This is a pre-trade prevention rule, not a post-fill stop-loss: it removes
+     * exposure to late, gap-to-zero flow using only the public close timestamp.
+     */
+    val minRemainingSeconds: Long = 0
 ) {
     init {
         require(entryHorizonSeconds > 0) { "entryHorizonSeconds must be positive" }
@@ -95,6 +104,7 @@ data class EventMakerConfig(
         require(minRecentTrades30m >= 0 && minRecentTrades2h >= 0) { "activity trade counts must be non-negative" }
         require(minRecentTradesPerSide30m >= 0 && minRecentTradesPerSide2h >= 0) { "activity per-side counts must be non-negative" }
         require(minRecentNotional30m >= 0.0 && minRecentNotional2h >= 0.0) { "activity notional must be non-negative" }
+        require(minRemainingSeconds >= 0) { "minRemainingSeconds must be non-negative" }
     }
 }
 

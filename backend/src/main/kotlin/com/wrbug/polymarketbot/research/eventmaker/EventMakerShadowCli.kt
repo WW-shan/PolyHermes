@@ -70,6 +70,7 @@ private data class ShadowOptions(
     val exitSpreadCents: Double,
     val requoteSeconds: Long,
     val maxOrderAgeSeconds: Long,
+    val tailWindowMinutes: Long,
     val flowGuardWindowSeconds: Long,
     val flowGuardMaxSignedFlow: Double,
     val flowGuardMinPriceDropCents: Double,
@@ -168,6 +169,7 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     val pollSeconds = option("poll-seconds")?.toLongOrNull() ?: 3L
     val requoteSeconds = option("requote-seconds")?.toLongOrNull() ?: 120L
     val maxOrderAgeSeconds = option("max-order-age-seconds")?.toLongOrNull() ?: 3600L
+    val tailWindowMinutes = option("tail-window-minutes")?.toLongOrNull() ?: 0L
     val flowGuardWindowSeconds = option("flow-guard-window-seconds")?.toLongOrNull() ?: 3600L
     val flowGuardMaxSignedFlow = option("flow-guard-max-signed-flow")?.toDoubleOrNull() ?: -0.4
     val flowGuardMinPriceDropCents = option("flow-guard-min-price-drop-cents")?.toDoubleOrNull() ?: 0.5
@@ -186,6 +188,7 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
     require(pollSeconds > 0)
     require(requoteSeconds > 0)
     require(maxOrderAgeSeconds >= requoteSeconds)
+    require(tailWindowMinutes >= 0)
     require(flowGuardWindowSeconds >= 0)
     require(flowGuardMaxSignedFlow in -1.0..1.0)
     require(flowGuardMinPriceDropCents >= 0.0)
@@ -229,6 +232,7 @@ private fun parseOptions(args: Array<String>): ShadowOptions {
         exitSpreadCents = option("exit-spread-cents")?.toDoubleOrNull() ?: 1.0,
         requoteSeconds = requoteSeconds,
         maxOrderAgeSeconds = maxOrderAgeSeconds,
+        tailWindowMinutes = tailWindowMinutes,
         flowGuardWindowSeconds = flowGuardWindowSeconds,
         flowGuardMaxSignedFlow = flowGuardMaxSignedFlow,
         flowGuardMinPriceDropCents = flowGuardMinPriceDropCents,
@@ -486,6 +490,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             maxCyclesPerMarket = options.maxCyclesPerMarket,
             requoteSeconds = options.requoteSeconds,
             maxOrderAgeSeconds = options.maxOrderAgeSeconds,
+        tailWindowMinutes = options.tailWindowMinutes,
             flowGuardWindowSeconds = options.flowGuardWindowSeconds,
             flowGuardMaxSignedFlow = options.flowGuardMaxSignedFlow,
             flowGuardMinPriceDropCents = options.flowGuardMinPriceDropCents,

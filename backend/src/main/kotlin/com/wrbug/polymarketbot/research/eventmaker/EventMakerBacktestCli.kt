@@ -79,7 +79,7 @@ fun main(args: Array<String>) {
     require(markets.isNotEmpty()) { "No eligible markets returned" }
 
     val engine = EventMakerBacktestEngine()
-    val configs = buildGrid(options.entryHorizonSeconds, options.activityGate, options.flowGuard, options.gridProfile, options.maxOrderAgeSeconds)
+    val configs = buildGrid(options.entryHorizonSeconds, options.activityGate, options.flowGuard, options.gridProfile, options.maxOrderAgeSeconds, options.minRemainingSeconds)
     val activityGate = options.activityGate
     println(
         "activityGate 30m=${activityGate.minRecentTrades30m}/${activityGate.minRecentNotional30m}/" +
@@ -174,7 +174,8 @@ private fun buildGrid(
     activityGate: ActivityGate,
     flowGuard: FlowGuardSettings,
     gridProfile: GridProfile,
-    maxOrderAgeSeconds: Long
+    maxOrderAgeSeconds: Long,
+    minRemainingSeconds: Long
 ): List<EventMakerConfig> {
     val bands = when (gridProfile) {
         GridProfile.DEFAULT -> listOf(
@@ -228,6 +229,7 @@ private fun buildGrid(
                                 queueFactor = queue,
                                 requoteSeconds = requote,
                                 maxOrderAgeSeconds = maxOrderAgeSeconds,
+                                minRemainingSeconds = minRemainingSeconds,
                                 orderNotional = 100.0,
                                 maxCycles = maxCycles,
                                 makerFeeRate = 0.0,
@@ -254,7 +256,7 @@ private fun writeSummaryCsv(path: Path, summaries: List<EventMakerSummary>) {
     Files.createDirectories(path.parent)
     val header = listOf(
         "config", "min_price", "max_price", "entry_offset_cents", "exit_spread_cents", "queue_factor", "requote_seconds", "max_order_age_seconds", "max_cycles",
-        "flow_guard_window_seconds", "flow_guard_max_signed_flow", "flow_guard_min_price_drop_cents",
+        "flow_guard_window_seconds", "flow_guard_max_signed_flow", "flow_guard_min_price_drop_cents", "min_remaining_seconds",
         "min_recent_trades_30m", "min_recent_notional_30m", "min_recent_trades_per_side_30m",
         "min_recent_trades_2h", "min_recent_notional_2h", "min_recent_trades_per_side_2h",
         "total_markets", "eligible_markets", "filled_markets", "fill_rate", "total_cycles", "sold_cycles", "settled_cycles",
@@ -265,7 +267,7 @@ private fun writeSummaryCsv(path: Path, summaries: List<EventMakerSummary>) {
         listOf(
             s.config.name, s.config.minPrice, s.config.maxPrice, s.config.entryOffsetCents, s.config.exitSpreadCents,
             s.config.queueFactor, s.config.requoteSeconds, s.config.maxOrderAgeSeconds, s.config.maxCycles,
-            s.config.flowGuardWindowSeconds, s.config.flowGuardMaxSignedFlow, s.config.flowGuardMinPriceDropCents,
+            s.config.flowGuardWindowSeconds, s.config.flowGuardMaxSignedFlow, s.config.flowGuardMinPriceDropCents, s.config.minRemainingSeconds,
             s.config.minRecentTrades30m, s.config.minRecentNotional30m, s.config.minRecentTradesPerSide30m,
             s.config.minRecentTrades2h, s.config.minRecentNotional2h, s.config.minRecentTradesPerSide2h,
             s.totalMarkets, s.eligibleMarkets, s.filledMarkets, s.fillRate,
@@ -403,6 +405,7 @@ private data class CliOptions(
     val flowGuard: FlowGuardSettings,
     val gridProfile: GridProfile,
     val maxOrderAgeSeconds: Long,
+    val minRemainingSeconds: Long,
     val dataset: Path?,
     val refreshDataset: Boolean,
     val focusConfig: String?,
@@ -424,6 +427,7 @@ private data class CliOptions(
                 entryHorizonSeconds = option("entry-horizon-seconds")?.toLongOrNull() ?: 86_400L,
                 gridProfile = GridProfile.parse(option("grid-profile")),
                 maxOrderAgeSeconds = option("max-order-age-seconds")?.toLongOrNull() ?: 1_800L,
+        minRemainingSeconds = option("min-remaining-seconds")?.toLongOrNull() ?: 0L,
                 dataset = option("dataset")?.let(Paths::get),
                 refreshDataset = args.contains("--refresh-dataset"),
                 focusConfig = option("focus-config"),

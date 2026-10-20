@@ -46,6 +46,7 @@
 | RISK-DAY-1 | 日亏损锚点跨重启持久化 | 已完成 | UTC day + baseline 写入 state v3；103 suites / 538 tests 通过 |
 | RECHECK-1 | markout 时间单位修复 | 已完成 | dde0131；全量 103 suites / 562 tests |
 | RECHECK-2 | 八窗口活动门槛口径复核 | 已完成 | 1d 由 93/0 亏损变为 68/1 亏损；全窗口通过配置 0 个；见 event-maker-activity-gate-recheck-2026-10-20.md |
+| TAIL-1 | 结算前尾部窗口规则（回测/Live/Shadow） | 已完成 | 8h 规则八窗口 0 结算亏损；103 suites / 566 tests；见 `event-maker-tail-window-2026-10-20.md` |
 | LIVE-1 | 真实小资金 Live smoke | 阻塞 | 需要 `accountId`、资金上限、明确授权、时间与市场范围；**且策略经济性证据尚不成立** |
 
 ## 3. 最近后台进程与状态

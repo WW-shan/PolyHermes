@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Mandatory = $true)]
     [string]$OutputDir,
     [int]$Spread = 2,
@@ -18,6 +18,7 @@
     [double]$FillVolumeFactor = 20.0,
     [double]$EntryOffsetCents = 0.0,
     [double]$ExitSpreadCents = 1.0
+    [long]$TailWindowMinutes = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,7 +77,8 @@ $argsList = @(
     "-PshadowExitImproveTicks=0",
     "-PshadowExitSpreadCents=$ExitSpreadCents",
     "-PshadowRequoteSeconds=300",
-    "-PshadowMaxOrderAgeSeconds=1800",
+    "-PshadowMaxOrderAgeSeconds=1800"
+    "-PshadowTailWindowMinutes=$TailWindowMinutes",
     "-PshadowStaleBookSeconds=300",
     "-PshadowActiveOrderStaleSeconds=1800",
     "-PshadowOrderNotional=25",
@@ -118,6 +120,7 @@ $record = [ordered]@{
     exitSpreadCents = $ExitSpreadCents
     requoteSeconds = 300
     maxOrderAgeSeconds = 1800
+    tailWindowMinutes = $TailWindowMinutes
     staleBookSeconds = 300
     activeOrderStaleBookSeconds = 1800
     orderNotional = 25

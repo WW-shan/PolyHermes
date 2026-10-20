@@ -7,7 +7,7 @@
 
 ## 1. 当前能力边界
 
-> 当前验证状态（2026-10-20 08:30）：**旧“八窗口零结算亏损”结论已作废**——八窗口产物漏传 Shadow/Live 实际使用的活动门槛；补门槛后 1d 窗口为 68 cycles、1 次结算亏损、ROI -0.459%、测试 -0.808%，八窗口全通过配置为 0。回测 markout 时间单位 bug 已修复（`dde0131`）。全量 103 suites / 562 tests 通过。**当前策略不得实盘、不得跟单。**日亏损使用持久化 UTC 锚点，同日重启不重置、跨日重锚、时钟回拨不重置；无买盘持仓按最坏估值。对账/初始 tick 的未知状态和日亏损会主动关闭事件通道并进入统一清理。v3 Shadow 严格门槛下 0 选中后因本轮修复停止；v4 Shadow 在后续初始清理边界审计后停止；v5 已选中市场但被 adverse-flow Guard 阻止，实验臂暴露审计误分类；修复后 v6 已完成八次挂单：shadow-1 至 shadow-8 均因 requote 撤销；最后一笔 shadow-8 于 03:50 撤销。当前 FLAT、0 fill、0 cycle，继续等待价格与真实 crossing flow。当前仍不应实盘、不应跟单。证据见 [活动门槛复核](event-maker-activity-gate-recheck-2026-10-20.md)、[候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
+> 当前验证状态（2026-10-20 08:30）：**旧“八窗口零结算亏损”结论已作废**——八窗口产物漏传 Shadow/Live 实际使用的活动门槛；补门槛后 1d 窗口为 68 cycles、1 次结算亏损、ROI -0.459%、测试 -0.808%，八窗口全通过配置为 0。回测 markout 时间单位 bug 已修复（`dde0131`）。全量 103 suites / 562 tests 通过。**当前策略不得实盘、不得跟单。** 2026-10-20 09:00 新增：结算前 8h 停止挂买单的尾部窗口规则，在 1d 窗口把 -0.459% 翻正为 +1.029%，八窗口均为 0 结算亏损且 ROI 为正；但 6/8 个窗口训练样本 <20，且 3d/4d/6d 仍存在其他尾部亏损，属于部分缓解，不是通解。详见 [尾部窗口研究](event-maker-tail-window-2026-10-20.md)。日亏损使用持久化 UTC 锚点，同日重启不重置、跨日重锚、时钟回拨不重置；无买盘持仓按最坏估值。对账/初始 tick 的未知状态和日亏损会主动关闭事件通道并进入统一清理。v3 Shadow 严格门槛下 0 选中后因本轮修复停止；v4 Shadow 在后续初始清理边界审计后停止；v5 已选中市场但被 adverse-flow Guard 阻止，实验臂暴露审计误分类；修复后 v6 已完成八次挂单：shadow-1 至 shadow-8 均因 requote 撤销；最后一笔 shadow-8 于 03:50 撤销。当前 FLAT、0 fill、0 cycle，继续等待价格与真实 crossing flow。当前仍不应实盘、不应跟单。证据见 [活动门槛复核](event-maker-activity-gate-recheck-2026-10-20.md)、[候选报告](event-maker-safe-candidate-2026-10-19.md)、[Live 执行验证](event-maker-live-execution-validation-2026-10-19.md) 和 [执行台账](event-maker-execution-ledger-2026-10-19.md)。
 
 - `SHADOW`：使用真实 Polymarket 公共盘口和公共成交，不签名、不下单、不接触资金。
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
@@ -120,6 +120,7 @@ cd D:\Project\PolyHermes\backend
   "-PshadowExitSpreadCents=1" `
   "-PshadowRequoteSeconds=300" `
   "-PshadowMaxOrderAgeSeconds=1800" `
+"-PshadowTailWindowMinutes=480" `
   "-PshadowStaleBookSeconds=300" `
   "-PshadowActiveOrderStaleSeconds=1800" `
   "-PshadowFlowGuardWindowSeconds=3600" `
@@ -162,6 +163,7 @@ cd D:\Project\PolyHermes\backend
 | `shadowExitSpreadCents` | 卖出目标价相对买入价的价差美分数 |
 | `shadowRequoteSeconds` | 价格变化后的最小重挂冷却时间 |
 | `shadowMaxOrderAgeSeconds` | 订单最大存活时间，到时强制重挂 |
+| `shadowTailWindowMinutes` | 结算前尾部窗口：剩余分钟小于该值时撤买单且不再新挂；0 关闭；研究建议 480 |
 | `shadowStaleBookSeconds` | 新报价允许的最大盘口年龄 |
 | `shadowActiveOrderStaleSeconds` | 已有挂单允许的最大盘口静默时间 |
 | `shadowFlowGuardWindowSeconds` | 逆势流 Guard 滚动窗口；0 关闭，默认 3600 |
@@ -272,6 +274,7 @@ Content-Type: application/json
   "exitImproveTicks": 0,
   "requoteSeconds": 300,
   "maxOrderAgeSeconds": 1800,
+    "tailWindowMinutes": 480,
   "flowGuardWindowSeconds": 3600,
   "flowGuardMaxSignedFlow": -0.4,
   "flowGuardMinPriceDropCents": 0.5,
@@ -358,6 +361,7 @@ POST /api/event-maker/stop
   "exitImproveTicks": 0,
   "requoteSeconds": 300,
   "maxOrderAgeSeconds": 1800,
+    "tailWindowMinutes": 480,
   "flowGuardWindowSeconds": 3600,
   "flowGuardMaxSignedFlow": -0.4,
   "flowGuardMinPriceDropCents": 0.5,

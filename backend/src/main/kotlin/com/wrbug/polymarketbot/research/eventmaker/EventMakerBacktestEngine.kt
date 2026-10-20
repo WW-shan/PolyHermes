@@ -153,6 +153,15 @@ class EventMakerBacktestEngine(
                 buyOrder = null
                 return
             }
+            // Pre-trade tail window: never quote once the market is inside the
+            // configured last-N-seconds window. This uses only the public close
+            // timestamp, so it is causal and cannot peek at the eventual outcome.
+            if (config.minRemainingSeconds > 0 &&
+                market.closedTimestamp - timestamp < config.minRemainingSeconds
+            ) {
+                buyOrder = null
+                return
+            }
             val limit = roundDownToTick(max(0.001, atPrice - entryOffset), tick)
             buyOrder = BuyOrder(
                 limitPrice = limit,
@@ -184,6 +193,15 @@ class EventMakerBacktestEngine(
                 // it survives using only information available before the print, so a
                 // same-print fill cannot be filtered with hindsight.
                 if (flowGuardBlocks(trade.timestamp - 1L)) {
+                    buyOrder = null
+                    continue
+                }
+                // Withdraw a resting BUY before the late-resolution tail window.
+                // The check runs before fill evaluation so the same print cannot
+                // fill an order that the live engine would already have cancelled.
+                if (config.minRemainingSeconds > 0 &&
+                    market.closedTimestamp - trade.timestamp < config.minRemainingSeconds
+                ) {
                     buyOrder = null
                     continue
                 }

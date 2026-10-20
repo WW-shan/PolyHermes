@@ -450,6 +450,41 @@ class EventMakerBacktestEngineTest {
         assertEquals(0.005 * shares, cycle.markout60sPnl!!, 0.0001)
     }
 
+    @Test
+    fun `does not fill a buy inside the configured tail window`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_600, 0, 0.975, 300.0, "SELL")
+            )
+        )
+        val controlConfig = baseConfig().copy(requoteSeconds = 0)
+        val gatedConfig = controlConfig.copy(minRemainingSeconds = 500)
+
+        val control = engine.simulateMarket(market, controlConfig)
+        val gated = engine.simulateMarket(market, gatedConfig)
+
+        assertTrue(control.cycles.isNotEmpty(), "control run must fill outside the tail window")
+        assertFalse(gated.filled, "a BUY must not fill with fewer than 500s remaining")
+        assertEquals(0, gated.cycles.size)
+    }
+
+    @Test
+    fun `tail window zero keeps legacy behavior`() {
+        val market = market(
+            winnerIndex = 0,
+            trades = listOf(
+                trade(8_990, 0, 0.980, 10.0),
+                trade(9_600, 0, 0.975, 300.0, "SELL")
+            )
+        )
+        val config = baseConfig().copy(requoteSeconds = 0, minRemainingSeconds = 0)
+
+        val result = engine.simulateMarket(market, config)
+
+        assertTrue(result.cycles.isNotEmpty())
+    }
     private fun baseConfig(maxCycles: Int = 1) = EventMakerConfig(
         name = "test",
         entryHorizonSeconds = 1_000,

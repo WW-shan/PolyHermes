@@ -150,7 +150,9 @@ class EventMakerLiveEngine(
                 val priceChanged = bookFresh && (desired == null || desired.price.compareTo(active.price) != 0)
                 val maxAgeReached = ageMs >= config.maxOrderAgeSeconds * 1000L
                 val marketExpired = state.isExpired(now)
+                val insideTailWindow = active.side == EventMakerSide.BUY && isInsideTailWindow(state, now)
                 val shouldCancel = marketExpired ||
+                    insideTailWindow ||
                     adverseFlow ||
                     activeBookStale ||
                     maxAgeReached ||
@@ -158,6 +160,7 @@ class EventMakerLiveEngine(
                 if (shouldCancel && now >= (cancelBackoffUntil[active.orderId] ?: 0L)) {
                     val reason = when {
                         marketExpired -> "market_expired"
+                        insideTailWindow -> "tail_window"
                         adverseFlow -> "adverse_flow"
                         activeBookStale -> "stale_book"
                         maxAgeReached -> "max_age"
@@ -178,6 +181,7 @@ class EventMakerLiveEngine(
             if (state.isExpired(now)) continue
 
             if (state.phase == EventMakerPhase.FLAT) {
+                if (isInsideTailWindow(state, now)) continue
                 if (adverseFlowGuard.blocks(state.market.favoriteTokenId, now)) {
                     if (flowSuppressedMarkets.add(state.market.conditionId)) {
                         result = result.merge(
@@ -696,6 +700,17 @@ class EventMakerLiveEngine(
             return "order_state_unknown:matched_status_size_mismatch"
         }
         return null
+    }
+
+    /**
+     * Causal pre-trade tail rule: inside the configured last-N-minutes window a
+     * BUY must not rest or be placed. Uses only the public market close timestamp;
+     * SELL exits are never suppressed.
+     */
+    private fun isInsideTailWindow(state: EventMakerLiveState, now: Long): Boolean {
+        if (config.tailWindowMinutes <= 0) return false
+        val remainingSeconds = state.market.endTimestamp - now / 1_000L
+        return remainingSeconds < config.tailWindowMinutes * 60L
     }
 
     private fun halt(reason: String) {
