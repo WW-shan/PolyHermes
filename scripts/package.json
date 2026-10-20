@@ -7,7 +7,10 @@
     "unwrap-wcol": "node unwrap-wcol.js",
     "get-order-detail": "node get-order-detail.js",
     "verify-backtest-data": "node verify-backtest-data.js",
-    "ws-binance-klines": "node ws_binance_btc_usdc_klines.js"
+    "ws-binance-klines": "node ws_binance_btc_usdc_klines.js",
+    "test:complete-set-arb": "node --test test/scan-event-complete-set-arbitrage.test.mjs",
+    "test:complete-set-monitor": "node --test test/monitor-event-complete-set-arbitrage.test.mjs",
+    "test:complete-set": "node --test test"
   },
   "dependencies": {
     "@ethersproject/wallet": "^5.7.0",

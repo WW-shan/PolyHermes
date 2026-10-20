@@ -602,3 +602,20 @@ cd D:\Project\PolyHermes\backend
 | TEST-14 | 隔离 worktree 全量回归 | 已完成 | 103 suites / 561 tests / 0 failures / 0 errors / 2 skipped |
 
 - 该规则保证重启后所有已赎回记录都有链上交易可追溯。
+## 2026-10-20 12:10 完整集/NegRisk 研究台账
+
+| ID | 验收项 | 状态 | 证据 |
+|---|---|---|---|
+| CSA-1 | Binary ask 完整集扫描 | 已完成 | `scan-event-complete-set-arbitrage.mjs` |
+| CSA-2 | Binary bid + mint 多腿扫描 | 已完成 | bid path 标记 `requiresMint`、`nonAtomicLegs` |
+| CSA-3 | NegRisk 全 outcome 完整性校验 | 已完成 | `validateNegRiskEvent` 单测 |
+| CSA-4 | 手续费与未知费率 fail-closed | 已完成 | Gamma schedule + `/fee-rate` fallback 单测 |
+| CSA-5 | 深度、最小量、数量精度 | 已完成 | 15 个 Node 测试全部通过 |
+| CSA-6 | Politics + Geopolitics 全量快照 | 已完成 | 821 组 / 582 有效 / 0 可执行 |
+| CSA-7 | 连续候选监控与二次确认 | 已完成实现和 smoke | `complete-set-monitor-smoke2-20261020/` |
+| CSA-8 | 24 小时连续监控 | 待执行 | 必须在 v6 Shadow 审计后启动 |
+| CSA-9 | Sports/Crypto/Finance 扩展 | 待执行 | 当前仅扫描 Politics + Geopolitics |
+| CSA-10 | 真实 Live smoke | 阻塞 | 无账户、资金上限、授权、时间窗口和市场范围 |
+
+- 当前禁止真实资金交易；完整集/NegRisk 点快照没有扣费后可执行机会。
+- 24 小时监控未完成前，不能把当前结果解释为“全天没有机会”，也不能据此宣称策略完成。

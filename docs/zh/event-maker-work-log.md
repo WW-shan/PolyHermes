@@ -1384,3 +1384,13 @@
 - 两次均证明：bid 配对虽然约 0.994，但单边成交后买对手 ask + 0.2c 滑点约 1.006，taker fee 后单次损失远超同期奖励。
 - 新增安全门槛 `maxHedgePairCostPerShare` / `hedgeSlippageCents`；按 1.0 + 0.2c 扫描 87 个候选，0 个通过，正确结果是“不报价”。
 - 结论：0.90–0.95 paired reward farming 当前不可行；0.97–0.99 单边 maker 亦不可行；不跟单、不实盘。报告：`docs/zh/event-maker-paired-reward-shadow-2026-10-20.md`。- 修复 `CopyTradingFullChainE2ETest` 的异步竞态：`processedTrades.size` 直接断言改为先 awaitCondition，避免 SELL 异步落库尚未完成时误报；全量回归恢复为 105 suites / 579 tests / 0 failures。
+### 12:10 完整集/NegRisk 套利扫描器加固与全量扫描
+
+- 新增并重构 `scripts/scan-event-complete-set-arbitrage.mjs`：按逐档深度吃单，使用价格相关 taker fee、每腿最小下单量、0.01 share 精度、盘口新鲜度、交叉盘口检查、事件完整性和 gas buffer。
+- 新增 `scripts/monitor-event-complete-set-arbitrage.mjs`：Gamma 顶层价格发现候选，CLOB 可执行盘口快速轮询，机会出现后延迟 1 秒二次确认，并记录 watchlist、JSONL 快照和 episode。
+- 新增 15 个 Node 测试：`cd scripts; npm run test:complete-set`，15 tests / 0 failures。
+- 全量 snapshot：1,739 个市场、821 个组、582 个完整评估、239 个不完整/关闭组；ask/bid 原始正收益均为 0，可执行套利均为 0；最低 top ask sum 0.983，最高 top bid sum 0.999。
+- 0.983 的 NegRisk 候选因 4 腿合计约 2.28 USDC taker fee，扣费后为负；证明“价格接近 1”不等于“有 edge”。
+- 连续监控 smoke：126 个市场、20 个组、10 个 proxy 候选、5 个 watchlist，15 秒无 request error，无可确认机会。
+- 报告：`docs/zh/event-maker-complete-set-arbitrage-2026-10-20.md`。
+- v6 Shadow 至 12:06 仍存活：fills=0、cycles=0、inventory=0、phase=FLAT、logIssues=0、stderr=0；预计 12:53 结束。
