@@ -17,7 +17,7 @@ param(
     [int]$MaxCyclesPerMarket = 1,
     [double]$FillVolumeFactor = 20.0,
     [double]$EntryOffsetCents = 0.0,
-    [double]$ExitSpreadCents = 1.0
+    [double]$ExitSpreadCents = 1.0,
     [long]$TailWindowMinutes = 0
 )
 
