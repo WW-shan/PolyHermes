@@ -37,6 +37,7 @@ const DEFAULTS = Object.freeze({
   maxCapitalUsd: 25,
   entrySlippageCents: 0,
   exitSlippageCents: 0.2,
+  expectedHoldDays: null,
   maxBookAgeMs: 15_000,
   gasUsd: 0.02,
   sizeStep: 0.01,
@@ -70,6 +71,7 @@ export function parseRiskArgs(argv) {
       case "--max-capital-usd": options.maxCapitalUsd = numberArg(arg, next(), 0, { allowZero: true }); break;
       case "--entry-slippage-cents": options.entrySlippageCents = numberArg(arg, next(), 0, { allowZero: true }); break;
       case "--exit-slippage-cents": options.exitSlippageCents = numberArg(arg, next(), 0, { allowZero: true }); break;
+      case "--expected-hold-days": options.expectedHoldDays = numberArg(arg, next(), 0); break;
       case "--max-book-age-ms": options.maxBookAgeMs = Math.floor(numberArg(arg, next(), 0)); break;
       case "--gas-usd": options.gasUsd = numberArg(arg, next(), 0, { allowZero: true }); break;
       case "--size-step": options.sizeStep = numberArg(arg, next(), 0); break;
@@ -252,6 +254,7 @@ export async function buildExecutionRiskReport(options) {
     capitalUsd: risk.capitalAtRiskUsd,
     endDate: eventEndDate,
     conversionPath,
+    expectedHoldDays: options.expectedHoldDays,
   });
   return {
     generatedAt: new Date().toISOString(),
@@ -292,6 +295,10 @@ function printReport(report) {
   console.log(`scenarios=${r.scenarioCount} exhaustive=${r.exhaustive} mode=${r.executionMode}`);
   console.log(`conversion=${report.holding.conversionPath} terminalROI=${(report.holding.terminalRoi * 100).toFixed(3)}% ` +
     `maxHoldDays=${report.holding.maxHoldDays?.toFixed(2) ?? "n/a"} annualizedAtEnd=${report.holding.annualizedRoiAtEnd == null ? "n/a" : (report.holding.annualizedRoiAtEnd * 100).toFixed(3) + "%"}`);
+  if (report.holding.expectedAnnualizedRoi != null) {
+    console.log(`expectedHoldDays=${report.holding.expectedHoldDays.toFixed(2)} ` +
+      `expectedAnnualized=${(report.holding.expectedAnnualizedRoi * 100).toFixed(3)}%`);
+  }
   if (r.worstScenario) {
     console.log(`worst fills=[${r.worstScenario.fills.map((value) => value.toFixed(2)).join(",")}] ` +
       `pnl=${r.worstScenario.worstPnl.toFixed(4)} policy=${r.worstScenario.worstPolicy}`);
@@ -312,6 +319,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("  --max-capital-usd 25");
     console.log("  --entry-slippage-cents 0");
     console.log("  --exit-slippage-cents 0.2");
+    console.log("  --expected-hold-days N");
     console.log("  --max-book-age-ms 15000");
     console.log("  --gas-usd 0.02");
     console.log("  --execution-mode sequential|parallel");

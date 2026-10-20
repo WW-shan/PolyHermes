@@ -22,6 +22,7 @@ export function computeHoldingYield({
   endDate,
   now = Date.now(),
   conversionPath = "hold_to_resolution",
+  expectedHoldDays = null,
 }) {
   if (!Number.isFinite(profitUsd) || !Number.isFinite(capitalUsd) || capitalUsd <= 0) {
     throw new Error("profitUsd and capitalUsd are invalid");
@@ -33,6 +34,9 @@ export function computeHoldingYield({
   const annualizedRoiAtEnd = capitalLocked && holdDays != null && holdDays > 0 && 1 + terminalRoi > 0
     ? Math.pow(1 + terminalRoi, 365 / holdDays) - 1
     : null;
+  const expectedAnnualizedRoi = capitalLocked && Number.isFinite(expectedHoldDays) && expectedHoldDays > 0 && 1 + terminalRoi > 0
+    ? Math.pow(1 + terminalRoi, 365 / expectedHoldDays) - 1
+    : null;
   return {
     conversionPath,
     capitalLocked,
@@ -41,6 +45,9 @@ export function computeHoldingYield({
     capitalLockupDays: capitalLocked ? holdDays : 0,
     terminalRoi,
     annualizedRoiAtEnd,
+    expectedHoldDays: Number.isFinite(expectedHoldDays) ? expectedHoldDays : null,
+    expectedAnnualizedRoi,
+    expectedProfitPerDay: capitalLocked && Number.isFinite(expectedHoldDays) && expectedHoldDays > 0 ? profitUsd / expectedHoldDays : null,
     profitPerLockupDay: capitalLocked && holdDays != null && holdDays > 0 ? profitUsd / holdDays : null,
   };
 }

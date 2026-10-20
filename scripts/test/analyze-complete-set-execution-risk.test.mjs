@@ -11,6 +11,7 @@ test("risk CLI defaults are read-only and conservative", () => {
   assert.equal(options.entrySlippageCents, 0);
   assert.equal(options.exitSlippageCents, 0.2);
   assert.equal(options.executionMode, "sequential");
+  assert.equal(options.expectedHoldDays, null);
 });
 
 test("risk CLI parses budgets, slippage and target shares", () => {
@@ -23,6 +24,7 @@ test("risk CLI parses budgets, slippage and target shares", () => {
     "--entry-slippage-cents", "0.3",
     "--exit-slippage-cents", "0.5",
     "--execution-mode", "parallel",
+    "--expected-hold-days", "90",
   ]);
   assert.equal(options.side, "no");
   assert.equal(options.targetShares, 25);
@@ -31,6 +33,7 @@ test("risk CLI parses budgets, slippage and target shares", () => {
   assert.equal(options.entrySlippageCents, 0.3);
   assert.equal(options.exitSlippageCents, 0.5);
   assert.equal(options.executionMode, "parallel");
+  assert.equal(options.expectedHoldDays, 90);
 });
 
 test("risk CLI rejects unsupported side and execution mode", () => {

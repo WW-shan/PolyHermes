@@ -66,6 +66,7 @@ const CATEGORY_RATES = {
 
 const DEFAULTS = Object.freeze({
   tags: ["politics", "geopolitics"],
+  allMarkets: false,
   maxMarketsPerTag: 1000,
   maxGroups: 1000,
   maxOutcomesPerGroup: 256,
@@ -111,6 +112,9 @@ export function parseArgs(argv) {
     switch (arg) {
       case "--tags":
         options.tags = [...new Set(next().split(",").map((value) => value.trim()).filter(Boolean))];
+        break;
+      case "--all-markets":
+        options.allMarkets = true;
         break;
       case "--max-markets-per-tag":
         options.maxMarketsPerTag = Math.floor(positiveNumberArg(arg, next(), 0));
@@ -170,8 +174,8 @@ export function parseArgs(argv) {
         throw new Error(`unknown argument: ${arg}`);
     }
   }
-  if (options.tags.length === 0) throw new Error("at least one tag is required");
-  for (const tag of options.tags) tagIdFor(tag);
+  if (!options.allMarkets && options.tags.length === 0) throw new Error("at least one tag is required");
+  if (!options.allMarkets) for (const tag of options.tags) tagIdFor(tag);
   if (options.sizeStep > 1) throw new Error("--size-step must be <= 1");
   return options;
 }
@@ -252,20 +256,64 @@ export function feeRateOf(raw) {
   if (fallback != null) return fallback;
   return null;
 }
-export async function discoverTag(tag, maxMarkets) {
-  const tagId = tagIdFor(tag);
+function marketsKeysetUrl({ tagId = null, limit, afterCursor = null }) {
+  const params = new URLSearchParams({
+    active: "true",
+    closed: "false",
+    limit: String(limit),
+    order: "id",
+    ascending: "true",
+  });
+  if (tagId != null) params.set("tag_id", tagId);
+  if (afterCursor) params.set("after_cursor", afterCursor);
+  return `${GAMMA_BASE}/markets/keyset?${params.toString()}`;
+}
+
+function marketIdentity(row) {
+  if (row?.conditionId) return `condition:${row.conditionId}`;
+  if (row?.id != null) return `id:${row.id}`;
+  return null;
+}
+
+export function appendUniqueMarkets(rows, seen, page, discoveryTag) {
+  for (const market of page) {
+    const identity = marketIdentity(market);
+    if (identity && seen.has(identity)) continue;
+    if (identity) seen.add(identity);
+    rows.push({ ...market, discoveryTag });
+  }
+}
+
+async function discoverMarketKeyset({ maxMarkets, tagId = null, discoveryTag, fetchPage }) {
   const rows = [];
-  for (let offset = 0; offset < maxMarkets; offset += 100) {
-    const limit = Math.min(100, maxMarkets - offset);
-    const page = await fetchJson(
-      `${GAMMA_BASE}/markets?active=true&closed=false&limit=${limit}&offset=${offset}` +
-      `&tag_id=${encodeURIComponent(tagId)}&order=volume24hr&ascending=false`,
-    );
-    if (!Array.isArray(page) || page.length === 0) break;
-    rows.push(...page.map((market) => ({ ...market, discoveryTag: tag })));
-    if (page.length < limit) break;
+  const seen = new Set();
+  const seenCursors = new Set();
+  let afterCursor = null;
+  while (rows.length < maxMarkets) {
+    const limit = Math.min(100, maxMarkets - rows.length);
+    const page = await fetchPage(marketsKeysetUrl({ tagId, limit, afterCursor }));
+    const pageRows = Array.isArray(page) ? page : page?.markets;
+    if (!Array.isArray(pageRows) || pageRows.length === 0) break;
+    appendUniqueMarkets(rows, seen, pageRows, discoveryTag);
+    if (rows.length >= maxMarkets) break;
+    const nextCursor = Array.isArray(page) ? null : page?.next_cursor;
+    if (typeof nextCursor !== "string" || !nextCursor.trim()) break;
+    if (nextCursor === afterCursor || seenCursors.has(nextCursor)) {
+      throw new Error("Gamma market keyset pagination repeated a cursor");
+    }
+    seenCursors.add(nextCursor);
+    afterCursor = nextCursor;
   }
   return rows;
+}
+
+export async function discoverTag(tag, maxMarkets, fetchPage = fetchJson) {
+  const tagId = tagIdFor(tag);
+  return discoverMarketKeyset({ maxMarkets, tagId, discoveryTag: tag, fetchPage });
+}
+
+export async function discoverAllMarkets(maxMarkets, fetchPage = fetchJson) {
+  return discoverMarketKeyset({ maxMarkets, discoveryTag: "all", fetchPage });
 }
 
 export function normalizeMarket(raw) {
@@ -1182,13 +1230,14 @@ async function main(argv = process.argv.slice(2)) {
   if (options.help) {
     console.log("Usage: node scripts/scan-event-complete-set-arbitrage.mjs [options]");
     console.log("  --tags politics,geopolitics      Tag names or numeric Gamma tag ids");
-    console.log("  --max-markets-per-tag 1000");
+    console.log("  --all-markets                   Scan all active markets instead of tags");
+      console.log("  --max-markets-per-tag 1000      Max markets fetched in all-markets mode too");
     console.log("  --max-groups 1000");
     console.log("  --max-outcomes-per-group 256");
     console.log("  --min-volume 1000");
-  console.log("  --prefilter-ask-sum 1.10");
-  console.log("  --prefilter-bid-sum 0.90");
-  console.log("  --prefilter-no-bid-sum 1.00");
+    console.log("  --prefilter-ask-sum 1.10");
+    console.log("  --prefilter-bid-sum 0.90");
+    console.log("  --prefilter-no-bid-sum 1.00");
     console.log("  --min-edge-cents 0.5");
     console.log("  --min-profit-usd 0.01");
     console.log("  --max-book-age-ms 15000");
@@ -1205,8 +1254,12 @@ async function main(argv = process.argv.slice(2)) {
   }
 
   const startedAt = Date.now();
-  console.log(`discovering tags=${options.tags.join(",")} marketsPerTag=${options.maxMarketsPerTag}`);
-  const raw = (await Promise.all(options.tags.map((tag) => discoverTag(tag, options.maxMarketsPerTag)))).flat();
+  console.log(options.allMarkets
+    ? `discovering all active markets maxMarkets=${options.maxMarketsPerTag}`
+    : `discovering tags=${options.tags.join(",")} marketsPerTag=${options.maxMarketsPerTag}`);
+  const raw = options.allMarkets
+    ? await discoverAllMarkets(options.maxMarketsPerTag)
+    : (await Promise.all(options.tags.map((tag) => discoverTag(tag, options.maxMarketsPerTag)))).flat();
   const byCondition = new Map();
   for (const row of raw) {
     const market = normalizeMarket(row);

@@ -399,4 +399,14 @@ test("holding yield distinguishes immediate conversion from terminal capital loc
   assert.equal(immediate.capitalLocked, false);
   assert.equal(immediate.annualizedRoiAtEnd, null);
   close(immediate.terminalRoi, 0.05);
+
+  const expected = computeHoldingYield({
+    profitUsd: 5,
+    capitalUsd: 100,
+    endDate: "2027-10-20T00:00:00Z",
+    now,
+    conversionPath: "hold_to_resolution",
+    expectedHoldDays: 182.5,
+  });
+  close(expected.expectedAnnualizedRoi, Math.pow(1.05, 2) - 1);
 });

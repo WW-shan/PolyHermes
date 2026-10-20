@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   buildGroups,
   costForShares,
+  discoverAllMarkets,
+  discoverTag,
   evaluateAskArb,
   evaluateBidArb,
   feeRateOf,
@@ -53,6 +55,71 @@ test("parseArgs accepts named and numeric tags and preserves safety defaults", (
   assert.equal(parsed.minEdgeCents, 0.5);
   assert.equal(parsed.maxBookAgeMs, 15_000);
   assert.throws(() => parseArgs(["--tags", "unknown-tag"]), /unsupported tag/);
+});
+
+test("all-markets mode skips tag validation and uses the global discovery limit", () => {
+  const parsed = parseArgs(["--all-markets", "--max-markets-per-tag", "250", "--tags", "ignored-tag"]);
+  assert.equal(parsed.allMarkets, true);
+  assert.equal(parsed.maxMarketsPerTag, 250);
+  assert.deepEqual(parsed.tags, ["ignored-tag"]);
+  assert.equal(parseArgs([]).allMarkets, false);
+});
+
+test("tag discovery uses the same keyset contract", async () => {
+  let requestedUrl = "";
+  const rows = await discoverTag("politics", 10, async (url) => {
+    requestedUrl = url;
+    return {
+      markets: [{ id: "m1", conditionId: "c1" }],
+      next_cursor: null,
+    };
+  });
+  assert.match(requestedUrl, /\/markets\/keyset\?/);
+  assert.match(requestedUrl, /tag_id=2/);
+  assert.match(requestedUrl, /limit=10/);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].discoveryTag, "politics");
+});
+
+test("all-markets discovery uses keyset pagination, labels rows and removes duplicates", async () => {
+  const urls = [];
+  const pages = [
+    {
+      markets: Array.from({ length: 100 }, (_, index) => ({ id: String(index), conditionId: `c${index}` })),
+      next_cursor: "cursor-1",
+    },
+    {
+      markets: Array.from({ length: 50 }, (_, index) => ({ id: String(index + 99), conditionId: `c${index + 99}` })),
+      next_cursor: null,
+    },
+  ];
+  const rows = await discoverAllMarkets(150, async (url) => {
+    urls.push(url);
+    return pages[urls.length - 1];
+  });
+  assert.equal(urls.length, 2);
+  assert.match(urls[0], /\/markets\/keyset\?/);
+  assert.match(urls[0], /limit=100/);
+  assert.match(urls[0], /order=id/);
+  assert.doesNotMatch(urls[0], /offset=/);
+  assert.doesNotMatch(urls[0], /after_cursor=/);
+  assert.match(urls[1], /limit=50/);
+  assert.match(urls[1], /after_cursor=cursor-1/);
+  assert.equal(rows.length, 149);
+  assert.equal(new Set(rows.map((row) => row.conditionId)).size, 149);
+  assert.ok(rows.every((row) => row.discoveryTag === "all"));
+});
+
+test("all-markets discovery fails closed on a repeated keyset cursor", async () => {
+  let calls = 0;
+  await assert.rejects(() => discoverAllMarkets(300, async () => {
+    calls += 1;
+    return {
+      markets: [{ id: String(calls), conditionId: `c${calls}` }],
+      next_cursor: "same-cursor",
+    };
+  }), /repeated a cursor/);
+  assert.equal(calls, 2);
 });
 
 test("fee rates never silently become zero when enabled without a schedule", () => {
