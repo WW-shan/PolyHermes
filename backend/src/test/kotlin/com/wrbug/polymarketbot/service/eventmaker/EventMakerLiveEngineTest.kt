@@ -76,6 +76,68 @@ class EventMakerLiveEngineTest {
         assertEquals(1, state.completedCycles)
         assertTrue(state.realizedPnl > 0.0)
     }
+    @Test
+    fun `bond scalp stops opening new buys after max cycles`() = runTest {
+        val now = System.currentTimeMillis()
+        val scalpConfig = config.copy(maxCyclesPerMarket = 3, exitSpreadCents = 3.0)
+        val state = EventMakerLiveState(market, scalpConfig)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(scalpConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        var t = now
+
+        repeat(3) { index ->
+            state.onBook(book(0.95, 0.97, t))
+            val buy = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, t)
+            val buyOrder = buy.placed.single().order
+            assertEquals(EventMakerSide.BUY, buyOrder.side)
+            port.fill(buyOrder.orderId, buyOrder.originalShares)
+            engine.reconcile(listOf(state), 7L, t + 1)
+            assertEquals(EventMakerPhase.LONG, state.phase)
+
+            t += 2
+            state.onBook(book(0.96, 0.98, t))
+            val sell = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, t)
+            val sellOrder = sell.placed.single().order
+            assertEquals(EventMakerSide.SELL, sellOrder.side)
+            port.fill(sellOrder.orderId, sellOrder.originalShares)
+            engine.reconcile(listOf(state), 7L, t + 1)
+            assertEquals(EventMakerPhase.FLAT, state.phase)
+            assertEquals(index + 1, state.completedCycles)
+            t += 2
+        }
+
+        state.onBook(book(0.95, 0.97, t))
+        val afterCap = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, t)
+        assertTrue(afterCap.placed.isEmpty(), "must not open a 4th cycle")
+        assertEquals(3, state.completedCycles)
+        assertEquals(EventMakerPhase.FLAT, state.phase)
+    }
+
+    @Test
+    fun `sell exit is not suppressed by adverse flow guard`() = runTest {
+        val now = System.currentTimeMillis()
+        val guardedConfig = config.copy(flowGuardWindowSeconds = 600, exitSpreadCents = 3.0)
+        val state = EventMakerLiveState(market, guardedConfig)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(guardedConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        state.onBook(book(0.95, 0.97, now))
+        val buy = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+        val buyOrder = buy.placed.single().order
+        port.fill(buyOrder.orderId, buyOrder.originalShares)
+        engine.reconcile(listOf(state), 7L, now + 1)
+        assertEquals(EventMakerPhase.LONG, state.phase)
+
+        // Same flow that blocks a BUY must never block the exit.
+        engine.onTrade(LiveTradePrint("condition", "token", now + 2_000L, "BUY", 0.980, 30.0, "test", "0xbuy"))
+        engine.onTrade(LiveTradePrint("condition", "token", now + 3_000L, "SELL", 0.975, 70.0, "test", "0xsell"))
+
+        state.onBook(book(0.96, 0.98, now + 4_000L))
+        val sell = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now + 4_000L)
+        assertEquals(1, sell.placed.size)
+        assertEquals(EventMakerSide.SELL, sell.placed.single().order.side)
+    }
+
 
     @Test
     fun `unchanged quote keeps queue priority after requote interval`() = runTest {

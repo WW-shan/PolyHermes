@@ -1655,3 +1655,12 @@
 - Gamma 的 `makerBaseFee=1000` 是旧字段，不是实际 maker 费；实际看 `feeSchedule.takerOnly=true`。
 - Geopolitics `feesEnabled=false`，taker 也免费；rebate 是每日 pUSD 返佣池，不是每笔返现。
 - 已更新报告 4.1.1 节。
+### 01:25 BOND_SCALP 统计显著性与实盘执行补测
+
+- 新增 `scripts/analyze-bond-scalp-risk.cjs`，输出 `bond-scalp-risk-20261021.json`。
+- 队列模型 90 cycles：0 结算亏损，ROI +3.20%，但亏损率 95% CI 上限 4.09% > 盈亏平衡 3.10% → 未证明。
+- 全 eligible +3c：0.95–0.97 n159 亏损率 1.26% CI [0.35%, 4.47%] vs 3.03%；0.97–0.99 n261 0.38% CI [0.07%, 2.14%] vs 1.80%；两者均未证明。
+- 60s markout 中位≈0、50% 为负；成交时间中位 148s / p90 1284s；MAE 中位 -2.0 / p10 -35.8 USDC。
+- `EventMakerLiveEngineTest` 新增：maxCycles 3 后停止开仓；SELL 退出不被 adverse flow 拦截。
+- 全量测试 BUILD SUCCESSFUL。
+- 结论：回测正收益不等于统计显著，继续 Shadow，不上实盘。

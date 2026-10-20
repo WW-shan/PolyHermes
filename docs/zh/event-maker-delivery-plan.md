@@ -1017,3 +1017,17 @@ cd D:\Project\PolyHermes\backend
 - `backend/build/research/leader-bond-style-backtest-20261021-repro.json`
 - `backend/build/research/event-maker-bond-scalp-shadow-7d-20261021-v2/`
 - 自动审计：`scripts/watch-bond-shadow.ps1`（PID 19216）→ `audit-final.json`
+### 19.5 统计显著性与实盘执行补测（2026-10-21）
+
+| 项目 | 结果 | 判定 |
+|---|---|---|
+| 队列模型 0.95–0.97 +3c q2 c3 | 90 cycles，0 结算亏损，ROI +3.20%，亏损率 CI 上限 4.09% vs 盈亏平衡 3.10% | 未证明 |
+| 全 eligible 0.95–0.97 +3c | n159，亏损率 1.26%，CI [0.35%, 4.47%] vs 3.03% | 未证明 |
+| 全 eligible 0.97–0.99 +3c | n261，亏损率 0.38%，CI [0.07%, 2.14%] vs 1.80% | 未证明 |
+| 全 eligible 0.90–0.95 +3c | n193，亏损率 4.66%，平均 ROI -1.58% | 排除 |
+| 60s markout | 中位≈0，50% 为负 | 存在逆选择 |
+| maxCycles 实盘语义 | 3 循环后不再开仓 | PASS |
+| SELL 不受 flow guard 拦截 | 测试通过 | PASS |
+| 全量测试 | BUILD SUCCESSFUL | PASS |
+
+结论：回测正收益 ≠ 统计显著；继续 Shadow，不上实盘。脚本 `scripts/analyze-bond-scalp-risk.cjs`，结果 `backend/build/research/bond-scalp-risk-20261021.json`。
