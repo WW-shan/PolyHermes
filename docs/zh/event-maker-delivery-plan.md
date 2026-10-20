@@ -1258,3 +1258,16 @@ cd D:\Project\PolyHermes\backend
 2. 重点观察 `3c-geo-9597` 与 `1c/3c-97099` 的真实 fill rate 和 markout。
 3. 若 7 天仍无 fill 或 markout 持续为负，停止机械 maker 方向，不再调参。
 4. 真实资金前必须满足：覆盖 50–100 个结算事件、亏损率 CI 上界低于盈亏平衡率、最大回撤可承受。
+
+### 20.7 2026-10-21 07:53 taker-entry 链路与首个 A/B
+
+- 官方费率直连复核：`https://docs.polymarket.com/trading/fees`（HTTP 200）原文 **“Makers are never charged fees. Only takers pay fees.”**；所有类别 Maker Fee Rate=0，Geopolitics Taker Fee Rate=0。
+- 修复 `EventMakerShadowCli` 未把 `options.takerEntry` 写入 `EventMakerConfig` 的配置漏传。
+- `EventMakerMarketSelector` 支持 taker 模式（ask 价格带、允许 1 tick spread、entry queue=0）。
+- `EventMakerShadowExecutionPort` 对 taker 单立即 `FILLED`，`drainImmediateFills()` 供 CLI 记录 markout。
+- `EventMakerQuotePlanner.planSell` 在 ask undercut 低于 entry 时回退到 profit target。
+- `start-bond-shadow.ps1` 修正 taker 参数传递并新增 `-ExitImproveTicks`。
+- 新臂 `event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021`：0.97–0.99 / Geopolitics / +3c / taker slippage 0 / maxCycles 10 / $100 / cap $400。
+- 首轮 2 笔立即成交（0.985、0.981），SELL 0.999；inventory 203.45；60s markout -0.30（2 笔，负占比 100%）。
+- 验收：先跑 24–48h，比较 maker offset 臂与 taker 臂的 fill、60s/300s markout、cycle、结算亏损；不达标记不得上真钱。
+- 全量 `gradlew test`：BUILD SUCCESSFUL。

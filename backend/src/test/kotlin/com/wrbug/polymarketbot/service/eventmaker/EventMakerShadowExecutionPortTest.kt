@@ -21,6 +21,33 @@ class EventMakerShadowExecutionPortTest {
     }
 
     @Test
+    fun `taker entry fills immediately without waiting for public flow`() = runTest {
+        val placed = port.place(
+            0L,
+            market,
+            EventMakerQuoteIntent(
+                side = EventMakerSide.BUY,
+                price = BigDecimal("0.97"),
+                shares = BigDecimal("10.00"),
+                queueAheadShares = 0.0,
+                reason = "taker_entry",
+                takerEntry = true
+            )
+        ).getOrThrow()
+
+        assertEquals("FILLED", placed.status)
+        assertEquals(0, placed.originalShares.compareTo(placed.matchedShares))
+        assertEquals(0, port.activeOrderCount())
+
+        val fills = port.drainImmediateFills()
+        assertEquals(1, fills.size)
+        assertEquals(0, BigDecimal("10.00").compareTo(fills.single().shares))
+        assertTrue(port.drainImmediateFills().isEmpty())
+        assertTrue(port.onTrade(trade("SELL", 0.97, 10.0, placed.createdAt + 10L)).isEmpty())
+        assertEquals(0, BigDecimal("10.00").compareTo(port.getOrder(0L, placed.orderId).getOrThrow().matchedShares))
+    }
+
+    @Test
     fun `public trade first consumes queue then partially fills maker order`() = runTest {
         val placed = port.place(0L, market, intent(EventMakerSide.BUY, "0.96", "10.00", 2.0)).getOrThrow()
         val now = placed.createdAt + 10L

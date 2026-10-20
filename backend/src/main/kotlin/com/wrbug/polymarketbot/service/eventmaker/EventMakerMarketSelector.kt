@@ -32,7 +32,8 @@ object EventMakerMarketSelector {
         improveTicks: Int = 1,
         entryOffsetCents: Double = 0.0,
         exitImproveTicks: Int = 1,
-        exitSpreadCents: Double = 1.0
+        exitSpreadCents: Double = 1.0,
+        takerEntry: Boolean = false
     ): List<EventMakerMarketEvaluation> = markets.map { market ->
         val book = books[market.favoriteTokenId]
         val bestBid = book?.bestBid
@@ -43,9 +44,11 @@ object EventMakerMarketSelector {
         } else {
             null
         }
+        val bandPrice = if (takerEntry) bestAsk else bestBid
         val bidQueue = if (book != null && bestBid != null) book.bidSizeAt(bestBid) else null
         val askQueue = if (book != null && bestAsk != null) book.askSizeAtOrBelow(bestAsk) else null
         val entryQueue = when {
+            takerEntry -> 0.0
             spreadTicks != null && improveTicks > 0 && spreadTicks >= 2.0 -> 0.0
             entryOffsetCents > 0.0 -> 0.0
             else -> bidQueue
@@ -60,9 +63,9 @@ object EventMakerMarketSelector {
             book == null -> "no_book"
             bestBid == null -> "no_bid"
             bestAsk == null -> "no_ask"
-            bestBid < minPrice || bestBid >= maxPrice -> "price_out_of_range"
+            bandPrice == null || bandPrice < minPrice || bandPrice >= maxPrice -> "price_out_of_range"
             tick == null -> "invalid_tick"
-            spreadTicks == null || spreadTicks < minSpreadTicks -> "spread_below_min"
+            !takerEntry && (spreadTicks == null || spreadTicks < minSpreadTicks) -> "spread_below_min"
             entryQueue == null || entryQueue > maxQueueAheadShares + 1e-9 -> "entry_queue_too_deep"
             exitQueue == null || exitQueue > maxQueueAheadShares + 1e-9 -> "exit_queue_too_deep"
             else -> "selected"
@@ -94,9 +97,10 @@ object EventMakerMarketSelector {
         improveTicks: Int = 1,
         entryOffsetCents: Double = 0.0,
         exitImproveTicks: Int = 1,
-        exitSpreadCents: Double = 1.0
+        exitSpreadCents: Double = 1.0,
+        takerEntry: Boolean = false
     ): List<LivePaperMarket> {
-        if (maxMarkets <= 0 || minSpreadTicks <= 0) return emptyList()
+        if (maxMarkets <= 0 || (!takerEntry && minSpreadTicks <= 0)) return emptyList()
         val selectedIds = evaluate(
             markets = markets,
             books = books,
@@ -107,7 +111,8 @@ object EventMakerMarketSelector {
             improveTicks = improveTicks,
             entryOffsetCents = entryOffsetCents,
             exitImproveTicks = exitImproveTicks,
-            exitSpreadCents = exitSpreadCents
+            exitSpreadCents = exitSpreadCents,
+            takerEntry = takerEntry
         ).asSequence()
             .filter { it.selected }
             .map { it.conditionId }

@@ -49,6 +49,7 @@ const defaultTakerFee = numArg('default-taker-fee', 0.04);
 const stopSlippageTicks = numArg('stop-slippage-ticks', 1);
 const maxHoldingDays = numArg('max-holding-days', 0);
 const timeExitSlippageTicks = numArg('time-exit-slippage-ticks', 1);
+const entrySlippageCents = numArg('entry-slippage-cents', 0);
 const bands = listArg('bands', '0.9,0.95,0.97,0.99,1.0000001');
 const targets = listArg('targets', '1,2,3');
 const stops = listArg('stops', '0,5,10,15,20,25');
@@ -170,17 +171,18 @@ for (let b = 0; b < BAND_LABELS.length; b++) {
         const entryTimestamp = market.closedTimestamp - horizonSeconds;
         const won = ref.favorite === market.winnerIndex;
         const tick = market.tickSize > 0 ? market.tickSize : 0.001;
-        const resolved = exitFor(market, ref.favorite, entryTimestamp, ref.price, targetCents, stopCents, tick, won, maxHoldingDays > 0 ? maxHoldingDays * 86400 : 0, timeExitSlippageTicks);
-        const shares = notional / ref.price;
+        const entryPrice = Math.min(0.999, ref.price + entrySlippageCents / 100);
+        const resolved = exitFor(market, ref.favorite, entryTimestamp, entryPrice, targetCents, stopCents, tick, won, maxHoldingDays > 0 ? maxHoldingDays * 86400 : 0, timeExitSlippageTicks);
+        const shares = notional / entryPrice;
         const entryFee = 0;
         const exitFee = (resolved.type === 'STOP' || resolved.type === 'TIME')
           ? shares * takerFeeRate(market.tag) * resolved.price * (1 - resolved.price)
           : 0;
-        const pnl = (resolved.price - ref.price) * shares - entryFee - exitFee;
+        const pnl = (resolved.price - entryPrice) * shares - entryFee - exitFee;
         trades.push({
           conditionId: market.conditionId,
           tag: market.tag,
-          entryPrice: ref.price,
+          entryPrice,
           exitPrice: resolved.price,
           exitType: resolved.type,
           exitTimestamp: resolved.timestamp,
@@ -252,6 +254,7 @@ const report = {
     stopSlippageTicks,
     maxHoldingDays,
     timeExitSlippageTicks,
+    entrySlippageCents,
     bootstrapRuns
   },
   results

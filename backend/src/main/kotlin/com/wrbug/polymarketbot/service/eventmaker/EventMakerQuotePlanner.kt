@@ -17,13 +17,35 @@ class EventMakerQuotePlanner {
         if (isStale(config, book, now)) return null
         val bestBid = book.bestBid ?: return null
         val bestAsk = book.bestAsk ?: return null
-        if (bestBid < config.minPrice || bestBid >= config.maxPrice || bestAsk <= bestBid) return null
+        val bandPrice = if (config.takerEntry) bestAsk else bestBid
+        if (bandPrice < config.minPrice || bandPrice >= config.maxPrice || bestAsk <= bestBid) return null
 
         val tick = tickSize.max(BigDecimal.valueOf(0.0001))
         val bid = BigDecimal.valueOf(bestBid)
         val ask = BigDecimal.valueOf(bestAsk)
         val spreadTicks = ask.subtract(bid).divide(tick, 0, RoundingMode.HALF_UP)
-        if (spreadTicks < BigDecimal.valueOf(config.minSpreadTicks.toLong())) return null
+        if (!config.takerEntry && spreadTicks < BigDecimal.valueOf(config.minSpreadTicks.toLong())) return null
+        if (config.takerEntry) {
+            val takerLimit = roundUp(
+                ask.add(tick.multiply(BigDecimal(config.takerEntrySlippageTicks))),
+                tick
+            ).min(BigDecimal("0.999"))
+            if (takerLimit <= BigDecimal.ZERO || takerLimit >= BigDecimal.ONE) return null
+            val desiredShares = BigDecimal.valueOf(config.orderNotional)
+                .divide(takerLimit, 2, RoundingMode.DOWN)
+                .max(BigDecimal.ONE)
+            val visibleAskShares = BigDecimal.valueOf(book.askSizeAtOrBelow(takerLimit.toDouble()))
+            val takerShares = desiredShares.min(visibleAskShares).setScale(2, RoundingMode.DOWN)
+            if (takerShares <= BigDecimal.ZERO) return null
+            return EventMakerQuoteIntent(
+                side = EventMakerSide.BUY,
+                price = takerLimit,
+                shares = takerShares,
+                queueAheadShares = 0.0,
+                reason = "taker_entry",
+                takerEntry = true
+            )
+        }
         val entryOffset = BigDecimal.valueOf(config.entryOffsetCents / 100.0)
         val improved = bid.subtract(entryOffset).add(tick.multiply(BigDecimal(config.improveTicks)))
         val rawLimit = improved.min(ask - tick).max(tick)
@@ -68,11 +90,15 @@ class EventMakerQuotePlanner {
         val bid = BigDecimal.valueOf(bestBid)
         val ask = BigDecimal.valueOf(bestAsk)
         val target = entryPrice + BigDecimal.valueOf(config.exitSpreadCents / 100.0)
-        val rawLimit = if (config.exitImproveTicks > 0) {
+        val improvedLimit = if (config.exitImproveTicks > 0) {
             BigDecimal.valueOf(bestAsk) - tick.multiply(BigDecimal(config.exitImproveTicks))
         } else {
             target
         }
+        // A taker entry fills at the ask, so undercutting the ask by a tick can
+        // land below the entry price. In that case fall back to the profit target
+        // instead of refusing to place an exit.
+        val rawLimit = if (config.exitImproveTicks > 0 && improvedLimit <= entryPrice) target else improvedLimit
         val limit = roundUp(rawLimit, tick).min(BigDecimal.valueOf(0.999))
         if (limit <= bid || limit <= entryPrice) return null
 

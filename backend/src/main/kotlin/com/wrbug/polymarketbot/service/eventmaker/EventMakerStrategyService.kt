@@ -677,7 +677,8 @@ class EventMakerStrategyService(
             improveTicks = config.improveTicks,
             entryOffsetCents = config.entryOffsetCents,
             exitImproveTicks = config.exitImproveTicks,
-            exitSpreadCents = config.exitSpreadCents
+            exitSpreadCents = config.exitSpreadCents,
+            takerEntry = config.takerEntry
         )
         if (selected.isEmpty()) return null
         return PreparedMarkets(selected, books)

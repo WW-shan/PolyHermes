@@ -1907,3 +1907,27 @@
 - 4 个 Geopolitics 0.97–0.99 offset 臂重启，`maxCyclesPerMarket=10`，以接近 ladder 的持续回补；每臂最多 $400 库存。
 - 当前实盘 Geopolitics 0.97–0.99 池只有 8 个 qualified，单臂选中 2–3 个市场；回测的 160 个 eligible 是 7 天累计，不是同时可交易。
 - 结论：容量受当前事件供给限制；live 样本会比回测小很多，不能用回测 160 市场估算收益。
+
+### 07:50 taker-entry 代码与 Shadow 链路完成
+
+- 修复 Shadow CLI 的 `takerEntry` 配置漏传；此前 `--taker-entry` 已解析但未写入 `EventMakerConfig`。
+- `EventMakerMarketSelector` 支持 taker 模式：用 best ask 做价格带过滤、允许 1 tick spread、entry queue=0。
+- `EventMakerShadowExecutionPort` 对 taker 单立即生成 `FILLED`，新增 `drainImmediateFills()`；CLI 在 engine tick 后记录 60s/300s/1800s markout。
+- `EventMakerQuotePlanner.planSell` 增加回退：当 `exitImproveTicks` 把卖价压到 entry 以下时，改用 `entry + exitSpreadCents`。
+- `start-bond-shadow.ps1` 修正 taker 参数传递为 `-PshadowTakerEntry=true`，并新增 `-ExitImproveTicks`。
+- 新增 planner / selector / shadow port / engine 单测；全量 `gradlew test` BUILD SUCCESSFUL。
+
+### 07:52 官方费率直连复核
+
+- 2026-10-21 请求 `https://docs.polymarket.com/trading/fees`，HTTP 200。
+- 原文：**Makers are never charged fees. Only takers pay fees.**
+- 费率表所有类别 Maker Fee Rate = 0；Geopolitics Taker Fee Rate = 0。
+- `makerBaseFee=1000` 仍是历史遗留字段，不参与成本计算。
+
+### 07:53 首个 taker Shadow A/B 启动
+
+- 臂：`event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021`。
+- 0.97–0.99 / Geopolitics / +3c / taker at ask / slippage 0 / exitImproveTicks 0 / maxCycles 10 / $100 per order / cap $400。
+- 首轮：2 笔 BUY 立即成交（0.985×101.52、0.981×101.93），SELL 已挂 0.999；inventory 203.45，0 cycles。
+- 60s markout -0.30、负占比 100%（2 笔）；说明立即成交、对账、退出挂单、markout 四条链路跑通，但样本远不足。
+- monitor 重启并加入 taker 臂；status 报告默认 6 臂。

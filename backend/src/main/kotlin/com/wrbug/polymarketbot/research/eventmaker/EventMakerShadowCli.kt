@@ -68,6 +68,8 @@ internal data class ShadowOptions(
     val improveTicks: Int,
     val entryOffsetCents: Double,
     val exitImproveTicks: Int,
+    val takerEntry: Boolean,
+    val takerEntrySlippageTicks: Int,
     val exitSpreadCents: Double,
     val requoteSeconds: Long,
     val maxOrderAgeSeconds: Long,
@@ -187,6 +189,9 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
     val waitForMarketMinutes = option("wait-for-market-minutes")?.toIntOrNull() ?: 0
     val discoveryRetrySeconds = option("discovery-retry-seconds")?.toLongOrNull() ?: 60L
     val minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90
+    val takerEntry = args.contains("--taker-entry")
+    val takerEntrySlippageTicks = option("taker-entry-slippage-ticks")?.toIntOrNull() ?: 0
+    require(takerEntrySlippageTicks >= 0)
     val maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99
     require(minutes > 0)
     require(snapshotSeconds > 0)
@@ -246,6 +251,8 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
         improveTicks = option("improve-ticks")?.toIntOrNull() ?: 1,
         entryOffsetCents = option("entry-offset-cents")?.toDoubleOrNull() ?: 0.0,
         exitImproveTicks = option("exit-improve-ticks")?.toIntOrNull() ?: 1,
+        takerEntry = takerEntry,
+        takerEntrySlippageTicks = takerEntrySlippageTicks,
         exitSpreadCents = option("exit-spread-cents")?.toDoubleOrNull() ?: 1.0,
         requoteSeconds = requoteSeconds,
         maxOrderAgeSeconds = maxOrderAgeSeconds,
@@ -394,7 +401,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     improveTicks = options.improveTicks,
                     entryOffsetCents = options.entryOffsetCents,
                     exitImproveTicks = options.exitImproveTicks,
-                    exitSpreadCents = options.exitSpreadCents
+                    exitSpreadCents = options.exitSpreadCents,
+                    takerEntry = options.takerEntry
                 )
             }
             Files.writeString(
@@ -419,7 +427,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     improveTicks = options.improveTicks,
                     entryOffsetCents = options.entryOffsetCents,
                     exitImproveTicks = options.exitImproveTicks,
-                    exitSpreadCents = options.exitSpreadCents
+                    exitSpreadCents = options.exitSpreadCents,
+                    takerEntry = options.takerEntry
                 )
             }
             val activityRejectionReasons = discovery.activityDiagnostics
@@ -505,6 +514,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             entryOffsetCents = options.entryOffsetCents,
             exitSpreadCents = options.exitSpreadCents,
             exitImproveTicks = options.exitImproveTicks,
+            takerEntry = options.takerEntry,
+            takerEntrySlippageTicks = options.takerEntrySlippageTicks,
             maxTotalInventoryNotional = options.maxTotalInventoryNotional,
             maxDailyLoss = options.maxDailyLoss,
             maxCyclesPerMarket = options.maxCyclesPerMarket,
@@ -713,21 +724,26 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         // line-aligned trade log even if the process is killed mid-run.
         tradesWriter.flush()
         engine.onTrade(trade)
-        shadowExecution.onTrade(trade).forEach { fill ->
-            MARKOUT_HORIZONS_SECONDS.forEach { horizonSeconds ->
-                pendingMarkouts += PendingMarkout(
-                    fill = fill,
-                    horizonSeconds = horizonSeconds,
-                    dueAt = fill.timestamp + horizonSeconds * 1_000L
-                )
-            }
-        }
+        shadowExecution.onTrade(trade).forEach(::scheduleMarkouts)
         return false
+    }
+
+    private fun scheduleMarkouts(fill: EventMakerShadowFill) {
+        MARKOUT_HORIZONS_SECONDS.forEach { horizonSeconds ->
+            pendingMarkouts += PendingMarkout(
+                fill = fill,
+                horizonSeconds = horizonSeconds,
+                dueAt = fill.timestamp + horizonSeconds * 1_000L
+            )
+        }
     }
 
     private lateinit var shadowExecution: EventMakerShadowExecutionPort
 
     private fun recordEngineResult(result: EventMakerEngineResult) {
+        // Marketable entries are filled synchronously by the shadow port. Drain
+        // their fills here so markouts and execution diagnostics include them.
+        shadowExecution.drainImmediateFills().forEach(::scheduleMarkouts)
         quotesPlaced += result.placed.size
         cancels += result.canceled.size
         val flowGuardBlocks = result.errors.filter { it.startsWith("flow_guard_blocked:") }

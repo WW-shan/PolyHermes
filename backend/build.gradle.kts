@@ -228,6 +228,8 @@ tasks.register<JavaExec>("eventMakerShadow") {
     argsList += listOf("--improve-ticks", providers.gradleProperty("shadowImproveTicks").orNull ?: "1")
     argsList += listOf("--entry-offset-cents", providers.gradleProperty("shadowEntryOffsetCents").orNull ?: "0")
     argsList += listOf("--exit-improve-ticks", providers.gradleProperty("shadowExitImproveTicks").orNull ?: "1")
+    argsList += listOf("--taker-entry-slippage-ticks", providers.gradleProperty("shadowTakerEntrySlippageTicks").orNull ?: "0")
+    if (providers.gradleProperty("shadowTakerEntry").orNull == "true") argsList += "--taker-entry"
     argsList += listOf("--exit-spread-cents", providers.gradleProperty("shadowExitSpreadCents").orNull ?: "1")
     argsList += listOf("--requote-seconds", providers.gradleProperty("shadowRequoteSeconds").orNull ?: "120")
     argsList += listOf("--max-order-age-seconds", providers.gradleProperty("shadowMaxOrderAgeSeconds").orNull ?: "3600")

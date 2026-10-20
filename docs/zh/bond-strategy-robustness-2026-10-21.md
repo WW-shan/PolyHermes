@@ -239,3 +239,79 @@ queue 模型，stop=0，q2，off0：
 - 4 个 offset 臂使用 `maxCyclesPerMarket=10`（不是 3），以接近 ladder 的持续回补；每个最多 $400 库存。
 - 它们是独立进程，合起来近似一个 4 档 ladder，但不是同一个引擎里的原子多档账本；真实实盘前需要把 ladder 做进同一个引擎。
 - 当前实盘 Geopolitics 0.97–0.99 池只有 8 个 qualified，单臂只选中 2–3 个市场；回测里的 160 个 eligible 是 7 天累计，不是同时可交易。**容量受当前事件供给限制，不能按回测的 160 个市场估算收益。**
+
+## 11. Taker-entry 实现与首个 A/B Shadow（2026-10-21）
+
+### 11.1 官方费率再次直连复核
+
+2026-10-21 直接请求 `https://docs.polymarket.com/trading/fees`（HTTP 200），原文仍为：
+
+> **Makers are never charged fees. Only takers pay fees.**
+
+同页费率表：
+
+| 类别 | Taker Fee Rate | Maker Fee Rate |
+|---|---:|---:|
+| Crypto | 0.07 | **0** |
+| Sports | 0.05 | **0** |
+| Finance / Politics / Economics / Culture / Weather / Other / Mentions / Tech | 0.04–0.05 | **0** |
+| Geopolitics | **0** | **0** |
+| Combos | 0.05 | **0** |
+
+结论：**所有预测市场类别的 maker 费都是 0；Geopolitics 连 taker 费也是 0。** Gamma 里的 `makerBaseFee=1000` 是历史遗留字段，不是生效费率。
+
+### 11.2 入场滑点敏感性
+
+`scripts/analyze-bond-stop-loss.cjs --entry-slippage-cents`，0.97–0.99 Geopolitics +3c：
+
+| 入场滑点 | mean ROI | 95% CI |
+|---:|---:|---|
+| 0c | +1.44% | [0.63%, 1.89%] |
+| 0.1c | +1.34% | [0.51%, 1.78%] |
+| 0.2c | +1.24% | [0.43%, 1.68%] |
+| 0.5c | +0.93% | [0.11%, 1.37%] |
+| 1c | +0.42% | [-0.40%, 0.86%] |
+
+- 0–0.5c 滑点下 edge 仍为正；
+- 1c 滑点会把 edge 压到统计不显著；
+- Geopolitics taker 0 费，因此主动吃单仍有空间，但**真实执行滑点是关键风险**，必须用 Shadow 实测。
+
+### 11.3 代码实现
+
+- `EventMakerConfig` / `EventMakerQuoteIntent` 增加 `takerEntry`、`takerEntrySlippageTicks`。
+- `EventMakerQuotePlanner`：taker 模式用 best ask 做价格带判断，限价 = ask + slippage ticks（上限 0.999），跳过 maker 最小价差约束。
+- `EventMakerMarketSelector`：taker 模式用 ask 做价格带过滤，允许 1 tick spread，entry queue=0。
+- `EventMakerShadowExecutionPort`：taker 单立即生成 `FILLED`，并通过 `drainImmediateFills()` 交给 CLI 记录 markout；不再等待后续 taker flow。
+- `EventMakerShadowCli`：每次 engine tick 后 drain 立即成交并调度 60s/300s/1800s markout。
+- `planSell`：若 `exitImproveTicks` 把卖价压到 entry 以下，则回退到 `entry + exitSpreadCents`，避免 taker 入场后无法挂退出。
+- `start-bond-shadow.ps1`：修正 taker 参数传递（`-PshadowTakerEntry=true`），并新增 `-ExitImproveTicks`。
+- 新增/更新单测：planner、selector、shadow port、engine、CLI options；全量 `gradlew test` BUILD SUCCESSFUL。
+
+### 11.4 首个 taker Shadow A/B
+
+`event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021`：
+
+| 参数 | 值 |
+|---|---|
+| 价格带 / tag | 0.97–0.99 / Geopolitics |
+| 目标 | +3c |
+| 入场 | taker at ask，slippage 0 |
+| exitImproveTicks | 0 |
+| maxCyclesPerMarket | 10 |
+| orderNotional / cap | $100 / $400 |
+| 当前市场 | 2 个 qualified |
+
+启动后首轮结果：
+
+- 2 笔 BUY 立即成交：0.985 × 101.52、0.981 × 101.93；
+- 对应 SELL 已挂在 0.999（+3c 被 1.0 上限截断）；
+- inventory 203.45，0 cycles；
+- 60s markout 均值 -0.30，负占比 100%（仅 2 笔，样本太小）；
+- 说明**立即成交、状态对账、退出挂单、markout 记录四条链路都已跑通**。
+
+### 11.5 判定
+
+- 机械 maker 臂仍然 fill 少、markout 偏负；taker 臂至少解决了“挂不到”的问题。
+- 但 taker 的逆向选择更直接：买在 ask 后如果价格立刻回落，markout 会更差。
+- 下一步不是直接上真钱，而是让 maker offset 臂与 taker 臂同时跑，至少比较 24–48h 的 fill、60s/300s markout、cycle 和结算亏损。
+- 只有 taker 臂的 markout 转正或至少不显著为负，且扣掉真实滑点后 ROI CI 仍为正，才考虑真实资金。

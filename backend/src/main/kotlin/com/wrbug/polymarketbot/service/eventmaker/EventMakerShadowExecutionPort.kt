@@ -36,6 +36,7 @@ data class EventMakerShadowOrderDiagnostics(
     val eligibleCrossingShares: BigDecimal,
     val queueConsumedShares: BigDecimal,
     val status: String,
+    val takerEntry: Boolean,
     val createdAt: Long,
     val canceledAt: Long?
 )
@@ -59,6 +60,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
     private val lock = Any()
     private val nextId = AtomicLong(0)
     private val orders = linkedMapOf<String, SimulatedOrder>()
+    private val immediateFills = mutableListOf<EventMakerShadowFill>()
 
     @Volatile
     private var fillVolumeFactor = 1.0
@@ -88,19 +90,32 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         intent: EventMakerQuoteIntent
     ): Result<EventMakerLiveOrder> = synchronized(lock) {
         val orderId = "shadow-${nextId.incrementAndGet()}"
-        val queueAhead = BigDecimal.valueOf(intent.queueAheadShares)
+        val now = System.currentTimeMillis()
+        val queueAhead = if (intent.takerEntry) BigDecimal.ZERO else BigDecimal.valueOf(intent.queueAheadShares)
         val order = SimulatedOrder(
             id = orderId,
             market = market,
             side = intent.side,
             price = intent.price,
             originalShares = intent.shares,
-            remainingShares = intent.shares,
+            remainingShares = if (intent.takerEntry) BigDecimal.ZERO else intent.shares,
             queueAheadAtPlacement = queueAhead,
             queueAheadRemaining = queueAhead,
-            createdAt = System.currentTimeMillis()
+            createdAt = now,
+            status = if (intent.takerEntry) "FILLED" else "LIVE",
+            takerEntry = intent.takerEntry
         )
         orders[orderId] = order
+        if (intent.takerEntry) {
+            immediateFills += EventMakerShadowFill(
+                orderId = orderId,
+                marketId = market.conditionId,
+                side = intent.side,
+                price = intent.price,
+                shares = intent.shares,
+                timestamp = now
+            )
+        }
         Result.success(order.toLiveOrder())
     }
 
@@ -121,6 +136,13 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
             order.canceledAt = System.currentTimeMillis()
         }
         Result.success(Unit)
+    }
+
+    /** Returns fills created by marketable orders since the previous drain. */
+    fun drainImmediateFills(): List<EventMakerShadowFill> = synchronized(lock) {
+        val drained = immediateFills.toList()
+        immediateFills.clear()
+        drained
     }
 
     fun onTrade(trade: LiveTradePrint): List<EventMakerShadowFill> = synchronized(lock) {
@@ -191,6 +213,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
                 eligibleCrossingShares = order.eligibleCrossingShares,
                 queueConsumedShares = order.queueConsumedShares,
                 status = order.status,
+                takerEntry = order.takerEntry,
                 createdAt = order.createdAt,
                 canceledAt = order.canceledAt
             )
@@ -212,6 +235,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
 
     fun reset() = synchronized(lock) {
         orders.clear()
+        immediateFills.clear()
     }
 
     fun activeOrderCount(): Int = synchronized(lock) { orders.values.count { it.status == "LIVE" } }
@@ -227,6 +251,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         var queueAheadRemaining: BigDecimal,
         val createdAt: Long,
         var status: String = "LIVE",
+        val takerEntry: Boolean = false,
         var canceledAt: Long? = null,
         var opposingTradeCount: Int = 0,
         var crossingTradeCount: Int = 0,

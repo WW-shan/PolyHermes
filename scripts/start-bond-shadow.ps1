@@ -17,6 +17,9 @@ param(
   [int]$MinSpreadTicks = 1,
   [int]$MaxQueue = 500,
   [int]$ImproveTicks = 1,
+  [int]$ExitImproveTicks = 1,
+  [switch]$TakerEntry,
+  [int]$TakerEntrySlippageTicks = 0,
   [int]$RequoteSeconds = 120,
   [int]$MaxOrderAgeSeconds = 3600,
   [double]$MaxTotalInventoryNotional = 100,
@@ -50,6 +53,8 @@ $argsList = @(
   "-PshadowMinSpreadTicks=$MinSpreadTicks",
   "-PshadowMaxQueue=$MaxQueue",
   "-PshadowImproveTicks=$ImproveTicks",
+  "-PshadowExitImproveTicks=$ExitImproveTicks",
+  "-PshadowTakerEntrySlippageTicks=$TakerEntrySlippageTicks",
   "-PshadowEntryOffsetCents=$EntryOffsetCents",
   "-PshadowRequoteSeconds=$RequoteSeconds",
   "-PshadowMaxOrderAgeSeconds=$MaxOrderAgeSeconds",
@@ -66,6 +71,7 @@ $argsList = @(
   "-PshadowOutput=$Output",
   "--console=plain"
 )
+if ($TakerEntry) { $argsList += "-PshadowTakerEntry=true" }
 $logDir = Join-Path $backend $Output
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $proc = Start-Process -FilePath (Join-Path $backend "gradlew.bat") -ArgumentList $argsList -WorkingDirectory $backend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir "stdout.log") -RedirectStandardError (Join-Path $logDir "stderr.log") -PassThru
@@ -85,6 +91,9 @@ $info = [pscustomobject]@{
   minSpreadTicks = $MinSpreadTicks
   maxQueue = $MaxQueue
   improveTicks = $ImproveTicks
+  exitImproveTicks = $ExitImproveTicks
+  takerEntry = [bool]$TakerEntry
+  takerEntrySlippageTicks = $TakerEntrySlippageTicks
   requoteSeconds = $RequoteSeconds
   maxOrderAgeSeconds = $MaxOrderAgeSeconds
   flowGuardWindowSeconds = $FlowGuardWindowSeconds

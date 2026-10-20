@@ -19,6 +19,15 @@ class EventMakerShadowCliOptionsTest {
     }
 
     @Test
+    fun `parses taker entry flag`() {
+        val options = parseOptions(
+            arrayOf("--taker-entry", "--taker-entry-slippage-ticks", "1", "--minutes", "60")
+        )
+        assertEquals(true, options.takerEntry)
+        assertEquals(1, options.takerEntrySlippageTicks)
+    }
+
+    @Test
     fun `rejects non-positive inventory cap`() {
         assertThrows(IllegalArgumentException::class.java) {
             parseOptions(arrayOf("--max-total-inventory-notional", "0"))

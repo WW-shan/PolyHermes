@@ -32,6 +32,36 @@ class EventMakerQuotePlannerTest {
     }
 
     @Test
+    fun `taker entry crosses the spread at the ask`() {
+        val takerConfig = config.copy(takerEntry = true, takerEntrySlippageTicks = 0)
+        val intent = planner.planBuy(takerConfig, book(0.96, 5000.0, 0.97, 5000.0), tick, 2_000)
+
+        assertNotNull(intent)
+        assertEquals(0, BigDecimal("0.970").compareTo(intent!!.price))
+        assertEquals(true, intent.takerEntry)
+        assertEquals("taker_entry", intent.reason)
+        assertEquals(0.0, intent.queueAheadShares, 1e-9)
+    }
+
+    @Test
+    fun `taker entry slippage moves above the ask`() {
+        val takerConfig = config.copy(takerEntry = true, takerEntrySlippageTicks = 1)
+        val intent = planner.planBuy(takerConfig, book(0.96, 5000.0, 0.97, 5000.0), tick, 2_000)
+
+        assertNotNull(intent)
+        assertEquals(BigDecimal("0.971"), intent!!.price)
+    }
+
+    @Test
+    fun `taker entry size is capped by visible ask depth`() {
+        val takerConfig = config.copy(takerEntry = true, takerEntrySlippageTicks = 0)
+        val intent = planner.planBuy(takerConfig, book(0.96, 5000.0, 0.97, 25.0), tick, 2_000)
+
+        assertNotNull(intent)
+        assertEquals(0, BigDecimal("25.00").compareTo(intent!!.shares))
+    }
+
+    @Test
     fun `joining a large queue is rejected`() {
         val joinConfig = config.copy(improveTicks = 0)
         val intent = planner.planBuy(joinConfig, book(0.96, 5000.0, 0.97, 5000.0), tick, 2_000)
@@ -53,6 +83,22 @@ class EventMakerQuotePlannerTest {
         assertNotNull(intent)
         assertEquals(BigDecimal("0.969"), intent!!.price)
         assertEquals(0.0, intent.queueAheadShares, 1e-9)
+    }
+
+    @Test
+    fun `sell falls back to target when ask undercut is below a taker entry`() {
+        val sellConfig = config.copy(exitSpreadCents = 3.0, exitImproveTicks = 1)
+        val intent = planner.planSell(
+            sellConfig,
+            book(0.984, 100.0, 0.985, 100.0),
+            tick,
+            BigDecimal("0.985"),
+            BigDecimal("100.00"),
+            2_000
+        )
+
+        assertNotNull(intent)
+        assertEquals(0, BigDecimal("0.999").compareTo(intent!!.price))
     }
 
     @Test

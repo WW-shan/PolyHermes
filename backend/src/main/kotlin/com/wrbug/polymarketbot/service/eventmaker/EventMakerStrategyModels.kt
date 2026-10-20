@@ -38,6 +38,9 @@ data class EventMakerConfig(
     val entryOffsetCents: Double = 0.0,
     val exitSpreadCents: Double = 1.0,
     val exitImproveTicks: Int = 1,
+    /** Shadow-only marketable entry at the best ask; Geopolitics taker fee is zero. */
+    val takerEntry: Boolean = false,
+    val takerEntrySlippageTicks: Int = 0,
     val requoteSeconds: Long = 120,
     val maxOrderAgeSeconds: Long = 3600,
     /**
@@ -85,6 +88,7 @@ data class EventMakerConfig(
         require(entryOffsetCents >= 0.0)
         require(exitSpreadCents > 0.0)
         require(exitImproveTicks >= 0)
+        require(takerEntrySlippageTicks >= 0)
         require(requoteSeconds > 0)
         require(maxOrderAgeSeconds >= requoteSeconds)
         require(tailWindowMinutes >= 0)
@@ -113,7 +117,8 @@ data class EventMakerQuoteIntent(
     val price: BigDecimal,
     val shares: BigDecimal,
     val queueAheadShares: Double,
-    val reason: String
+    val reason: String,
+    val takerEntry: Boolean = false
 )
 
 data class EventMakerRiskSnapshot(

@@ -104,6 +104,40 @@ class EventMakerMarketSelectorTest {
         assertEquals(emptyList<LivePaperMarket>(), selected)
     }
 
+    @Test
+    fun `taker entry can select a one tick spread using the ask band`() {
+        val market = market("taker-one-tick", 0.01)
+        val books = mapOf("token-taker-one-tick" to book("token-taker-one-tick", 0.97, 0.98))
+
+        val selected = EventMakerMarketSelector.select(
+            listOf(market),
+            books,
+            maxMarkets = 3,
+            minSpreadTicks = 2,
+            takerEntry = true
+        )
+
+        assertEquals(listOf(market), selected)
+    }
+
+    @Test
+    fun `taker entry rejects an ask outside the configured price band`() {
+        val market = market("taker-too-high", 0.001)
+        val books = mapOf("token-taker-too-high" to book("token-taker-too-high", 0.985, 0.995))
+
+        val selected = EventMakerMarketSelector.select(
+            listOf(market),
+            books,
+            maxMarkets = 3,
+            minSpreadTicks = 2,
+            minPrice = 0.90,
+            maxPrice = 0.99,
+            takerEntry = true
+        )
+
+        assertEquals(emptyList<LivePaperMarket>(), selected)
+    }
+
     private fun book(
         tokenId: String,
         bid: Double,

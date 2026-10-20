@@ -48,6 +48,31 @@ class EventMakerLiveEngineTest {
 
 
     @Test
+    fun `taker entry is filled immediately and reconciled into inventory`() = runTest {
+        val now = System.currentTimeMillis()
+        val takerConfig = config.copy(takerEntry = true, takerEntrySlippageTicks = 0)
+        val state = EventMakerLiveState(market, takerConfig)
+        state.onBook(book(0.95, 0.97, now))
+        val port = EventMakerShadowExecutionPort()
+        val engine = EventMakerLiveEngine(takerConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        val quote = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now)
+        val order = quote.placed.single().order
+
+        assertEquals(EventMakerSide.BUY, order.side)
+        assertEquals("FILLED", order.status)
+        assertEquals(0, order.originalShares.compareTo(order.matchedShares))
+        assertEquals(0, state.inventoryShares.compareTo(BigDecimal.ZERO))
+
+        val reconciled = engine.reconcile(listOf(state), 7L, now + 1)
+
+        assertEquals(EventMakerPhase.LONG, state.phase)
+        assertEquals(0, order.originalShares.compareTo(state.inventoryShares))
+        assertTrue(reconciled.reconciled.single().events.contains("buy_fill"))
+        assertEquals(1, port.drainImmediateFills().size)
+    }
+
+    @Test
     fun `mock live flow completes buy and sell cycle through authoritative order status`() = runTest {
         val now = System.currentTimeMillis()
         val state = EventMakerLiveState(market, config)
