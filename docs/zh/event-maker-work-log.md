@@ -1763,3 +1763,9 @@
 - 新增 `scripts/report-bond-shadow-status.cjs`，一键汇总四臂 markets/active/fills/cycles/inventory/realizedPnl/markout60/markout300/neg60。
 - 当前：aggressive 两臂各 1 fill（markout -1.05 / -1.99，neg60 100%）；join-bid 5/5 active 0 fill；passive 8/8 active 0 fill。
 - 输出 `bond-shadow-status-20261021.md`，后续可直接重跑。
+### 03:45 被动挂单并没有改善 markout
+
+- 对比 off0 vs off0.25（+1c q2 c3）：off0 markout -0.477、133 cycles；off0.25 markout -0.658、94 cycles、MAE 更深。
+- 更被动买价只在下跌时成交，天然逆向选择；被动化不是解法。
+- leader 的正 markout 更可能来自事件判断/信息优势或主动吃单。
+- join-bid/passive 两臂继续跑，但预期不宜过高。

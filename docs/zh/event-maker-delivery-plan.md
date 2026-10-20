@@ -1166,3 +1166,13 @@ cd D:\Project\PolyHermes\backend
 - 新增 `scripts/report-bond-shadow-status.cjs`，汇总四臂的 markets / active / fills / cycles / inventory / realizedPnl / markout60 / markout300 / neg60。
 - 当前：aggressive 两臂各 1 fill（markout -1.05 / -1.99，neg60 100%）；join-bid 5/5 active 0 fill；passive 8/8 active 0 fill。
 - 输出 `backend/build/research/bond-shadow-status-20261021.md`，可随时重跑。
+### 19.22 被动挂单没有改善 markout（2026-10-21）
+
+| 配置 | cycles | ROI | markout60 均值 | MAE 中位 |
+|---|---:|---:|---:|---:|
+| off0 | 133 | +1.08% | -0.477 | -1.35 |
+| off0.25 | 94 | +1.08% | -0.658 | -1.80 |
+
+- 更被动入场价没有改善 markout，成交更少、MAE 更深。
+- 原因：更低买价只在下跌时成交，天然逆向选择。
+- 结论：被动化不是解法；leader 的正 markout 更可能来自事件判断/信息优势或主动吃单。
