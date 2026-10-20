@@ -1538,3 +1538,21 @@
 - 结论：BOND 的 maker 成交 `makerFeeRate=0` 正确；主动 taker 卖出/对冲必须另计 taker fee；100bps 仅压力测试；rebate 未计入回测，但也不能当成确定收益。
 - 范围区分：以上为预测市场 CLOB；Polymarket Perps 另按 30 天交易量分层，`$0` 档 maker 0.0125%、taker 0.04%，不适用于本项目。
 - 已更新 `docs/zh/leader-bond-strategy-replication-2026-10-20.md` 第 4.1 节。
+
+### 22:20 BOND 全价格带与统计显著性复核
+
+- 目标：不再只看 0.95–0.97/0.97–0.99 的样本内正收益，补看 0.90–0.95、全 eligible 成交和置信区间。
+- 队列约束模型（Gradle BOND，off0/q1）：
+  - 0.90–0.95：193 eligible / 114 filled，ROI **-1.23%**，10 次结算亏损；
+  - 0.95–0.97：160 / 88，ROI +4.10%，0 次结算亏损；
+  - 0.97–0.99：260 / 170，ROI +1.81%，0 次结算亏损；
+  - 0.99–0.999：329 / 233，ROI +0.40%，0 次结算亏损。
+- 新增 `scripts/analyze-leader-bond-style.cjs`：按“每个 eligible 都在参考价成交”的上限假设重算，7d hold、maker fee 0：
+  - 0.90–0.95：n=193，10.36% 亏损率，平均 ROI -3.39%，盈亏平衡 7.22%；
+  - 0.95–0.97：n=159，1.89% 亏损率，平均 ROI +2.17%，盈亏平衡 3.98%，95% CI 0.64%–5.40%；
+  - 0.97–0.99：n=261，0.38% 亏损率，平均 ROI +1.54%，盈亏平衡 1.90%，95% CI 0.07%–2.14%；
+  - 0.99–1.0：n=349，0% 亏损，平均 ROI +0.51%，95% CI 0%–1.09%。
+- 结论：0.90–0.95 明确负期望；0.95–0.99 只有边界性/未证明的正期望，4.10% 不能当成稳定收益；0.5–0.8 的账户收益无法由持有模型复刻。
+- 证据：`backend/build/research/leader-bond-style-backtest-20261020-repro.json`、`event-maker-bond-20261020-summary.csv`。
+- 已更新报告 `leader-bond-strategy-replication-2026-10-20.md` 第 4.2/5 节和交付计划第 18 节。
+- BOND Shadow PID 24440 继续运行；当前 5 个市场、4 FLAT、1 BUY_PENDING、0 fill。

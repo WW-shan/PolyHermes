@@ -17,7 +17,8 @@
     "snapshot:leader-pnl": "node snapshot-leader-pnl.mjs",
     "scan:complete-set:all": "node scan-event-complete-set-arbitrage.mjs --all-markets --max-markets-per-tag 100000 --max-groups 100000 --min-volume 0 --concurrency 12",
     "test:paper-execute": "node --test test/paper-execute-complete-set.test.mjs",
-    "paper:complete-set": "node paper-execute-complete-set.mjs"
+    "paper:complete-set": "node paper-execute-complete-set.mjs",
+    "analyze:bond-carry": "node analyze-leader-bond-style.cjs"
   },
   "dependencies": {
     "@ethersproject/wallet": "^5.7.0",
