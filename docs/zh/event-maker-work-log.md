@@ -1600,3 +1600,15 @@
 - 修改 `scripts/continue-bond-validation.ps1`：7 天臂默认 `FlowGuardWindowSeconds=0`，与 BOND 回测口径一致。
 - 原 continuation PID 22292 已停止，新 PID 9368 已武装；日志记录 `flowGuard=0`。
 - 当前形成 A/B：2h 臂 guard=3600（更保守），7d 臂 guard=0（与回测一致）；不降低其他门槛。
+
+### 00:01 2h BOND Shadow 结束与 7d 启动
+
+- 2h Shadow（PID 24440）正常结束，`summary.json`：
+  - duration 7200s，markets=5，trades=1023，bookUpdates=50982；
+  - quotesPlaced=5，cancels=5，fills=0，completedCycles=0；
+  - realized/unrealized/total PnL=0，openInventory=0，lastErrors=[]；
+  - duplicateTradeEvents=8762（WS + Data API 双路重复投递；engine 按 key 去重，未产生重复 fill）。
+- 2h 离线审计：`audit.json` flag=`NO_FILLS_OR_CYCLES`，duplicateFillKeys=0。
+- 全量 Gradle 测试：`BUILD SUCCESSFUL in 21s`。
+- 7d Shadow 已启动：PID 10868（wrapper），8 个市场、16 个 token，输出 `backend/build/research/event-maker-bond-shadow-7d-20261020`；flowGuard=0，与 BOND 回测口径一致。
+- 续跑脚本误报 `long shadow start failed`，原因是 PowerShell 脚本后的 `$LASTEXITCODE` 不可靠；已改为 `$?`，不影响实际已启动的 7d 进程。

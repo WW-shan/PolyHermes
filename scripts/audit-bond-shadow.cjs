@@ -28,6 +28,13 @@ const summary = fs.existsSync(summaryPath) ? JSON.parse(fs.readFileSync(summaryP
 
 const markets = Array.isArray(state.markets) ? state.markets : [];
 const cycles = markets.flatMap(m => (Array.isArray(m.cycles) ? m.cycles.map(c => ({ ...c, conditionId: m.conditionId })) : []));
+const fills = markets.flatMap(m => (Array.isArray(m.fills) ? m.fills.map(f => ({ ...f, conditionId: m.conditionId })) : []));
+const fillKeyCounts = new Map();
+for (const f of fills) {
+  const key = [f.conditionId, f.orderId, f.side, f.price, f.shares, f.timestamp].join('|');
+  fillKeyCounts.set(key, (fillKeyCounts.get(key) ?? 0) + 1);
+}
+const duplicateFillKeys = [...fillKeyCounts.values()].filter(n => n > 1).length;
 const phases = {};
 for (const m of markets) phases[m.phase ?? 'UNKNOWN'] = (phases[m.phase ?? 'UNKNOWN'] ?? 0) + 1;
 
@@ -80,6 +87,8 @@ const audit = {
     inventoryShares,
     inventoryNotional,
     cycles: cycles.length,
+    fills: fills.length,
+    duplicateFillKeys,
     deployedNotional: deployed,
     realizedPnl: realized,
     realizedRoi,
@@ -90,7 +99,7 @@ const audit = {
   flags: []
 };
 if (cycles.length === 0) audit.flags.push('NO_FILLS_OR_CYCLES');
-if (summary && num(summary.duplicateTradeEvents) > 0) audit.flags.push('DUPLICATE_TRADE_EVENTS');
+if (duplicateFillKeys > 0) audit.flags.push('DUPLICATE_FILLS');
 if (summary && Array.isArray(summary.lastErrors) && summary.lastErrors.length > 0) audit.flags.push('LAST_ERRORS_PRESENT');
 if (cycles.length > 0 && realizedRoi > 0.01) audit.flags.push('REALIZED_ROI_ABOVE_1PCT_CHECK_FILL_ASSUMPTIONS');
 if (inventoryShares > 0 && activeOrders === 0) audit.flags.push('OPEN_INVENTORY_WITHOUT_ACTIVE_ORDER');

@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 561 tests 通过；BOND 全价格带复核完成：0.90–0.95 明确负期望，0.95–0.99 只有边界性正期望，4.10% 不能当作稳定收益；与目标账户对账后，0.95–0.97 队列回测约为其已平仓 ROI 的 18 倍，当前 BOND 只是理想化假设模型，不是已验证复刻。BOND 2h Shadow 正在运行（5 市场、0 fill）；7 天续跑已武装，待 2h 结束后先跑全量测试再启动。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
-> 最后更新：2026-10-20 22:20 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试 103 suites / 561 tests 通过；BOND 全价格带复核完成：0.90–0.95 明确负期望，0.95–0.99 只有边界性正期望，4.10% 不能当作稳定收益；与目标账户对账后，0.95–0.97 队列回测约为其已平仓 ROI 的 18 倍，当前 BOND 只是理想化假设模型，不是已验证复刻。BOND 2h Shadow 已完成（5 市场、5 挂单、5 撤单、0 fill、0 错误）；全量测试通过；7 天 Shadow 已启动（8 市场、flowGuard=0）。真实小资金 Live smoke 仍缺账户、资金和明确授权，不能实盘**<br>
+> 最后更新：2026-10-21 00:05 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -933,3 +933,24 @@ cd D:\Project\PolyHermes\backend
 - 更准确判断：目标是**事件驱动 + maker 执行 + 大库存周转**，不是纯被动债券做市。
 - 仅复刻 0.95–0.99 挂单持有无法解释其 0.5–0.8/geopolitics 利润；下一步必须做逐笔库存账本或承认当前 BOND 只是另一个低收益假设。
 - BOND 运行手册：`docs/zh/event-maker-bond-runbook-2026-10-20.md`（配置、启动/停止、产物、审计清单、Live 门槛）。
+### 18.3 2h Shadow 结果与 7d 启动
+
+| 指标 | 2h 结果 |
+|---|---:|
+| duration | 7200s |
+| markets | 5 |
+| trades | 1,023 |
+| bookUpdates | 50,982 |
+| quotesPlaced | 5 |
+| cancels | 5 |
+| fills | 0 |
+| completedCycles | 0 |
+| realized / unrealized / total PnL | 0 / 0 / 0 |
+| duplicateFillKeys | 0 |
+| lastErrors | [] |
+
+- 0 fill 与保守队列模型一致；不能通过降低 queueFactor 或追价制造 fill。
+- duplicateTradeEvents=8,762 是 WS + Data API 双路重复投递，engine 按 trade key 去重，未产生重复 fill；离线审计 `duplicateFillKeys=0`。
+- 全量测试 `BUILD SUCCESSFUL in 21s`。
+- 7d Shadow 已启动：PID 10868、8 市场、16 token、flowGuard=0；输出 `event-maker-bond-shadow-7d-20261020`。
+- 7d 结束后用 `npm run audit:bond-shadow` 审计；至少覆盖 2–4 周/50–100 个结算事件前不进入真实资金。

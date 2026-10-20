@@ -26,14 +26,15 @@ while ((Get-Process -Id $WaitPid -ErrorAction SilentlyContinue) -or (Get-Process
 }
 Write-Log "BOND 2h process exited; starting full test suite"
 $testLog = Join-Path $backend "build/research/bond-continuation-tests-20261020.log"
-& (Join-Path $backend "gradlew.bat") test --console=plain *>> $testLog
-if ($LASTEXITCODE -ne 0) {
+$testErr = Join-Path $backend "build/research/bond-continuation-tests-20261020.err.log"
+$testProc = Start-Process -FilePath (Join-Path $backend "gradlew.bat") -ArgumentList @("test", "--console=plain") -WorkingDirectory $backend -NoNewWindow -Wait -PassThru -RedirectStandardOutput $testLog -RedirectStandardError $testErr
+if ($testProc.ExitCode -ne 0) {
   Write-Log "full test suite failed; not starting long shadow. See $testLog"
   exit 1
 }
 Write-Log "full test suite passed; starting ${Minutes}m BOND shadow"
 & (Join-Path $PSScriptRoot "start-bond-shadow.ps1") -Minutes $Minutes -MinPrice $MinPrice -MaxPrice $MaxPrice -MaxMarkets $MaxMarkets -MinVolume $MinVolume -Output $Output -Proxy $Proxy -FlowGuardWindowSeconds $FlowGuardWindowSeconds *>> $logPath
-if ($LASTEXITCODE -ne 0) {
+if (-not $?) {
   Write-Log "long shadow start failed"
   exit 1
 }
