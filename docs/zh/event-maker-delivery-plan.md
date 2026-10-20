@@ -1194,3 +1194,9 @@ cd D:\Project\PolyHermes\backend
 - 参数：MaxMarkets=30、cap=3000、+1c、bid+1tick。
 - 目的：验证成交机会不足是否是瓶颈；同时比较低成交量市场的 markout。
 - 若低成交量市场 markout 更差，说明扩池无用。
+### 19.25 目标账户当前持仓快照（2026-10-21）
+
+- 5 个 open positions 全部为 No/favorite，价格带 0.84–0.95，仓位 $2,500–$10,000。
+- Bab el-Mandeb Oct 31 No 0.9499→0.976（+2.74%）是 0.95–0.97 band 的真实 +2.6c 案例。
+- Bab el-Mandeb Dec 31 No 0.85→0.84（-1.18%）仍在持有，符合大止损行为。
+- 结论：真实操作是跨 band、大仓位、动态持有；我们的 $100 模型只覆盖很小一部分。

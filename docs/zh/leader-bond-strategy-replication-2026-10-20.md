@@ -650,6 +650,28 @@ cd D:\Project\PolyHermes\backend
 - 目的：验证“成交机会不足”是否是主要瓶颈，并比较低成交量市场的 markout 是否更差。
 - 注意：低成交量可能带来更差逆选择；如果 markout 更差，说明单纯扩池没有用。
 
+### 4.6.21 目标账户当前持仓快照（2026-10-21）
+
+目标账户当前 5 个 open positions：
+
+| 市场 | 方向 | 股数 | 均价 | 现价 | 浮盈 |
+|---|---|---:|---:|---:|---:|
+| Will the U.S. invade Iran before 2027? | No | 11,800.23 | 0.8434 | 0.855 | +136.13 |
+| Republican Party control House after 2026 Midterms? | No | 5,000 | 0.90 | 0.915 | +75.00 |
+| Bab el-Mandeb Strait effectively closed by Oct 31? | No | 3,000.01 | 0.9499 | 0.976 | +78.00 |
+| Bab el-Mandeb Strait effectively closed by Dec 31? | No | 2,999.81 | 0.85 | 0.84 | -30.00 |
+| USD stablecoin market share fall below 99% in 2026? | No | 104.81 | 0.9099 | 0.945 | +3.67 |
+
+观察：
+
+1. **全部是 No 方向**；在这些 “will X happen” 市场里，No 正是 favorite（0.84–0.976）。
+2. 持仓规模 **$2,500–$10,000**，远大于我们 Shadow 的 $100。
+3. 价格带 **0.84–0.95**，跨多个 band；他不是只做 0.95–0.99。
+4. `Bab el-Mandeb Oct 31 No @0.9499 → 0.976`（+2.74%）是 0.95–0.97 band 的真实 +2.6c 持有案例。
+5. `Bab el-Mandeb Dec 31 No @0.85 → 0.84`（-1.18%），他仍在持有，符合 10%–24% 大止损的行为。
+
+结论：他的真实操作是 **favorite/No 方向、跨价格带、较大仓位、动态持有**；我们的 $100 单市场机械模型只覆盖了很小一部分。
+
 ## 5. 结论与风险
 
 **可借鉴的部分（尚未验证可盈利）：**
