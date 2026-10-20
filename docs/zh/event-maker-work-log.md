@@ -1438,3 +1438,13 @@
 - Mock：全成交 +1.1974；最后腿失败并回滚 -2.4115；最后腿失败且无买盘 -13.8822。
 - 全类别扫描：4,712 市场 / 1,337 组 / 1,028 完整评估 / 3 个 ask 正收益 / 1 个 actionable / 0 个 NO-basket actionable；最佳最晚结算年化 3.791%。
 - 结论：策略数学上能赚钱，但当前是低收益、小容量、长资金占用；继续寻找短周期、大容量、可立即转换的结构。Node 回归 54/54。
+### 15:52 全市场扫描改用官方 keyset 并启动全量
+
+- 本轮目标：不再只扫热门 tag，覆盖当前全部 active/closed=false 市场，找出短结算、大容量、可交易的真实完整集机会。
+- 发现：Gamma 传统 `/markets` 的 offset 在 2100 条后返回 422（`offset too large, use /markets/keyset for deeper pagination`）；旧分页不能支持“全市场”结论。
+- 动作：`discoverTag` 与新增 `discoverAllMarkets` 统一改用 `/markets/keyset` 的 `next_cursor`/`after_cursor`，按稳定 `order=id` 翻页；遇到重复 cursor 直接失败，不静默漏市场。
+- 测试：新增 all-markets 参数、tag keyset、分页去重、重复 cursor fail-closed 用例；`node --test scripts/test` 为 **58 tests / 58 pass / 0 fail**。
+- 冒烟：300 市场拉取 299 个可规范化市场、209 组，完整 CLOB 链路正常；输出 `backend/build/research/complete-set-all-markets-smoke-20261020.json`。
+- 提交：`89a5c03 feat: scan all complete-set markets with keyset pagination`。
+- 进行中：全市场扫描 maxMarkets/maxGroups=100000、minVolume=0、book age 30s、并发 12；输出目录 `backend/build/research/complete-set-all-markets-20261020`。
+- 监控：Politics+Geopolitics v6 与 Crypto+Finance v3 均继续存活；Crypto+Finance 在 06:50–07:53Z 的 147/148 个可用快照中，OpenAI 7 档完全集均可套利，ask top sum 0.920–0.937，edge 3.56–4.80c，但容量仅约 26 股且资金最长锁至 2028-01-01。
