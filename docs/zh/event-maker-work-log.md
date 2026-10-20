@@ -1681,3 +1681,10 @@
 - 新增 `scripts/watch-complete-set-monitors.ps1`，PID 7832。
 - 等 PID 11804 / 23072 退出后自动审计两个 `monitor-summary.json` 与 `opportunities.jsonl`，写 `complete-set-monitor-final-audit.json`。
 - 判定：有 actionable 才是 ACTIONABLE_FOUND；否则 NO_ACTIONABLE_OPPORTUNITY；同时保留 errorRows 与 lastPollErrors 供区分瞬态错误。
+### 01:40 +1c focus 回测与目标账户行为对账
+
+- 跑 +1c focus 回测：160 eligible / 79 filled / 133 cycles，132 SELL + 1 SETTLE，0 结算亏损，ROI +1.08%，train +1.05% / test +1.10%。
+- +1c 持有期中位 0.69 天 / p90 2.49 天；+3c 为 3.65 / 6.35 天；目标账户为 2.02 / 10.96 天。
+- +1c 负 markout 占比 52.6%；+3c 50.0%；两者都有逆选择。
+- +1c 亏损率 CI 上限 2.81% > 盈亏平衡 1.07% → 仍未证明；+3c 4.09% > 3.10% → 仍未证明。
+- 结论：+1c 复刻 ROI 但周转过快且无 18.4% 止损；+3c 复刻持有期但 ROI 偏高；目标账户是动态退出 + 主动止损，需 Shadow A/B。

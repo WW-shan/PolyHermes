@@ -1053,3 +1053,16 @@ cd D:\Project\PolyHermes\backend
 - 新增 `scripts/watch-complete-set-monitors.ps1`（PID 7832）：等两个 24h 监控进程（11804、23072）退出后，自动读取各自的 `monitor-summary.json` 和 `opportunities.jsonl`，写 `complete-set-monitor-final-audit.json`。
 - 审计字段：pollCycles / discoveryCycles / errorRows / lastPollErrors / confirmedEpisodes / maxConfirmedEdge / maxConfirmedProfit / opportunities / actionable / rejectionReasons / verdict。
 - 判定规则：有 `best.actionable=true` 才是 `ACTIONABLE_FOUND`；否则为 `NO_ACTIONABLE_OPPORTUNITY`。
+### 19.9 +1c / +3c 与目标账户行为对账（2026-10-21）
+
+| 指标 | 目标账户 | +1c 队列 | +3c 队列 |
+|---|---:|---:|---:|
+| 0.95–0.97 ROI | +1.26% | +1.08% | +3.20% |
+| 持有期中位 / p90 | 2.02 / 10.96 天 | 0.69 / 2.49 天 | 3.65 / 6.35 天 |
+| 负价差占比 | 18.4% | 0% | 0% |
+| 结算亏损 | 有 | 0/133 | 0/90 |
+| 亏损率 CI 上限 vs 盈亏平衡 | — | 2.81% vs 1.07% | 4.09% vs 3.10% |
+
+- +1c 复刻 ROI，但周转过快、无止损；+3c 复刻持有期，但 ROI 高 2.5–3 倍。
+- 目标账户是动态退出 + 主动止损，固定退出只能近似；需 Shadow A/B 验证。
+- 证据：`event-maker-bond-scalp-1c-focus-20261021-focus-cycles.csv`、`bond-scalp-1c-risk-20261021.json`。

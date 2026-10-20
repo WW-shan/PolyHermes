@@ -76,6 +76,9 @@ for (const r of cycles) {
 }
 const settlementLosses = cycles.filter(r => r[idx.exit_type] === 'SETTLE' && num(r[idx.pnl]) < 0).length;
 const queueCi = wilson(settlementLosses, cycles.length);
+const avgWin = mean(pnl.filter(x => x > 0));
+const avgDeployed = mean(entry.map((e, i) => e * shares[i]));
+const breakEvenLossRate = avgWin > 0 ? avgWin / (avgWin + avgDeployed) : 0;
 
 const queueModel = {
   source: cyclesPath,
@@ -84,6 +87,9 @@ const queueModel = {
   settlementLosses,
   lossRate: settlementLosses / Math.max(1, cycles.length),
   lossRateCi95: queueCi,
+  breakEvenLossRate,
+  avgWin,
+  avgDeployed,
   meanRoi: mean(roi),
   medianRoi: quantile(roi, 0.5),
   worstRoi: roi.length ? Math.min(...roi) : 0,
@@ -132,17 +138,23 @@ const report = {
   generatedAt: new Date().toISOString(),
   question: 'Is the BOND_SCALP positive backtest statistically strong enough to rule out negative expectancy?',
   queueModel,
-  queueModelProven: queueCi[1] < 0.030999040947716338,
-  queueModelBreakEvenLossRate: 0.030999040947716338,
+  queueModelProven: queueCi[1] < breakEvenLossRate,
+  queueModelBreakEvenLossRate: breakEvenLossRate,
   bands,
   conclusion: null
 };
 const candidates = bands.filter(b => ['0.95-0.97', '0.97-0.99'].includes(b.band));
 const unproven = candidates.filter(b => !b.statisticallyProven);
 report.candidates = candidates.map(b => b.band);
-report.conclusion = unproven.length
-  ? 'Candidate bands 0.95-0.97 and 0.97-0.99 are NOT PROVEN at 95%: their loss-rate CI upper bounds exceed break-even, so the positive ROI is not yet statistically distinguishable from a losing strategy. 0.90-0.95 is negative; 0.99-1.0 is only trivially proven because its break-even loss rate is ~100% with tiny per-trade gain. More independent cycles and live shadow are required.'
-  : 'Candidate bands have loss-rate CI upper bounds below break-even.';
+if (candidates.length === 0) {
+  report.conclusion = report.queueModelProven
+    ? 'Queue model loss-rate CI upper bound is below break-even.'
+    : 'Queue model NOT PROVEN at 95%: loss-rate CI upper bound exceeds break-even; more independent cycles and live shadow are required.';
+} else {
+  report.conclusion = unproven.length
+    ? 'Candidate bands 0.95-0.97 and 0.97-0.99 are NOT PROVEN at 95%: their loss-rate CI upper bounds exceed break-even, so the positive ROI is not yet statistically distinguishable from a losing strategy. 0.90-0.95 is negative; 0.99-1.0 is only trivially proven because its break-even loss rate is ~100% with tiny per-trade gain. More independent cycles and live shadow are required.'
+    : 'Candidate bands have loss-rate CI upper bounds below break-even.';
+}
 
 fs.writeFileSync(output, JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({
