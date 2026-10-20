@@ -1031,3 +1031,14 @@ cd D:\Project\PolyHermes\backend
 | 全量测试 | BUILD SUCCESSFUL | PASS |
 
 结论：回测正收益 ≠ 统计显著；继续 Shadow，不上实盘。脚本 `scripts/analyze-bond-scalp-risk.cjs`，结果 `backend/build/research/bond-scalp-risk-20261021.json`。
+### 19.6 +1c / +3c 退出价差 A/B（2026-10-21）
+
+| 退出 | 0.95–0.97 ROI | 0.97–0.99 ROI | 定位 |
+|---|---:|---:|---|
+| +1c | +1.08% | +1.05% | 中位复刻，与 leader matched ROI +1.26% / +0.85% 接近 |
+| +2c | +2.15% | +1.65%–1.87% | 中间变体 |
+| +3c | +3.20% | +2.20% | p90 上行变体，约为 leader 的 2.5–3 倍 |
+
+- 目标账户价差中位 +1c、p90 +3c；固定 +3c 会高估，不能当作主复刻。
+- 已并行启动两个 7 天 Shadow：+3c（01:08，`...-v2`）和 +1c（01:29，`...-1c-...`），各带 watcher。
+- 验收：比较两臂真实 fill rate、平均退出价、结算占比、MAE 和实际 ROI；+1c 应接近 1%，+3c 若显著高于 3% 先怀疑成交假设。

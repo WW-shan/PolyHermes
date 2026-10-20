@@ -1664,3 +1664,10 @@
 - `EventMakerLiveEngineTest` 新增：maxCycles 3 后停止开仓；SELL 退出不被 adverse flow 拦截。
 - 全量测试 BUILD SUCCESSFUL。
 - 结论：回测正收益不等于统计显著，继续 Shadow，不上实盘。
+### 01:30 退出价差复核：+1c 主复刻，+3c 上行变体
+
+- 目标账户价差中位 +1c、p90 +3c；此前把 +3c 当主配置，实际是 p90，不是中位。
+- 队列模型：+1c 0.95–0.97 +1.08% / 0.97–0.99 +1.05%，与 leader matched ROI +1.26% / +0.85% 几乎一致；+3c 为 +3.20% / +2.20%，约 2.5–3 倍，偏乐观。
+- +1c 的卖出/结算结构更接近高周转：0.95–0.97 132/1，0.97–0.99 100/1；+3c 结算明显增多。
+- 01:29 启动 +1c 7 天 Shadow（10 市场 / 20 token，requote 300s，maxOrderAge 1800s，output `...-1c-shadow-7d-20261021`），wrapper PID 24864、app PID 5196；watcher PID 23192。
+- 与 01:08 的 +3c 臂并行做 A/B，比较真实 fill、退出价、结算占比和 ROI。
