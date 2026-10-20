@@ -1470,3 +1470,15 @@
 - 报告：`docs/zh/complete-set-all-market-scan-2026-10-20.md`。
 - 测试：Node 全套回归 68 tests / 68 pass（含 batch 与 paper 执行纯函数测试）。
 - 24h 监控 v6/v3 仍运行；尚未到 2026-10-21 06:50Z 结束时间。
+
+### 21:20-21:27 24h 监控中断与脱离会话续跑
+
+- 现场核对：原 v6 PID 23984、v3 PID 6804 已不在运行；最后写入为 `2026-10-20T13:17:44Z` / `13:17:31Z`，实际只跑了约 6.45 小时，不是计划的 24 小时。原因是原进程由 PTY 会话启动，会话结束后被一并终止。
+- 中断前有效数据：
+  - Politics+Geopolitics v6：889 次 poll，确认 2 次，全部为 `Next leader out of power before 2027?`，最大 edge 1.5686c，最大确认利润 2.0863 USDC；失败原因 `below_edge_buffer=7`、`request_error=2`。
+  - Crypto+Finance v3：799 次 poll，确认 11 次：OpenAI 6 次、Anthropic IPO 估值 3 次、Bitcoin vs Gold vs S&P 2 次；最大 edge 5.8798c，最大确认利润 4.4402 USDC；失败原因 `below_edge_buffer=8`、`no_positive_after_fees_or_depth=2`。
+- 新增 `scripts/start-complete-set-monitors.ps1`：显式设置代理环境变量，用 `Start-Process -WindowStyle Hidden` 脱离会话启动两套监控，自动避开已存在的 output dir，并写 `complete-set-monitor-pids-*.json`。
+- 续跑参数：`durationMs=62,648,742`，目标仍是原始终点 `2026-10-21T06:50:16Z`。
+- 续跑进程：v6 PID `11804`，目录 `complete-set-monitor-24h-v6-resume-20261020-212607`；v3 PID `23072`，目录 `complete-set-monitor-24h-crypto-finance-v3-resume-20261020-212607`。
+- 续跑验证：两套均已进入正常轮询，watchlist=30、errorRows=0；v3 首个轮询即再次确认 OpenAI（5.6984c / 1.4833 USDC）与 Bitcoin vs Gold vs S&P（1.4877c / 3.3920 USDC）。
+- 结论：这不是策略失败，而是监控进程生命周期问题；已改为可脱离会话的启动方式，避免重复。
