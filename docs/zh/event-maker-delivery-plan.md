@@ -1095,3 +1095,8 @@ cd D:\Project\PolyHermes\backend
 - 旧臂 0 fill / 0 cycle，已审计停止。
 - 新臂 cap=1000，watcher 21160 / 26520，monitor 26068。
 - 这是“多市场分散”策略能否成立的前提修复。
+### 19.13 首次 Shadow 成交（2026-10-21 02:04）
+
+- +3c / +1c 两臂均在 `US x Iran ceasefire continues through October 22?` 成交 BUY @0.953，104.93 股。
+- 成交后 LONG；卖出限价等待 best ask 达到 entry+1c/+3c。
+- 多市场挂单（10/10 active）与成交状态机已验证；继续观察退出与结算。

@@ -480,6 +480,16 @@ cd D:\Project\PolyHermes\backend
 - watcher：+3c PID 21160，+1c PID 26520；持续 monitor PID 26068，序列 `bond-shadow-cap1000-audit-series.jsonl`。
 - 说明：`maxDailyLoss=1000` 是研究用上限，不是实盘风控建议；实盘必须单独设置更低的日亏损预算。
 
+### 4.6.11 首次真实 Shadow 成交（2026-10-21 02:04）
+
+修复总库存上限后，两个臂各出现第一笔成交：
+
+- 市场：`US x Iran ceasefire continues through October 22?`（Geopolitics，fee-free）
+- 方向/价格/数量：BUY @ **0.953**，**104.93 股**（约 100 USDC）
+- 状态：`phase=LONG`；由于当时 best ask 仍低于 entry+1c（+1c 臂）或 entry+3c（+3c 臂），卖出限价暂未挂出，等待价格上行或结算。
+- 意义：多市场挂单已生效（10/10 active），Shadow 成交模拟与状态机跑通。
+- 限制：单一成交样本不能证明策略；继续观察退出、结算和更多市场。
+
 ## 5. 结论与风险
 
 **可借鉴的部分（尚未验证可盈利）：**

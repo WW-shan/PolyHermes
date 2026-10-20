@@ -1706,3 +1706,8 @@
 - 修复：ShadowCli/Gradle/start 脚本暴露两个参数；新增 `EventMakerShadowCliOptionsTest`；全量测试通过。
 - 旧臂审计 `NO_FILLS_OR_CYCLES` 并停止。
 - 重启 cap=1000：+3c 与 +1c 均 10 市场 / 10 active BUY；watcher 21160 / 26520，monitor 26068。
+### 02:15 首次 Shadow 成交
+
+- 修复 cap 后，+3c 与 +1c 臂各在 `US x Iran ceasefire continues through October 22?` 成交：BUY @0.953，104.93 股。
+- 成交后 LONG；best ask 未到 entry+1c/+3c，卖出限价暂未挂出。
+- 说明多市场挂单（10/10 active）和成交模拟已跑通；单样本不足以下结论。
