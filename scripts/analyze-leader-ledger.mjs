@@ -229,6 +229,36 @@ for (const row of activity) {
 }
 const holdingSeconds = allClosed.map(r=>r.holdingSeconds).filter(Number.isFinite);
 
+function timingStats(rows) {
+  const secs = rows.map(r=>r.holdingSeconds).filter(Number.isFinite);
+  return {
+    count: rows.length,
+    medianSeconds: median(secs),
+    p25Seconds: percentile(secs, 0.25),
+    p75Seconds: percentile(secs, 0.75),
+    meanSeconds: secs.length ? secs.reduce((a,b)=>a+b,0)/secs.length : 0
+  };
+}
+const winLossTiming = {
+  wins: timingStats(roundTrips.filter(r=>r.pnl>0)),
+  losses: timingStats(roundTrips.filter(r=>r.pnl<0))
+};
+const holdingBucketDefs = [
+  ['<1h', 0, 3600],
+  ['1-6h', 3600, 6*3600],
+  ['6-24h', 6*3600, 86400],
+  ['1-3d', 86400, 3*86400],
+  ['3-7d', 3*86400, 7*86400],
+  ['>7d', 7*86400, Infinity]
+];
+const pnlByHoldingBucket = holdingBucketDefs.map(([label, lo, hi]) => {
+  const rows = roundTrips.filter(r=>r.holdingSeconds>=lo && r.holdingSeconds<hi);
+  const wins = rows.filter(r=>r.pnl>0).length;
+  const cost = rows.reduce((s,r)=>s+r.buyPrice*r.shares,0);
+  const pnl = rows.reduce((s,r)=>s+r.pnl,0);
+  return { label, count: rows.length, winRate: rows.length?wins/rows.length:0, meanRoi: cost>0?pnl/cost:0, pnl };
+});
+
 const dailyPnl = new Map();
 for (const r of roundTrips) {
   const d = new Date(r.sellAt * 1000).toISOString().slice(0, 10);
@@ -281,6 +311,8 @@ const report = {
   bands: aggregate(allClosed, r => band(r.buyPrice)),
   outcomes: aggregate(allClosed, r => r.outcome || 'unknown'),
   categories: aggregate(allClosed, r => category(r.title)),
+  winLossTiming,
+  pnlByHoldingBucket,
   dailyStats,
   dailyPnl: dailyRows,
   holding: {

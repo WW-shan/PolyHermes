@@ -31,6 +31,10 @@ const flowExitWindowSeconds = numArg('flow-exit-window-seconds', 0);
 const flowExitMaxSignedFlow = numArg('flow-exit-max-signed-flow', -0.4);
 const flowExitMinPriceDropCents = numArg('flow-exit-min-price-drop-cents', 0.5);
 const flowExitMinHoldingSeconds = numArg('flow-exit-min-holding-seconds', 300);
+// NOTE: the current 7d dataset only contains ~0.7-0.9h of pre-entry trades,
+// so a 24h momentum filter is usually empty. Use a longer dataset to test it.
+const entryMomentumMinCents = numArg('entry-momentum-min-cents', -999);
+const entryMomentumMaxCents = numArg('entry-momentum-max-cents', 999);
 const defaultTakerFee = numArg('default-taker-fee', 0.04);
 const bands = listArg('bands', '0.9,0.95,0.97,0.99,1.0000001');
 const targets = listArg('targets', '1,3');
@@ -169,11 +173,22 @@ function simulateMarket(market, ref, targetCents, stopCents, minPrice, maxPrice)
 
 const dataset=JSON.parse(zlib.gunzipSync(fs.readFileSync(datasetPath)).toString('utf8'));
 const refs=[];
-for(const m of dataset.markets){const r=referenceAt(m,m.closedTimestamp-horizonDays*86400);if(r)refs.push({m,r});}
+for(const m of dataset.markets){
+  const entryTs = m.closedTimestamp - horizonDays*86400;
+  const r = referenceAt(m, entryTs);
+  if(!r) continue;
+  const prev = referenceAt(m, entryTs - 86400);
+  refs.push({m, r, momentum24hCents: prev ? (r.price - prev.price) * 100 : null});
+}
 const results=[];
 for(let bi=0;bi<BAND_LABELS.length;bi++){
   const low=bands[bi], high=bands[bi+1]; if(low==null||high==null) continue;
-  const eligible=refs.filter(({r})=>r.price>=low&&r.price<high);
+  const momentumFilterActive = entryMomentumMinCents > -900 || entryMomentumMaxCents < 900;
+  const eligible=refs.filter(({r,momentum24hCents})=>{
+    if(r.price<low || r.price>=high) return false;
+    if(!momentumFilterActive) return true;
+    return momentum24hCents != null && momentum24hCents >= entryMomentumMinCents && momentum24hCents < entryMomentumMaxCents;
+  });
   const tags=[...new Set(eligible.map(({m})=>m.tag))].sort();
   for(const tag of tags){
     for(const target of targets){
@@ -194,7 +209,7 @@ for(let bi=0;bi<BAND_LABELS.length;bi++){
     }
   }
 }
-fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,notional,entryOffset,queueFactor,maxCycles,requoteSeconds,maxOrderAgeSeconds,stopSlippageTicks,maxHoldingDays,flowExitWindowSeconds,flowExitMaxSignedFlow,flowExitMinPriceDropCents,flowExitMinHoldingSeconds,results},null,2));
+fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,notional,entryOffset,queueFactor,maxCycles,requoteSeconds,maxOrderAgeSeconds,stopSlippageTicks,maxHoldingDays,flowExitWindowSeconds,flowExitMaxSignedFlow,flowExitMinPriceDropCents,flowExitMinHoldingSeconds,entryMomentumMinCents,entryMomentumMaxCents,results},null,2));
 console.log('band tag tgt stop elig filled fill% cyc win% meanRoi roiCI worst lossRate lossCI stop settleLoss');
 for(const r of results){console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.stopCents).padStart(3),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(4),(100*r.fillRate).toFixed(1).padStart(5),String(r.cycles).padStart(3),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),(100*r.lossRate).toFixed(1).padStart(5),`[${(100*r.lossRateCi95[0]).toFixed(1)},${(100*r.lossRateCi95[1]).toFixed(1)}]`.padStart(11),String(r.stopCount).padStart(4),String(r.settleLossCount).padStart(3)].join(' '));}
 console.log('wrote '+outputPath);
