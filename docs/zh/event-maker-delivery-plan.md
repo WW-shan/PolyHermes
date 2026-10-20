@@ -973,3 +973,4 @@ cd D:\Project\PolyHermes\backend
 - 我们的 BOND 0.95–0.97 队列回测 +4.10% 约为目标同 band matched ROI 的 3.3 倍、closed-position ROI 的 18 倍，仍高估。
 - 新增脚本：`scripts/snapshot-leader-ledger.mjs`、`scripts/analyze-leader-ledger.mjs`。
 - 下一步若要复刻，需研究事件选择、跨价格带库存周转和退出纪律；单靠 0.95–0.99 持有不够。
+- 类别归因：Geopolitics matched PnL +13,112 / ROI +0.825%；Politics +2,481 / +1.33%；Crypto -186 / -0.35%；Sports -140 / -0.69%。下一步应收缩到政治/地缘事件，而不是全类别。

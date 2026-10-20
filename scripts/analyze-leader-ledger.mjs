@@ -16,6 +16,16 @@ function arg(name, fallback) {
 function num(value) { const n = Number(value); return Number.isFinite(n) ? n : 0; }
 function median(values) { if (!values.length) return 0; const s=[...values].sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
 function percentile(values, p) { if (!values.length) return 0; const s=[...values].sort((a,b)=>a-b); return s[Math.min(s.length-1,Math.max(0,Math.floor((s.length-1)*p)))]; }
+function category(title) {
+  const s = String(title ?? '').toLowerCase();
+  if (/iran|israel|ukraine|russia|china|taiwan|venezuela|war|ceasefire|nato|military|strike|hormuz|mandeb|hezbollah|hamas|gaza|syria|yemen|north korea|kim jong|putin|zelensky|netanyahu|khamenei/.test(s)) return 'geopolitics';
+  if (/fed|interest rate|inflation|gdp|recession|tariff|economy|treasury|stock|s&p|nasdaq|earnings|oil|gold/.test(s)) return 'macro_finance';
+  if (/bitcoin|ethereum|xrp|solana|crypto|stablecoin|defi|token|blockchain/.test(s)) return 'crypto';
+  if (/election|president|senate|congress|prime minister|nominee|trump|biden|harris|democrat|republican|parliament|mayor|governor/.test(s)) return 'politics';
+  if (/nba|nfl|mlb|nhl|soccer|football|tennis|ufc|f1|olympic|world cup|champions league|match|game/.test(s)) return 'sports';
+  if (/oscar|grammy|movie|music|celebrity|tweet|musk/.test(s)) return 'culture';
+  return 'other';
+}
 function band(price) {
   if (price < 0.5) return '0-0.5';
   if (price < 0.8) return '0.5-0.8';
@@ -176,6 +186,7 @@ const report = {
   activity: activityByType,
   bands: aggregate(allClosed, r => band(r.buyPrice)),
   outcomes: aggregate(allClosed, r => r.outcome || 'unknown'),
+  categories: aggregate(allClosed, r => category(r.title)),
   holding: {
     count: holdingSeconds.length,
     medianSeconds: median(holdingSeconds),
