@@ -31,6 +31,8 @@ const maxHoldingDays = numArg('max-holding-days', 0);
 const minHoursToClose = numArg('min-hours-to-close', 0);
 const flattenHoursBeforeClose = numArg('flatten-hours-before-close', 0);
 const flattenSlippageTicks = numArg('flatten-slippage-ticks', 0);
+const stopLossCents = numArg('stop-loss-cents', 0);
+if (stopLossCents < 0) throw new Error('invalid --stop-loss-cents');
 const maxHoursToClose = numArg('max-hours-to-close', horizonDays * 24);
 if (flattenHoursBeforeClose < 0 || flattenHoursBeforeClose > horizonDays * 24) throw new Error('invalid --flatten-hours-before-close');
 const momentumMinCents = arg('entry-momentum-min-cents') == null ? null : numArg('entry-momentum-min-cents', -999);
@@ -157,8 +159,33 @@ function simulateMarket(market, ref, targetCents) {
     }
     let remaining = trade.size;
     const side = String(trade.side ?? '').toUpperCase();
+    let stoppedThisTrade = false;
+    if (stopLossCents > 0 && openLots.length) {
+      const stopped = [];
+      for (const lot of openLots) {
+        const threshold = lot.entryPrice - stopLossCents / 100;
+        if (trade.price <= threshold + 1e-9) {
+          const pnl = (trade.price - lot.entryPrice) * lot.shares;
+          closedLots.push({
+            entryTs: lot.entryTs, entryPrice: lot.entryPrice, exitTs: trade.timestamp,
+            exitPrice: trade.price, shares: lot.shares, pnl, exitType: 'STOP',
+            stopLossCents, offsetCents: lot.offsetCents
+          });
+          stopped.push(lot);
+        }
+      }
+      for (const lot of stopped) {
+        const idx = openLots.indexOf(lot);
+        if (idx >= 0) openLots.splice(idx, 1);
+        inventoryShares -= lot.shares;
+        sells += 1;
+        stoppedThisTrade = true;
+        const level = uniqueLevels.find(l => Math.abs(l.price - lot.entryPrice) < 1e-12);
+        if (level) { level.filled = false; level.queueVol = 0; }
+      }
+    }
 
-    if (side === 'SELL' && entryAllowed) {
+    if (!stoppedThisTrade && side === 'SELL' && entryAllowed) {
       // Fill buy levels from highest price down.
       const candidates = uniqueLevels.filter(l => !l.filled && l.price >= trade.price - 1e-9).sort((a,b)=>b.price-a.price);
       for (const level of candidates) {
@@ -177,7 +204,7 @@ function simulateMarket(market, ref, targetCents) {
           maxInventory = Math.max(maxInventory, inventoryShares);
         }
       }
-    } else if (side === 'BUY') {
+    } else if (!stoppedThisTrade && side === 'BUY') {
       // Fill sell orders from lowest target up.
       const candidates = [...openLots].filter(l => l.sellPrice <= trade.price + 1e-9).sort((a,b)=>a.sellPrice-b.sellPrice);
       for (const lot of candidates) {
@@ -317,7 +344,7 @@ for(let bi=0;bi<bands.length-1;bi++){
         : (settleLots.length > 0 ? 1.0 : Math.max(maxFlattenLossRoi, 0.01));
       const tailBreakEvenLossRate = tailAvgWin > 0 ? tailAvgWin / (tailAvgWin + tailStressLoss) : null;
       results.push({
-        band:bandLabel(low, high), bandLow:low, bandHigh:high, tag, targetCents:target, momentumMinCents, momentumMaxCents, momentumLookbackSeconds, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose,
+        band:bandLabel(low, high), bandLow:low, bandHigh:high, tag, targetCents:target, momentumMinCents, momentumMaxCents, momentumLookbackSeconds, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose, stopLossCents,
         eligible:eligibleCount, filledMarkets, fillRate:eligibleCount?filledMarkets/eligibleCount:0,
         lots:allLots.length, buys:totalBuys, sells:totalSells,
         avgBuysPerFilledMarket:filledMarkets?totalBuys/filledMarkets:0,
@@ -338,6 +365,9 @@ for(let bi=0;bi<bands.length-1;bi++){
         flattenMarkets:new Set(allLots.filter(l=>l.exitType==='FLATTEN').map(l=>l.conditionId)).size,
         flattenLossCount:allLots.filter(l=>l.exitType==='FLATTEN'&&l.pnl<0).length,
         flattenLossMarkets:new Set(allLots.filter(l=>l.exitType==='FLATTEN'&&l.pnl<0).map(l=>l.conditionId)).size,
+        stopCount:allLots.filter(l=>l.exitType==='STOP').length,
+        stopLossCount:allLots.filter(l=>l.exitType==='STOP'&&l.pnl<0).length,
+        stopPnl:allLots.filter(l=>l.exitType==='STOP').reduce((a,b)=>a+b.pnl,0),
         marketLossRate,
         marketLossCi95:settlePnlByMarket.size ? wilson(marketLossRate, settlePnlByMarket.size) : [0,1],
         marketBreakEvenLossRate,
@@ -357,9 +387,9 @@ for(let bi=0;bi<bands.length-1;bi++){
     }
   }
 }
-fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,flattenHoursBeforeClose,flattenSlippageTicks,levelsCents,targetsCents,momentumMinCents,momentumMaxCents,momentumLookbackSeconds,results},null,2));
-console.log('band tag tgt levels elig filled fill% lots buys sells win% meanRoi roiCI worst tailMkts tailLossMkts tailLossCI maxInv');
+fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,flattenHoursBeforeClose,flattenSlippageTicks,stopLossCents,levelsCents,targetsCents,momentumMinCents,momentumMaxCents,momentumLookbackSeconds,results},null,2));
+console.log('band tag tgt levels elig filled fill% lots buys sells stops stopLoss win% meanRoi roiCI worst tailMkts tailLossMkts tailLossCI maxInv');
 for(const r of results){
-  console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.tailExitMarkets).padStart(5),String(r.tailExitLossMarkets).padStart(3),`[${(100*r.tailExitLossCi95[0]).toFixed(2)},${(100*r.tailExitLossCi95[1]).toFixed(2)}]`.padStart(15),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
+  console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),String(r.stopCount).padStart(4),String(r.stopLossCount).padStart(3),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.tailExitMarkets).padStart(5),String(r.tailExitLossMarkets).padStart(3),`[${(100*r.tailExitLossCi95[0]).toFixed(2)},${(100*r.tailExitLossCi95[1]).toFixed(2)}]`.padStart(15),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
 }
 console.log('wrote '+outputPath);
