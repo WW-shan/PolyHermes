@@ -24,7 +24,10 @@ $common = @{
   FillVolumeFactor = 2
   MinSpreadTicks = 1
   MaxQueue = 500
-  ImproveTicks = 1
+  # The historical ladder quotes at the reference price and exits at entry+target.
+  # Do not add an implicit one-tick improvement/undercut.
+  ImproveTicks = 0
+  ExitImproveTicks = 0
   RequoteSeconds = 300
   MaxOrderAgeSeconds = 1800
   FlowGuardWindowSeconds = 0

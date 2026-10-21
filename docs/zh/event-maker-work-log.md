@@ -2119,3 +2119,17 @@
 - $1,000 单档：129 lots，上界 2.892%，盈亏平衡 1.913% → FAIL（0 亏损但样本不足）。
 - $5,000 单档：47 lots，上界 7.556%，盈亏平衡 1.855% → FAIL（样本严重不足）。
 - 结论：Live smoke 只能从 $100 单档开始；$1k/$5k 仍需约 200 个独立成交 lot 才具备统计意义，不能因 ROI 看起来相同就放大仓位。
+### 20.24 2026-10-21 11:01 修正 maker ladder 的隐性 tick 偏移
+
+- 发现 suite 的 maker 臂继承了 `ImproveTicks=1`、`ExitImproveTicks=1`：
+  - 在 0.001 tick 市场上，入口实际变成 +0.1c / -0.4c / -0.9c / -1.9c，而不是 -0c / -0.5c / -1c / -2c；
+  - 出口也可能比 entry+2c 目标更早成交；
+  - 这与历史 ladder 模型不一致。
+- 已修正 `start-bond-shadow-suite.ps1`：
+  - `ImproveTicks = 0`
+  - `ExitImproveTicks = 0`
+- 已重启全部 11 个 Shadow 臂和 monitor；`run.json` 已核对：
+  - off00/05/10/20 = offset 0/0.5/1/2c
+  - improveTicks=0，exitImproveTicks=0
+  - 3c 臂和 $1k 臂也已对齐。
+- 当前没有 state / 成交，所以这次修正没有污染已有样本。

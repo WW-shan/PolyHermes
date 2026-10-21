@@ -618,3 +618,14 @@ queue 模型，stop=0，q2，off0：
 - 以 0 亏损的 Wilson 上界估算，$1k/$5k 都需要约 **200 个独立成交 lot** 才能把上界压到盈亏平衡线附近；当前分别只有 129/47。
 - 结论：**真实 Live smoke 只能从 $100 单档开始**；$1,000 Shadow 臂继续做容量验证，不能因为它 ROI 更高就放大。
 - 证据：`bond-tail-risk-audit-n1000-20261021.json`、`bond-tail-risk-audit-n5000-20261021.json`。
+### 14.6 Shadow maker ladder 的 tick 对齐修正（2026-10-21）
+
+- 历史候选的 tick size 全部为 **0.001**（0.1c）。
+- 修复前 suite 的 `ImproveTicks=1` 会把入口整体上移 0.1c：
+  - off00 → +0.1c
+  - off05 → -0.4c
+  - off10 → -0.9c
+  - off20 → -1.9c
+- 同时 `ExitImproveTicks=1` 可能让卖单早于 entry+2c 目标成交。
+- 已改为 `ImproveTicks=0`、`ExitImproveTicks=0`，使 maker 臂精确对应历史 ladder 的 0/0.5/1/2c 入口和 entry+target 出口。
+- 全部 11 个 Shadow 臂已重启，`run.json` 逐臂核对通过；当前仍无 state/fill，因此没有旧样本污染。
