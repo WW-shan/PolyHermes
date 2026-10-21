@@ -2270,3 +2270,12 @@
 - 全量：**109 suites / 624 tests / 0 failures / 0 errors / 2 skipped**。
 - 8 臂已于 2026-10-21 12:50:36 +08:00 用新代码重启，全部 `WAITING`，`0 fills / 0 settlements`，Gate `WAIT`。
 - 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-125036.json`。
+### 20.35 2026-10-21 13:05 当前代码回测复跑
+
+- 用当前代码重新运行 3–7d、0.97–0.99 Geopolitics、0/0.5/1/2c、+2c、每档 $100、max 4 tranches 的 ladder 回测（q2/q3/q4）。
+- q2：241 lots / 117 filled markets / mean ROI +1.870% / 0 settlement loss / Wilson 上界 1.569% / 余量 +0.266%。
+- q3：221 lots / 110 filled markets / mean ROI +1.876% / 0 settlement loss / 余量 +0.133%。
+- q4：216 lots / 105 filled markets / mean ROI +1.882% / 0 settlement loss。
+- q2 分年：2024 +1.455%、2025 +1.917%、2026 +1.904%，全部为正。
+- 证据：`backend/build/research/bond-ladder-current-q2-20261021.json`、`-q3-`、`-q4-`、`bond-tail-risk-current-q2-20261021.json`。
+- 结论不变：回测通过统计边界，但仍是 trade-print 近似；真实 Shadow 仍 0 fill，Gate WAIT，不能据此上真钱。

@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场。目标账户与历史 maker ladder 共同表明：0.97–0.99 Geopolitics +2c 的最优窗口是 close 前 **3–7 天**（q2/q3/q4 约 +1.88%，2024–2026 全为正，0 结算亏损）；最后 3 天为负，0.95–0.97 不稳定，Politics 为负。8 个 Shadow 臂已切到 3–7 天窗口；主候选改为单进程 4 档 ladder4，当前全部 WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 12:40 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量 109 suites / 624 tests 通过。2026-10-21 用当前代码复跑 4,189 市场数据集：0.97–0.99 Geopolitics、3–7 天、+2c、4 档 maker ladder 在 q2/q3/q4 分别为 +1.87% / +1.88% / +1.88%，2024–2026 全为正，0 结算亏损；q2 的 Wilson 95% 亏损率上界 1.569% < 盈亏平衡 1.835%，统计余量 +0.266%。8 个 Shadow 臂已切到 3–7 天窗口并全部 WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
+> 最后更新：2026-10-21 13:05 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -147,7 +147,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [x] 更新策略文档、运行手册和故障处理手册。
 - [x] 全量测试通过。
 - [x] 早期执行框架提交并推送（`6eca4ff`、`179f2b2`）。
-- [x] 本轮完整池回测、Shadow 修复和文档提交并推送（`06d168f`）。
+- [x] 本轮完整池回测、Shadow 修复和文档提交并推送（`06d168f`、`8c2466b`）。
 
 ## 5. 验收矩阵
 
@@ -165,7 +165,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
 | Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；v5 主臂/一档实验臂已用 69649e5 重启；实验臂已选中真实市场并挂单 |
 | 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；候选 q15–q50 零归零，50bps +0.069%、100bps -0.914% |
-| 全量回归 | 109 suites / 609 tests / 0 failures / 0 errors / 2 skipped | 已完成 |
+| 全量回归 | 109 suites / 624 tests / 0 failures / 0 errors / 2 skipped | 已完成（2026-10-21 12:55） |
 | 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
@@ -1484,3 +1484,20 @@ cd D:\Project\PolyHermes\backend
 - 全量回归：**109 suites / 622 tests / 0 failures / 0 errors / 2 skipped**。
 - 当前 8 臂全部 `WAITING`，`0 fills / 0 settlements`，Gate 仍为 `WAIT`。
 - 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-124019.json`。
+
+### 20.34 2026-10-21 13:05 当前代码回测复跑与多档收口
+
+- 官方费率复核：`https://docs.polymarket.com/trading/fees.md` 明确 **“Makers are never charged fees. Only takers pay fees.”**；所有类别 Maker Fee Rate = 0，Geopolitics Taker Fee Rate = 0。
+- 当前代码复跑同一 4,189 市场 7d 数据集，主策略参数为 0.97–0.99 Geopolitics、3–7d、0/0.5/1/2c、+2c、每档 $100、max 4 tranches：
+  - q2：160 eligible / 117 filled / 241 lots / mean ROI +1.870% / 0 settlement loss / Wilson 上界 1.569% / 余量 +0.266% → PASS。
+  - q3：160 eligible / 110 filled / 221 lots / mean ROI +1.876% / 0 settlement loss / 余量 +0.133% → PASS。
+  - q4：160 eligible / 105 filled / 216 lots / mean ROI +1.882% / 0 settlement loss / 余量 +0.100% → PASS。
+- 2024/2025/2026 分年均正；q2 分别为 +1.455% / +1.917% / +1.904%。
+- 多档引擎收口：
+  - requote 使用每条 leg 自己的 offset；
+  - 旧 offset leg 平仓后不能重新开 BUY；
+  - REST DTO 暴露 `ladderOffsetsCents`；
+  - 单档/多档 CLI 重启烟测通过。
+- 全量回归：**109 suites / 624 tests / 0 failures / 0 errors / 2 skipped**；Gate 回归 3/3 PASS。
+- 8 臂于 12:50:36 +08:00 用当前代码重启，全部 WAITING，0 fills / 0 settlements，Gate WAIT。
+- 代码提交并推送：`8c2466b feat: implement atomic multi-level ladder`。

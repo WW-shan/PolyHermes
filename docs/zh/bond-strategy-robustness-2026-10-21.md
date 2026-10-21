@@ -688,3 +688,29 @@ queue 模型，stop=0，q2，off0：
 - 结果：`resume smoke PASS`。
 - 证据：`backend/build/research/resume-smoke-latest/`。
 - 这说明恢复链路在真实 JVM 启动、发现、状态写入和关闭路径上都可工作。
+### 14.12 当前代码复跑与最新结论（2026-10-21 13:05）
+
+使用当前代码和同一份 `event-maker-full-v2-7d-20261019-dataset.json.gz`，按主候选参数重新运行 q2/q3/q4，不复用旧产物：
+
+```powershell
+node scripts/analyze-bond-ladder.cjs `
+  --dataset backend/build/research/event-maker-full-v2-7d-20261019-dataset.json.gz `
+  --output backend/build/research/bond-ladder-current-q2-20261021.json `
+  --horizon-days 7 --min-hours-to-close 72 --max-hours-to-close 168 `
+  --bands 0.90,0.95,0.97,0.99,1.0000001 `
+  --levels-cents 0,0.5,1,2 --sell-target-cents 1,2,3 `
+  --tranche-notional 100 --queue-factor 2 --max-tranches 4
+```
+
+| queue | lots | 成交市场 | mean ROI | 结算亏损 | 最差 lot ROI |
+|---|---:|---:|---:|---:|---:|
+| q2 | 241 | 117 / 160 | **+1.870%** | 0 | +1.011% |
+| q3 | 221 | 110 / 160 | **+1.876%** | 0 | +1.011% |
+| q4 | 216 | 105 / 160 | **+1.882%** | 0 | +1.011% |
+
+- q2 Wilson 95% 亏损率上界 **1.569%**，盈亏平衡 **1.835%**，统计余量 **+0.266%**。
+- q3 余量 **+0.133%**；q4 余量约 **+0.100%**（详见 `bond-tail-risk-current-q2-20261021.json` 及对应输入 JSON）。
+- q2 分年：2024 +1.455%、2025 +1.917%、2026 +1.904%，均为正且 0 结算亏损。
+- 官方费率复核：**maker 永远为 0**，Geopolitics taker 也为 0；本回测无手续费项是正确的。
+- 限制：这是 trade-print + queue factor 的近似回放，不是完整订单簿撮合；0 结算亏损只代表该历史样本，不能消除未来尾部风险。
+- 当前 8 个 Shadow 臂仍为 `WAITING`、0 fills / 0 settlements；Gate 必须继续等待真实样本，不能用回测结果替代。
