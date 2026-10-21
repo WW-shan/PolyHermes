@@ -73,7 +73,37 @@ class EventMakerLiveEngineTest {
     }
 
     @Test
-    fun `mock live flow completes buy and sell cycle through authoritative order status`() = runTest {
+    fun `outside entry window blocks new buys but still allows inventory exits`() = runTest {
+        val now = System.currentTimeMillis()
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        val state = EventMakerLiveState(market, config)
+        state.onBook(book(0.95, 0.97, now))
+        val books = mapOf("token" to state.lastBook!!)
+
+        val blockedEntry = engine.quote(listOf(state), books, 7L, now, emptySet())
+        assertTrue(blockedEntry.placed.isEmpty())
+        assertEquals(0, port.placeCount)
+
+        val entry = engine.quote(listOf(state), books, 7L, now, setOf("condition"))
+        val buyOrder = entry.placed.single().order
+        assertEquals(EventMakerSide.BUY, buyOrder.side)
+        port.fill(buyOrder.orderId, buyOrder.originalShares)
+        engine.reconcile(listOf(state), 7L, now + 1)
+        assertEquals(EventMakerPhase.LONG, state.phase)
+
+        state.onBook(book(0.96, 0.98, now + 2))
+        val exit = engine.quote(
+            listOf(state),
+            mapOf("token" to state.lastBook!!),
+            7L,
+            now + 2,
+            emptySet()
+        )
+        assertEquals(EventMakerSide.SELL, exit.placed.single().order.side)
+    }
+
+    @Test    fun `mock live flow completes buy and sell cycle through authoritative order status`() = runTest {
         val now = System.currentTimeMillis()
         val state = EventMakerLiveState(market, config)
         state.onBook(book(0.95, 0.97, now))

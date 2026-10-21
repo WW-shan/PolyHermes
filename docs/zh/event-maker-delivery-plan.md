@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场。目标账户与历史 maker ladder 共同表明：0.97–0.99 Geopolitics +2c 的最优窗口是 close 前 **3–7 天**（q2/q3/q4 约 +1.88%，2024–2026 全为正，0 结算亏损）；最后 3 天为负，0.95–0.97 不稳定，Politics 为负。11 个 Shadow 臂已切到 3–7 天窗口，当前因最近市场约 170h 而处于 LIVE/WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 10:12 +08:00<br>
+> 最后更新：2026-10-21 10:23 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -1377,3 +1377,11 @@ cd D:\Project\PolyHermes\backend
 - 新增 `scripts/start-bond-shadow-suite.ps1`：统一 11 臂配置，支持 DryRun、Restart 和自动重启 monitor。
 - 已实跑 Restart，11 JVM + monitor 全部启动；当前因 3–7 天窗口无市场而全部 WAITING。
 - 后续长测恢复使用该脚本，避免手工参数漂移。
+
+### 20.20 2026-10-21 10:23 官方费率确认与 Shadow 重启恢复
+
+- 官方费率：`https://docs.polymarket.com/trading/fees.md` 明确 **Makers are never charged fees. Only takers pay fees.**；所有类别 Maker Fee Rate=0，Geopolitics Taker=0。
+- Shadow `state.json` 已升级为完整 ledger；新增 `recovery.json`，重启恢复 fills / cycles / settlements / inventory。
+- 旧 active order 在重启后丢弃队列、保留已成交库存；outside-window flat 市场不允许重新开仓，库存仍可退出。
+- 订单 ID、日志续写、gate 的 `runHours` 和分布式 ladder 聚合已修正。
+- 当前 gate 仍为 `WAIT`：0 fills、0 settlements、候选组等待市场。下一步仍是积累真实 Shadow 样本，而不是上真钱。

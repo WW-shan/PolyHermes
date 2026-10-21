@@ -61,6 +61,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
     private val nextId = AtomicLong(0)
     private val orders = linkedMapOf<String, SimulatedOrder>()
     private val immediateFills = mutableListOf<EventMakerShadowFill>()
+    private var orderIdPrefix = "shadow-${ProcessHandle.current().pid()}-${System.currentTimeMillis()}-${INSTANCE_SEQUENCE.incrementAndGet()}"
 
     @Volatile
     private var fillVolumeFactor = 1.0
@@ -75,6 +76,17 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
     fun configureFillModel(factor: Double) = synchronized(lock) {
         require(factor >= 0.0) { "fillVolumeFactor must be non-negative" }
         fillVolumeFactor = factor
+    }
+
+    /**
+     * Gives every process a distinct order-id namespace. Shadow ledgers survive
+     * restarts, so reusing "shadow-1" would make old fills and new orders
+     * indistinguishable.
+     */
+    fun configureOrderIdPrefix(prefix: String) = synchronized(lock) {
+        require(prefix.isNotBlank()) { "orderIdPrefix must not be blank" }
+        orderIdPrefix = prefix
+        nextId.set(0)
     }
 
     fun configureSettlementResolver(
@@ -97,7 +109,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         market: LivePaperMarket,
         intent: EventMakerQuoteIntent
     ): Result<EventMakerLiveOrder> = synchronized(lock) {
-        val orderId = "shadow-${nextId.incrementAndGet()}"
+        val orderId = "$orderIdPrefix-${nextId.incrementAndGet()}"
         val now = System.currentTimeMillis()
         val queueAhead = if (intent.takerEntry) BigDecimal.ZERO else BigDecimal.valueOf(intent.queueAheadShares)
         val order = SimulatedOrder(
@@ -309,5 +321,6 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
 
     companion object {
         private val SHARE_EPSILON = BigDecimal("0.000001")
+        private val INSTANCE_SEQUENCE = AtomicLong(0)
     }
 }

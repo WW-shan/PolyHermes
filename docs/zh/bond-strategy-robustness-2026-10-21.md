@@ -523,3 +523,38 @@ queue 模型，stop=0，q2，off0：
 - ROI 对规模几乎不敏感，但 fill rate 随规模下降；策略容量有限。
 - 这不是“每天稳定赚几百美元”的高频策略；$1,000 单档的年化量级约 $900，且需要约 $2k–$4k 的分散库存。
 - 已新增 `$1,000` 单档 Shadow 对照臂，验证真实规模下能否成交；不能只用 $100 的理论收益推断容量。
+## 14. 官方费率最终复核（2026-10-21）
+
+官方页面：`https://docs.polymarket.com/trading/fees.md`
+
+原文：
+
+> **Makers are never charged fees.** Only takers pay fees.
+
+费率表复核结果：
+
+| 类别 | Taker Fee Rate | Maker Fee Rate |
+|---|---:|---:|
+| Geopolitics | 0 | 0 |
+| Politics | 0.04 | 0 |
+| Crypto / Sports / Finance / Economics / Culture / Weather / Other / Mentions / Tech / Combos | 各自见官方表 | 0 |
+
+补充：
+
+- 官方另有 Maker Rebates / Taker Rebates 计划，但返佣不等于收费；
+- Gamma 市场字段里的 `makerBaseFee=1000` 不能当作实际 maker 费率，当前官方费率表所有类别 maker 都是 0；
+- 因此 Geopolitics 主策略的 **maker 挂单没有手续费**，Geopolitics 的 taker 也是 0；
+- 这不改变策略的主要风险：成交概率、队列位置、机会成本、价格逆向变动和尾部结算亏损。
+
+## 15. Shadow 重启安全（2026-10-21）
+
+长测不再使用“重启即删 state”的行为。当前恢复链路：
+
+1. `state.json` 保存完整版本化 ledger（fills、cycles、settlements、inventory、active order、realized PnL、日度 PnL 锚点）；
+2. `recovery.json` 保存完整市场元数据，保证仓位离开当前 3–7 天发现窗口后仍能恢复；
+3. 重启时恢复库存和已结算记录，旧进程留下的 Shadow active order 被标记为放弃，不保留虚假队列；
+4. 有库存的旧市场允许继续卖出/结算；已经 flat 且不在当前窗口的旧市场禁止重新开仓；
+5. 日志文件续写，订单 ID 带进程命名空间，gate 的 `runHours` 使用持久化 `startedAt`；
+6. gate 候选改为 `off00/off05/off10/off20` 四个 maker 臂聚合，因为单臂并不等价于历史 ladder。
+
+仍未完成：真实 SETTLE 样本、24–48h 真实 fill 样本、60s/300s markout 验证和 gate PASS。当前不能上真钱。

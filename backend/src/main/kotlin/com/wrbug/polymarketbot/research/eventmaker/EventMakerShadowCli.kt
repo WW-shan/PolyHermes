@@ -2,6 +2,7 @@ package com.wrbug.polymarketbot.research.eventmaker
 
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonObject
 import com.wrbug.polymarketbot.research.livepaper.LiveFeedEvent
 import com.wrbug.polymarketbot.research.livepaper.LivePaperDataClient
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
@@ -16,11 +17,15 @@ import com.wrbug.polymarketbot.service.eventmaker.EventMakerLiveEngine
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerLiveState
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerMarkoutCalculator
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerMarketSelector
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerMode
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerPersistedMarket
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerPersistedState
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerQuotePlanner
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerRiskPolicy
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerShadowExecutionPort
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerShadowFill
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerSettlementSnapshot
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerStateStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,7 +41,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
 
@@ -92,6 +99,12 @@ internal data class ShadowOptions(
 
 private data class ShadowSummary(
     val mode: String,
+    val resumed: Boolean,
+    val recoveredFills: Int,
+    val recoveredCycles: Int,
+    val recoveredSettlements: Int,
+    val recoveredInventoryShares: Double,
+    val abandonedRecoveredOrders: Int,
     val startedAt: Long,
     val stoppedAt: Long,
     val durationSeconds: Long,
@@ -329,52 +342,92 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
     private val pendingMarkouts = mutableListOf<PendingMarkout>()
     private var droppedPendingMarkouts = 0
     private var selectedMarkets: List<LivePaperMarket> = emptyList()
+    private val stateStore = EventMakerStateStore(options.outputDir.resolve("state.json").toString())
+    private val recoveryPath = options.outputDir.resolve("recovery.json")
+    private var resumed = false
+    private var runStartedAt = 0L
+    private var dailyPnlDay = 0L
+    private var dailyPnlBaseline = 0.0
+    private var recoveredFills = 0
+    private var recoveredCycles = 0
+    private var recoveredSettlements = 0
+    private var recoveredInventoryShares = 0.0
+    private var abandonedRecoveredOrders = 0
 
     fun run(): ShadowSummary = runBlocking {
         val runnerStartedAt = System.currentTimeMillis()
         Files.createDirectories(options.outputDir)
-        listOf("summary.json", "state.json", "execution-diagnostics.json", "market-watch-timeout.json", "markets.json").forEach { name ->
+        val persistedState = loadShadowState()
+        if (persistedState != null && persistedState.mode != EventMakerMode.SHADOW.name) {
+            throw IllegalStateException("shadow_output_contains_non_shadow_state:${persistedState.mode}")
+        }
+        val persistedRecovery = EventMakerShadowRecoveryStore.load(recoveryPath)
+        resumed = persistedState != null
+        runStartedAt = persistedState?.startedAt ?: runnerStartedAt
+        val today = utcEpochDay(runnerStartedAt)
+        dailyPnlDay = persistedState?.dailyPnlDay?.takeIf { it == today } ?: today
+        dailyPnlBaseline = if (persistedState?.dailyPnlDay == today) {
+            persistedState.dailyPnlBaseline ?: persistedState.cumulativeRealizedPnl
+        } else {
+            persistedState?.cumulativeRealizedPnl ?: 0.0
+        }
+        recoveredFills = persistedState?.markets?.sumOf { it.fills.orEmpty().size } ?: 0
+        recoveredCycles = persistedState?.markets?.sumOf { it.cycles.orEmpty().size } ?: 0
+        recoveredSettlements = persistedState?.markets?.sumOf { it.settlements.orEmpty().size } ?: 0
+        recoveredInventoryShares = persistedState?.markets?.sumOf {
+            it.inventoryShares.toBigDecimalOrNull()?.toDouble() ?: 0.0
+        } ?: 0.0
+        val recoveryMarkets = persistedRecovery?.markets.orEmpty()
+
+        // summary/diagnostics are per-process views and are rewritten during this run.
+        // state.json and recovery.json are the durable ledger and must survive a restart.
+        listOf("summary.json", "execution-diagnostics.json", "market-watch-timeout.json", "markets.json").forEach { name ->
             Files.deleteIfExists(options.outputDir.resolve(name))
         }
-        eventsWriter = Files.newBufferedWriter(
-            options.outputDir.resolve("events.jsonl"),
-            StandardCharsets.UTF_8,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE
-        )
-        snapshotsWriter = Files.newBufferedWriter(
-            options.outputDir.resolve("snapshots.csv"),
-            StandardCharsets.UTF_8,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE
-        )
-        snapshotsWriter.write("timestamp,market_id,phase,best_bid,best_ask,entry_price,inventory_shares,active_order_id,active_order_price,realized_pnl,unrealized_pnl,completed_cycles,fills\n")
-        tradesWriter = Files.newBufferedWriter(
-            options.outputDir.resolve("trades.csv"),
-            StandardCharsets.UTF_8,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE
-        )
-        tradesWriter.write("timestamp,condition_id,token_id,side,price,size,source,transaction_hash\n")
-        markoutsWriter = Files.newBufferedWriter(
-            options.outputDir.resolve("markouts.csv"),
-            StandardCharsets.UTF_8,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE
-        )
-        markoutsWriter.write("fill_timestamp,market_id,order_id,side,fill_price,shares,horizon_seconds,markout_at,book_age_ms,best_bid,best_ask,markout_pnl\n")
+        fun openLog(name: String): java.io.BufferedWriter {
+            val path = options.outputDir.resolve(name)
+            val openOptions = if (resumed) {
+                arrayOf(StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE)
+            } else {
+                arrayOf(StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
+            }
+            return Files.newBufferedWriter(path, StandardCharsets.UTF_8, *openOptions)
+        }
+        fun needsHeader(name: String): Boolean {
+            val path = options.outputDir.resolve(name)
+            return !resumed || !Files.exists(path) || Files.size(path) == 0L
+        }
 
-        val discoveryAttemptsWriter = Files.newBufferedWriter(
-            options.outputDir.resolve("discovery-attempts.jsonl"),
-            StandardCharsets.UTF_8,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE
-        )
+        eventsWriter = openLog("events.jsonl")
+        val snapshotHeader = needsHeader("snapshots.csv")
+        snapshotsWriter = openLog("snapshots.csv")
+        if (snapshotHeader) {
+            snapshotsWriter.write("timestamp,market_id,phase,best_bid,best_ask,entry_price,inventory_shares,active_order_id,active_order_price,realized_pnl,unrealized_pnl,completed_cycles,fills\n")
+        }
+        val tradeHeader = needsHeader("trades.csv")
+        tradesWriter = openLog("trades.csv")
+        if (tradeHeader) {
+            tradesWriter.write("timestamp,condition_id,token_id,side,price,size,source,transaction_hash\n")
+        }
+        val markoutHeader = needsHeader("markouts.csv")
+        markoutsWriter = openLog("markouts.csv")
+        if (markoutHeader) {
+            markoutsWriter.write("fill_timestamp,market_id,order_id,side,fill_price,shares,horizon_seconds,markout_at,book_age_ms,best_bid,best_ask,markout_pnl\n")
+        }
+        val discoveryAttemptsWriter = openLog("discovery-attempts.jsonl")
+        if (resumed) {
+            writeEvent(
+                mapOf(
+                    "type" to "shadow_resume",
+                    "timestamp" to runnerStartedAt,
+                    "originalStartedAt" to runStartedAt,
+                    "recoveredFills" to recoveredFills,
+                    "recoveredCycles" to recoveredCycles,
+                    "recoveredSettlements" to recoveredSettlements,
+                    "recoveredInventoryShares" to recoveredInventoryShares
+                )
+            )
+        }
         var discoveryAttempt = 0
         lateinit var discovery: MarketDiscoveryResult
         lateinit var discovered: List<LivePaperMarket>
@@ -491,7 +544,14 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     "activityRejections=$activityRejectionReasons reasons=$selectionReasons " +
                     "stopped=${discovery.stats.stoppedReason}"
             )
-            if (discovered.isNotEmpty()) break
+            val recoveredHasWork = persistedState?.markets?.any { persistedMarket ->
+                (persistedMarket.inventoryShares.toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO) >
+                    java.math.BigDecimal.ZERO ||
+                    persistedMarket.settlements.orEmpty().any {
+                        it.redemptionStatus == com.wrbug.polymarketbot.service.eventmaker.EventMakerRedemptionStatus.PENDING
+                    }
+            } == true
+            if (discovered.isNotEmpty() || recoveredHasWork) break
             val now = System.currentTimeMillis()
             if (now >= waitDeadline) {
                 Files.writeString(
@@ -524,9 +584,21 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         }
         discoveryAttemptsWriter.close()
         val marketWaitSeconds = (System.currentTimeMillis() - runnerStartedAt) / 1_000L
+        val ledgerMarkets = persistedState?.markets.orEmpty()
+        val ledgerByCondition = ledgerMarkets.associateBy { it.conditionId }
+        val recoveredByCondition = recoveryMarkets.associateBy { it.conditionId }
+        val recoveredMarketMetadata = ledgerMarkets.mapNotNull { persistedMarket ->
+            recoveredByCondition[persistedMarket.conditionId]
+                ?: EventMakerShadowRecoveryStore.reconstructMarket(persistedMarket)
+                ?: throw IllegalStateException(
+                    "shadow_recovery_market_metadata_missing:${persistedMarket.conditionId}"
+                )
+        }
+        val allMarkets = EventMakerShadowRecoveryStore.merge(discovered, recoveredMarketMetadata)
+        val discoveredConditionIds = discovered.map { it.conditionId }.toSet()
         val config = EventMakerConfig(
-            mode = com.wrbug.polymarketbot.service.eventmaker.EventMakerMode.SHADOW,
-            maxMarkets = discovered.size,
+            mode = EventMakerMode.SHADOW,
+            maxMarkets = maxOf(1, allMarkets.size),
             minVolume24hr = options.minVolume24hr,
             minRecentTrades30m = options.minRecentTrades30m,
             minRecentNotional30m = options.minRecentNotional30m,
@@ -561,10 +633,34 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             staleBookSeconds = options.staleBookSeconds,
             activeOrderStaleBookSeconds = options.activeOrderStaleBookSeconds
         )
-        selectedMarkets = discovered
-        val states = discovered.map { EventMakerLiveState(it, config) }
+        selectedMarkets = allMarkets
+        val states = allMarkets.map { market ->
+            EventMakerLiveState(market, config).apply {
+                ledgerByCondition[market.conditionId]?.let { persistedMarket ->
+                    restore(persistedMarket)
+                    // A Shadow order lives only in the previous JVM. The ledger
+                    // keeps fills/inventory, but the resting queue position is gone.
+                    if (activeOrder != null) {
+                        onOrderCanceled()
+                        abandonedRecoveredOrders++
+                    }
+                }
+            }
+        }
+        if (abandonedRecoveredOrders > 0) {
+            writeEvent(
+                mapOf(
+                    "type" to "shadow_recovered_orders_abandoned",
+                    "timestamp" to System.currentTimeMillis(),
+                    "count" to abandonedRecoveredOrders
+                )
+            )
+        }
         shadowExecution = EventMakerShadowExecutionPort()
         shadowExecution.reset()
+        shadowExecution.configureOrderIdPrefix(
+            "shadow-${ProcessHandle.current().pid()}-$runnerStartedAt"
+        )
         shadowExecution.configureFillModel(options.fillVolumeFactor)
         shadowExecution.configureSettlementResolver { market ->
             dataClient.getMarketResolution(market.conditionId).map { resolution ->
@@ -575,28 +671,46 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             }
         }
         val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), shadowExecution)
-        if (options.flowGuardWindowSeconds > 0) {
-            discovered.forEach { market -> dataClient.getRecentTrades(market).forEach(engine::onTrade) }
+        engine.resetDailyPnlBaseline(states)
+        val watchedMarkets = allMarkets.filter { market ->
+            market.conditionId in discoveredConditionIds ||
+                states.first { it.market.conditionId == market.conditionId }.inventoryShares > java.math.BigDecimal.ZERO
         }
-        discovered.forEach { market -> books[market.favoriteTokenId]?.let { states.first { s -> s.market.conditionId == market.conditionId }.onBook(it) } }
+        if (options.flowGuardWindowSeconds > 0) {
+            watchedMarkets.forEach { market -> dataClient.getRecentTrades(market).forEach(engine::onTrade) }
+        }
+        watchedMarkets.forEach { market ->
+            if (!books.containsKey(market.favoriteTokenId)) {
+                dataClient.getBook(market.favoriteTokenId)?.let { books[market.favoriteTokenId] = it }
+            }
+        }
+        allMarkets.forEach { market ->
+            books[market.favoriteTokenId]?.let { book ->
+                states.firstOrNull { it.market.conditionId == market.conditionId }?.onBook(book)
+            }
+        }
         val startedAt = System.currentTimeMillis()
         val deadline = startedAt + options.minutes * 60_000L
         lastSnapshotAt = startedAt
-        writeMarketList(discovered)
-        println("markets=${discovered.size} minutes=${options.minutes} minRemaining=${options.minRemainingMinutes}")
+        writeMarketList(allMarkets)
+        writeState(states)
+        println(
+            "markets=${allMarkets.size} discovered=${discovered.size} resumed=$resumed " +
+                "minutes=${options.minutes} minRemaining=${options.minRemainingMinutes}"
+        )
 
         wsClient = LivePaperWsClient(
             proxyUrl = options.proxyUrl,
-            tokenToCondition = discovered.flatMap { market -> market.tokenIds.map { it to market.conditionId } }.toMap(),
+            tokenToCondition = watchedMarkets.flatMap { market -> market.tokenIds.map { it to market.conditionId } }.toMap(),
             onEvent = { channel.trySend(ShadowEvent.Feed(it)) },
             onStatus = { status -> println(status); writeEvent(mapOf("type" to "ws_status", "status" to status, "timestamp" to System.currentTimeMillis())) }
         ).also { it.start() }
         val jobs = mutableListOf<Job>()
         jobs += scope.launch {
-            val lastSeen = mutableMapOf<String, Long>()
+            val lastSeen = loadLastTradeTimestamps().toMutableMap()
             while (isActive) {
                 delay(options.pollSeconds * 1000L)
-                discovered.forEach { market ->
+                watchedMarkets.forEach { market ->
                     // Only ask for prints newer than the last forwarded one; the Data
                     // API otherwise re-serves the same 200 rows on every poll.
                     val since = lastSeen[market.conditionId]
@@ -621,10 +735,10 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                 var duplicateTrade = false
                 when (event) {
                     is ShadowEvent.Feed -> when (val feed = event.event) {
-                        is LiveFeedEvent.BookUpdated -> applyBook(feed.book, states, discovered)
+                        is LiveFeedEvent.BookUpdated -> applyBook(feed.book, states, allMarkets)
                         is LiveFeedEvent.PricesChanged -> feed.changes.forEach { change ->
                             val current = books[change.tokenId] ?: MarketBook(change.tokenId, emptyList(), emptyList(), change.timestamp)
-                            applyBook(current.applyPriceChange(change), states, discovered)
+                            applyBook(current.applyPriceChange(change), states, allMarkets)
                         }
                         is LiveFeedEvent.Trade -> duplicateTrade = applyTrade(feed.trade, engine)
                         is LiveFeedEvent.Unknown -> writeEvent(mapOf("type" to "unknown", "eventType" to feed.eventType))
@@ -641,8 +755,9 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                 val result = engine.reconcile(states, 0L, now)
                     .merge(engine.settleResolved(states.filter { it.isExpired(now) }, 0L, now))
                     .merge(engine.redeemPendingRedemptions(states, 0L, now))
-                    .merge(engine.quote(states, books, 0L, now))
+                    .merge(engine.quote(states, books, 0L, now, discoveredConditionIds))
                 recordEngineResult(result)
+                if (result.hasStateChanges()) writeState(states)
                 if (result.haltedReason != null) {
                     haltedReason = result.haltedReason
                     break@loop
@@ -682,10 +797,16 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         val cycles = states.flatMap { it.cycles }
         val summary = ShadowSummary(
             mode = "SHADOW",
-            startedAt = startedAt,
+            resumed = resumed,
+            recoveredFills = recoveredFills,
+            recoveredCycles = recoveredCycles,
+            recoveredSettlements = recoveredSettlements,
+            recoveredInventoryShares = recoveredInventoryShares,
+            abandonedRecoveredOrders = abandonedRecoveredOrders,
+            startedAt = runStartedAt,
             stoppedAt = stoppedAt,
-            durationSeconds = (stoppedAt - startedAt) / 1000L,
-            markets = discovered.size,
+            durationSeconds = (stoppedAt - runStartedAt) / 1000L,
+            markets = allMarkets.size,
             trades = trades,
             duplicateTradeEvents = duplicateTradeEvents,
             bookUpdates = bookUpdates,
@@ -790,16 +911,86 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         return markets.filter { market -> rows.first { it.conditionId == market.conditionId }.selected }
     }
 
-    private fun writeState(states: List<EventMakerLiveState>) {
-        Files.writeString(
-            options.outputDir.resolve("state.json"),
-            prettyGson.toJson(mapOf("markets" to states.map { it.toPersisted() })),
-            StandardCharsets.UTF_8,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE
+    /**
+     * The first Shadow builds wrote only {"markets":[...]}. Accept that shape
+     * once, then immediately persist the full versioned ledger on startup.
+     */
+    private fun loadShadowState(): EventMakerPersistedState? {
+        val path = options.outputDir.resolve("state.json")
+        if (!Files.exists(path)) return null
+        val root = try {
+            gson.fromJson(Files.readString(path, StandardCharsets.UTF_8), JsonObject::class.java)
+        } catch (error: Exception) {
+            throw IllegalStateException("shadow_state_corrupt", error)
+        } ?: throw IllegalStateException("shadow_state_empty")
+        if (root.has("mode")) return stateStore.load()
+        val legacy = try {
+            gson.fromJson(root, LegacyShadowState::class.java)
+        } catch (error: Exception) {
+            throw IllegalStateException("shadow_state_legacy_corrupt", error)
+        }
+        val now = System.currentTimeMillis()
+        return EventMakerPersistedState(
+            mode = EventMakerMode.SHADOW.name,
+            accountId = null,
+            startedAt = now,
+            cumulativeRealizedPnl = legacy.markets.sumOf { it.realizedPnl },
+            dailyPnlDay = utcEpochDay(now),
+            dailyPnlBaseline = 0.0,
+            markets = legacy.markets
         )
     }
+
+    private data class LegacyShadowState(
+        val markets: List<EventMakerPersistedMarket> = emptyList()
+    )
+
+    private fun loadLastTradeTimestamps(): Map<String, Long> {
+        val path = options.outputDir.resolve("trades.csv")
+        if (!resumed || !Files.exists(path)) return emptyMap()
+        val latest = mutableMapOf<String, Long>()
+        Files.newBufferedReader(path, StandardCharsets.UTF_8).useLines { lines ->
+            lines.drop(1).forEach { line ->
+                val fields = line.split(',', limit = 3)
+                if (fields.size >= 2) {
+                    val timestamp = fields[0].toLongOrNull() ?: return@forEach
+                    val conditionId = fields[1]
+                    if (conditionId.isNotBlank()) latest[conditionId] = maxOf(latest[conditionId] ?: 0L, timestamp)
+                }
+            }
+        }
+        return latest
+    }
+
+    private fun writeState(states: List<EventMakerLiveState>) {
+        val now = System.currentTimeMillis()
+        val today = utcEpochDay(now)
+        val realized = states.sumOf { it.realizedPnl }
+        if (dailyPnlDay != today) {
+            dailyPnlDay = today
+            dailyPnlBaseline = realized
+        }
+        stateStore.save(
+            EventMakerPersistedState(
+                mode = EventMakerMode.SHADOW.name,
+                accountId = null,
+                startedAt = runStartedAt,
+                cumulativeRealizedPnl = realized,
+                dailyPnlDay = dailyPnlDay,
+                dailyPnlBaseline = dailyPnlBaseline,
+                markets = states.map { it.toPersisted() }
+            )
+        )
+        EventMakerShadowRecoveryStore.save(recoveryPath, selectedMarkets, now)
+    }
+
+    private fun EventMakerEngineResult.hasStateChanges(): Boolean =
+        placed.isNotEmpty() || canceled.isNotEmpty() ||
+            reconciled.any { it.events.isNotEmpty() } ||
+            settlements.isNotEmpty() || redemptions.isNotEmpty()
+
+    private fun utcEpochDay(epochMillis: Long): Long =
+        Instant.ofEpochMilli(epochMillis).atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()
 
     private fun applyBook(book: MarketBook, states: List<EventMakerLiveState>, markets: List<LivePaperMarket>) {
         books[book.tokenId] = book

@@ -2064,3 +2064,25 @@
   - 自动重启 monitor（默认 30 分钟审计一次）。
 - `-Restart` 已实跑：11 个 JVM + monitor 全部启动，当前全部 WAITING；启动记录写入 `backend/build/research/bond-shadow-suite-start-*.json`。
 - 这样后续长测恢复不再依赖手工复制一长串参数，避免配置漂移。
+### 20.20 2026-10-21 官方 Maker 费率与重启恢复
+
+- 再次直连官方 `https://docs.polymarket.com/trading/fees.md` 复核（HTTP 200），原文为：
+  - **“Makers are never charged fees. Only takers pay fees.”**
+  - 所有类别的 **Maker Fee Rate = 0**；Geopolitics 的 **Taker Fee Rate 也是 0**。
+  - Politics Taker 0.04；maker rebate 是返佣计划，不代表 maker 付费。
+  - Gamma 返回的 `makerBaseFee=1000` 是历史遗留字段，不是当前实际 maker 费率。
+- 结论：当前 0.97–0.99 Geopolitics maker ladder 在官方费率口径下没有 maker 手续费；但仍有价差、逆向选择、成交概率和队列风险，不能把“0 手续费”误解成“无风险套利”。
+- Shadow 重启恢复已实现：
+  - `state.json` 改为完整 `EventMakerPersistedState`，不再只写 `markets`；
+  - 新增 `recovery.json` 保存完整市场元数据，支持仓位离开 3–7 天窗口后继续恢复、卖出或结算；
+  - 重启时从 ledger 恢复 fills / cycles / settlements / inventory / realized PnL；
+  - 进程死亡后旧 active order 只清除队列状态，不丢已成交库存；
+  - 重启后 outside-window 的 flat 市场不允许重新开仓，但有库存的市场仍允许退出；
+  - 订单 ID 增加进程前缀，避免跨重启的 `shadow-1` 冲突；
+  - events / snapshots / trades / markouts / discovery-attempts 改为续写，不再截断历史；
+  - gate 使用持久化的 `startedAt`，并把 off00/05/10/20 聚合成一个分布式 ladder 候选组，而不是要求单臂独立过门槛。
+- 新增测试：
+  - `EventMakerShadowRecoveryTest`：sidecar 往返、市场合并、partial inventory + active order + cycle + settlement 恢复；
+  - `EventMakerLiveEngineTest`：outside-window 禁止新开仓但允许库存退出；
+  - `EventMakerShadowExecutionPortTest`：跨实例订单 ID 唯一。
+- 当前 gate 仍为 `WAIT`：候选组等待 3–7 天市场、0 fills、0 settlements；这是样本不足，不是策略已通过。

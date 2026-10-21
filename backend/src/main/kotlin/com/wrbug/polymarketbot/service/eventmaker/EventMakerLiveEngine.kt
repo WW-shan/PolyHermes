@@ -116,11 +116,28 @@ class EventMakerLiveEngine(
         states: List<EventMakerLiveState>,
         books: Map<String, MarketBook>,
         accountId: Long,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        /**
+         * Optional entry whitelist. Restored positions outside the current
+         * discovery window must still be allowed to exit, but must not open a
+         * fresh cycle after they become flat again.
+         */
+        eligibleMarketIds: Set<String>? = null
     ): EventMakerEngineResult {
         haltedReason?.let { return EventMakerEngineResult.halted(it) }
         var result = EventMakerEngineResult()
         for (state in states) {
+            val entryEligible = eligibleMarketIds == null || state.market.conditionId in eligibleMarketIds
+            if (!entryEligible) {
+                val recoveredActive = state.activeOrder
+                if (recoveredActive == null && state.inventoryShares <= BigDecimal.ZERO) continue
+                if (recoveredActive != null && recoveredActive.side == EventMakerSide.BUY) {
+                    result = result.merge(
+                        cancelAndReconcile(state, accountId, now, "outside_entry_window", recoveredActive)
+                    )
+                    continue
+                }
+            }
             val active = state.activeOrder
             if (active != null) {
                 val book = books[state.market.favoriteTokenId] ?: state.lastBook

@@ -23,6 +23,17 @@ class EventMakerShadowExecutionPortTest {
     }
 
     @Test
+    fun `default and configured order ids are unique across process-like instances`() = runTest {
+        val first = EventMakerShadowExecutionPort()
+        val second = EventMakerShadowExecutionPort().apply { configureOrderIdPrefix("shadow-restarted") }
+        val firstOrder = first.place(0L, market, intent(EventMakerSide.BUY, "0.97", "10.00", 0.0).copy(takerEntry = true)).getOrThrow()
+        val secondOrder = second.place(0L, market, intent(EventMakerSide.BUY, "0.97", "10.00", 0.0).copy(takerEntry = true)).getOrThrow()
+
+        assertTrue(firstOrder.orderId != secondOrder.orderId)
+        assertEquals(true, secondOrder.orderId.startsWith("shadow-restarted-"))
+    }
+
+    @Test
     fun `taker entry fills immediately without waiting for public flow`() = runTest {
         val placed = port.place(
             0L,
