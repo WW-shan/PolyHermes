@@ -1528,5 +1528,5 @@ cd D:\Project\PolyHermes\backend
   - q4：12 个结算市场、0 亏损市场、上界 **24.250%**、盈亏平衡 **2.310%** → **FAIL**。
 - 结论：点估计仍为正，但**没有足够独立结算市场证明尾部风险可控**；此前基于 leg 数的 PASS 作废，不能据此上真钱。
 - `analyze-bond-ladder.cjs` 新增 `settleMarkets` / `settleLossMarkets` / `marketLossCi95` / `marketBreakEvenLossRate`；`audit-bond-tail-risk.cjs` 增加 market-cluster verdict。
-- `evaluate-bond-shadow-gate.cjs` 改为按 `marketId` 聚类 settlement，`min-settlements=50` 现在表示 **50 个独立结算市场**；`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
+- `evaluate-bond-shadow-gate.cjs` 改为按 `marketId` 聚类 settlement，`min-settlement-markets=50` 现在表示 **50 个独立结算市场**；`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
 - Gate 回归仍为 3/3 PASS；当前 gate 仍 `WAIT`（0 settlement markets）。

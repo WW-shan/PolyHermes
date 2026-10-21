@@ -38,7 +38,7 @@ const dirs = String(arg('dirs', defaultDirs.join(','))).split(',').map(s => s.tr
 const candidates = String(arg('candidates', candidateDirs.join(','))).split(',').map(s => s.trim()).filter(Boolean);
 const minRunHours = argNum('min-run-hours', 24);
 const minCandidateFills = argNum('min-candidate-fills', 20);
-const minSettlements = argNum('min-settlements', 50);
+const minSettlementMarkets = argNum('min-settlement-markets', argNum('min-settlements', 50));
 const maxSettlementLossUpper = argNum('max-settlement-loss-upper', 1.0);
 const minMarkout60Roi = argNum('min-markout60-roi', -0.01);
 
@@ -226,7 +226,7 @@ const totals = {
   settleLosses: arms.reduce((s, a) => s + (a.settleLosses || 0), 0),
 };
 const blockers = new Set();
-if (settlementMarkets < minSettlements) blockers.add(`TOTAL_SETTLEMENT_MARKETS_BELOW_${minSettlements}`);
+if (settlementMarkets < minSettlementMarkets) blockers.add(`TOTAL_SETTLEMENT_MARKETS_BELOW_${minSettlementMarkets}`);
 for (const group of candidateGroups) (group.reasons || []).forEach(r => blockers.add(r));
 const unavailable = arms.some(a => a.missing && !a.waitingForMarket) ||
   candidateGroups.some(g => g.missingMembers.length > 0 && !g.waitingForMarket);
@@ -240,7 +240,7 @@ const publicArm = a => {
 };
 const report = {
   generatedAt: new Date().toISOString(), status,
-  thresholds: { minRunHours, minCandidateFills, minSettlements, maxSettlementLossUpper, minMarkout60Roi },
+  thresholds: { minRunHours, minCandidateFills, minSettlementMarkets, minSettlements: minSettlementMarkets, maxSettlementLossUpper, minMarkout60Roi },
   totals, blockers: [...blockers], fatalBlockers, candidates: candidateGroups, candidateGroups,
   arms: arms.map(publicArm),
 };
