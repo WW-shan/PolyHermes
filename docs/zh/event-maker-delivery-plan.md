@@ -1294,3 +1294,16 @@ cd D:\Project\PolyHermes\backend
   - `backend/build/research/bond-ladder-periods-20261021.json`
   - `backend/build/research/bond-ladder-q3b-20261021.json`
   - `backend/build/research/bond-ladder-q4b-20261021.json`
+
+### 20.9 2026-10-21 08:45 24h 动量过滤与等待臂
+
+- 新增 Shadow CLI / Gradle / `start-bond-shadow.ps1` 的 24h 动量参数：
+  - `--entry-momentum-min-cents`
+  - `--entry-momentum-max-cents`
+  - `--entry-momentum-lookback-seconds`
+  - `-WaitForMarketMinutes`
+- 逻辑：当前 favorite best bid 对比 lookback 内第一笔 favorite 成交；负值代表下跌，输出 `momentum-filter.json`。
+- 冒烟：7 个 Geopolitics 市场，24h 动量分别为 +2.1c、-0.1c、+0.2c、+1.0c、0.0c、+0.2c、-1.3c；**没有市场满足 ≤-2c，0 selected**。
+- 启动等待臂 `event-maker-bond-scalp-2c-geo-97099-dip24h-taker-shadow-7d-20261021`：0.97–0.99 / Geopolitics / +2c / taker / 24h 跌幅 ≥2c / wait 10080 分钟，每 60s 重试。
+- 结论：当前盘口不是目标账户的低吸场景；动量过滤臂会等待真正的回撤，而不是在 0.979–0.985 追高。
+- 全量 `gradlew test`：BUILD SUCCESSFUL。

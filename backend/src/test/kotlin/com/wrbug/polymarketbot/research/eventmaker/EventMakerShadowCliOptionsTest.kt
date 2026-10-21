@@ -28,6 +28,34 @@ class EventMakerShadowCliOptionsTest {
     }
 
     @Test
+    fun `parses momentum filter`() {
+        val options = parseOptions(
+            arrayOf(
+                "--entry-momentum-min-cents", "-5",
+                "--entry-momentum-max-cents", "-2",
+                "--entry-momentum-lookback-seconds", "3600",
+                "--minutes", "60"
+            )
+        )
+        assertEquals(-5.0, options.entryMomentumMinCents, 0.0)
+        assertEquals(-2.0, options.entryMomentumMaxCents, 0.0)
+        assertEquals(3600L, options.entryMomentumLookbackSeconds)
+    }
+
+    @Test
+    fun `rejects inverted momentum range`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            parseOptions(
+                arrayOf(
+                    "--entry-momentum-min-cents", "-1",
+                    "--entry-momentum-max-cents", "-2",
+                    "--minutes", "60"
+                )
+            )
+        }
+    }
+
+    @Test
     fun `rejects non-positive inventory cap`() {
         assertThrows(IllegalArgumentException::class.java) {
             parseOptions(arrayOf("--max-total-inventory-notional", "0"))

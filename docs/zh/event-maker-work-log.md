@@ -1963,3 +1963,19 @@
 - 2026-10-21 08:25 该市场 favorite bid/ask 约 0.979/0.981，已经高于目标账户的卖出价 0.96。
 - 我们当前 maker 臂挂在 0.982/0.981，taker 臂成交在 0.985/0.981，本质是在**追高**，不是复制他的低吸。
 - 结论：即使回测 +2c 为正，当前盘口也不适合直接进场；必须等待回撤/事件错杀，或加入“24h 下跌 >2c”之类的入场过滤。否则 Shadow 的负 markout 很可能持续。
+
+### 08:45 实现 24h 动量入场过滤并启动等待臂
+
+- Shadow CLI 新增 `--entry-momentum-min-cents` / `--entry-momentum-max-cents` / `--entry-momentum-lookback-seconds`；Gradle 与 `start-bond-shadow.ps1` 同步支持，并新增 `-WaitForMarketMinutes`。
+- 过滤逻辑：用当前 favorite best bid 与 lookback 窗口内第一笔 favorite 成交比较，输出 `momentum-filter.json`；负值表示下跌。
+- 冒烟结果（2026-10-21 08:45，7 个 Geopolitics 市场，24h lookback）：
+  - Israel x Iran ceasefire：+2.1c（上涨，不是低吸）
+  - Kharg Island：-0.1c
+  - Strait of Hormuz：+0.2c
+  - US-Iran Final Nuclear Deal：+1.0c
+  - Farsi/Hengam/Hormuz/Kharg：0.0c
+  - Bab el-Mandeb：+0.2c
+  - Russia x Ukraine ceasefire：-1.3c
+  - 没有市场满足“24h 下跌 >2c”，所以 0 selected。这验证了当前盘口不是目标账户的低吸场景。
+- 启动等待臂 `event-maker-bond-scalp-2c-geo-97099-dip24h-taker-shadow-7d-20261021`：0.97–0.99 / Geopolitics / +2c / taker / 24h 跌幅 ≥2c / wait 10080 分钟；当前 attempt=1，selected=0，每 60s 重试。
+- 全量 `gradlew test`：BUILD SUCCESSFUL。

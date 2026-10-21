@@ -7,6 +7,7 @@ param(
   [int]$MaxMarkets = 20,
   [double]$MinVolume = 10000,
   [int]$MaxRemainingMinutes = 43200,
+  [int]$WaitForMarketMinutes = 0,
   [string]$Output = "build/research/event-maker-bond-shadow-20261020",
   [string]$Proxy = "http://127.0.0.1:10808",
   [int]$FlowGuardWindowSeconds = 3600,
@@ -29,7 +30,10 @@ param(
   [int]$MinRecentTradesPerSide = 0,
   [int]$MinRecentTrades2h = 0,
   [double]$MinRecentNotional2h = 0,
-  [int]$MinRecentTradesPerSide2h = 0
+  [int]$MinRecentTradesPerSide2h = 0,
+  [double]$EntryMomentumMinCents = -999,
+  [double]$EntryMomentumMaxCents = 999,
+  [long]$EntryMomentumLookbackSeconds = 86400
 )
 $ErrorActionPreference = "Stop"
 $backend = Join-Path (Split-Path -Parent $PSScriptRoot) "backend"
@@ -50,6 +54,7 @@ $argsList = @(
   "-PshadowMinVolume=$MinVolume",
   "-PshadowMinRemainingMinutes=120",
   "-PshadowMaxRemainingMinutes=$MaxRemainingMinutes",
+  "-PshadowWaitForMarketMinutes=$WaitForMarketMinutes",
   "-PshadowMinSpreadTicks=$MinSpreadTicks",
   "-PshadowMaxQueue=$MaxQueue",
   "-PshadowImproveTicks=$ImproveTicks",
@@ -68,6 +73,9 @@ $argsList = @(
   "-PshadowMinRecentTrades2h=$MinRecentTrades2h",
   "-PshadowMinRecentNotional2h=$MinRecentNotional2h",
   "-PshadowMinRecentTradesPerSide2h=$MinRecentTradesPerSide2h",
+  "-PshadowEntryMomentumMinCents=$EntryMomentumMinCents",
+  "-PshadowEntryMomentumMaxCents=$EntryMomentumMaxCents",
+  "-PshadowEntryMomentumLookbackSeconds=$EntryMomentumLookbackSeconds",
   "-PshadowOutput=$Output",
   "--console=plain"
 )
@@ -96,6 +104,7 @@ $info = [pscustomobject]@{
   takerEntrySlippageTicks = $TakerEntrySlippageTicks
   requoteSeconds = $RequoteSeconds
   maxOrderAgeSeconds = $MaxOrderAgeSeconds
+  waitForMarketMinutes = $WaitForMarketMinutes
   flowGuardWindowSeconds = $FlowGuardWindowSeconds
   maxTotalInventoryNotional = $MaxTotalInventoryNotional
   maxDailyLoss = $MaxDailyLoss
@@ -105,6 +114,9 @@ $info = [pscustomobject]@{
   minRecentTrades2h = $MinRecentTrades2h
   minRecentNotional2h = $MinRecentNotional2h
   minRecentTradesPerSide2h = $MinRecentTradesPerSide2h
+  entryMomentumMinCents = $EntryMomentumMinCents
+  entryMomentumMaxCents = $EntryMomentumMaxCents
+  entryMomentumLookbackSeconds = $EntryMomentumLookbackSeconds
   output = $logDir
 }
 $info | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $logDir "run.json") -Encoding UTF8

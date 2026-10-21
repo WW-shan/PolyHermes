@@ -54,6 +54,9 @@ internal data class ShadowOptions(
     val minRecentTrades2h: Int,
     val minRecentNotional2h: Double,
     val minRecentTradesPerSide2h: Int,
+    val entryMomentumMinCents: Double,
+    val entryMomentumMaxCents: Double,
+    val entryMomentumLookbackSeconds: Long,
     val minPrice: Double,
     val maxPrice: Double,
     val tags: List<String>,
@@ -132,6 +135,24 @@ private data class DiscoveryAttemptLog(
     val stoppedReason: String
 )
 
+private data class MomentumFilterRow(
+    val conditionId: String,
+    val question: String,
+    val currentPrice: Double?,
+    val pastPrice: Double?,
+    val deltaCents: Double?,
+    val tradeCount: Int,
+    val selected: Boolean,
+    val reason: String
+)
+
+private data class MomentumFilterReport(
+    val lookbackSeconds: Long,
+    val minCents: Double,
+    val maxCents: Double,
+    val rows: List<MomentumFilterRow>
+)
+
 private data class ShadowSnapshot(
     val timestamp: Long,
     val marketId: String,
@@ -188,6 +209,11 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
     val discoveryPages = option("discovery-pages")?.toIntOrNull() ?: 50
     val waitForMarketMinutes = option("wait-for-market-minutes")?.toIntOrNull() ?: 0
     val discoveryRetrySeconds = option("discovery-retry-seconds")?.toLongOrNull() ?: 60L
+    val entryMomentumMinCents = option("entry-momentum-min-cents")?.toDoubleOrNull() ?: -999.0
+    val entryMomentumMaxCents = option("entry-momentum-max-cents")?.toDoubleOrNull() ?: 999.0
+    val entryMomentumLookbackSeconds = option("entry-momentum-lookback-seconds")?.toLongOrNull() ?: 86_400L
+    require(entryMomentumMinCents <= entryMomentumMaxCents)
+    require(entryMomentumLookbackSeconds > 0)
     val minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90
     val takerEntry = args.contains("--taker-entry")
     val takerEntrySlippageTicks = option("taker-entry-slippage-ticks")?.toIntOrNull() ?: 0
@@ -237,6 +263,9 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
         minRecentTrades2h = option("min-recent-trades-2h")?.toIntOrNull() ?: 0,
         minRecentNotional2h = option("min-recent-notional-2h")?.toDoubleOrNull() ?: 0.0,
         minRecentTradesPerSide2h = option("min-recent-trades-per-side-2h")?.toIntOrNull() ?: 0,
+        entryMomentumMinCents = entryMomentumMinCents,
+        entryMomentumMaxCents = entryMomentumMaxCents,
+        entryMomentumLookbackSeconds = entryMomentumLookbackSeconds,
         minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90,
         maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99,
         tags = tags,
@@ -388,6 +417,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     }
                 }
             }
+            candidates = applyMomentumFilter(candidates, System.currentTimeMillis())
             val evaluations = if (candidates.isEmpty()) {
                 emptyList()
             } else {
@@ -692,6 +722,65 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
      * Persist the shadow state atomically-ish on every snapshot tick so a crash
      * still leaves auditable state, not just the final in-memory view.
      */
+    /**
+     * Optional 24h/1h momentum gate. It compares the current favorite best bid
+     * with the first favorite-token print inside the lookback window. A negative
+     * delta means the favorite has fallen, which is the leader's strongest entry
+     * subset. The report is written even when the gate rejects every market.
+     */
+    private suspend fun applyMomentumFilter(
+        markets: List<LivePaperMarket>,
+        now: Long
+    ): List<LivePaperMarket> {
+        val active = options.entryMomentumMinCents > -900.0 || options.entryMomentumMaxCents < 900.0
+        if (!active) return markets
+        val cutoff = now - options.entryMomentumLookbackSeconds * 1_000L
+        val rows = markets.map { market ->
+            val trades = dataClient.getRecentTrades(market, cutoff)
+                .filter { it.tokenId == market.favoriteTokenId && it.timestamp >= cutoff }
+            val pastPrice = trades.firstOrNull()?.price
+            val currentPrice = books[market.favoriteTokenId]?.bestBid ?: trades.lastOrNull()?.price
+            val deltaCents = if (pastPrice != null && currentPrice != null) {
+                (currentPrice - pastPrice) * 100.0
+            } else {
+                null
+            }
+            val selected = deltaCents != null &&
+                deltaCents >= options.entryMomentumMinCents &&
+                deltaCents <= options.entryMomentumMaxCents
+            MomentumFilterRow(
+                conditionId = market.conditionId,
+                question = market.question,
+                currentPrice = currentPrice,
+                pastPrice = pastPrice,
+                deltaCents = deltaCents,
+                tradeCount = trades.size,
+                selected = selected,
+                reason = when {
+                    deltaCents == null -> "insufficient_history"
+                    selected -> "selected"
+                    else -> "momentum_out_of_range"
+                }
+            )
+        }
+        Files.writeString(
+            options.outputDir.resolve("momentum-filter.json"),
+            prettyGson.toJson(
+                MomentumFilterReport(
+                    lookbackSeconds = options.entryMomentumLookbackSeconds,
+                    minCents = options.entryMomentumMinCents,
+                    maxCents = options.entryMomentumMaxCents,
+                    rows = rows
+                )
+            ),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
+        return markets.filter { market -> rows.first { it.conditionId == market.conditionId }.selected }
+    }
+
     private fun writeState(states: List<EventMakerLiveState>) {
         Files.writeString(
             options.outputDir.resolve("state.json"),

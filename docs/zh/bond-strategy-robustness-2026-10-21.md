@@ -436,3 +436,27 @@ queue 模型，stop=0，q2，off0：
   - 每 lot 的 MAE / 最大库存；
   - 结算亏损数和亏损率 CI；
   - 与回测的差异。
+
+## 13. 24h 动量过滤：从“追高”改为“等回撤”（2026-10-21）
+
+目标账户在 `Bab el-Mandeb` 的实际交易是 0.93 / 0.95 买入、0.96 卖出；2026-10-21 当前 favorite 已到 0.979–0.985，直接买是追高。
+
+因此新增 Shadow 24h 动量过滤：
+
+- 当前 favorite best bid vs lookback（默认 86400s）内第一笔 favorite 成交；
+- 负值 = 下跌，只允许 `deltaCents <= -2c` 的入场；
+- 输出 `momentum-filter.json`，记录 currentPrice / pastPrice / deltaCents / tradeCount / selected。
+
+2026-10-21 08:45 冒烟（7 个 Geopolitics 市场）：
+
+| 市场 | 24h 动量 |
+|---|---:|
+| Israel x Iran ceasefire | +2.1c |
+| Kharg Island | -0.1c |
+| Strait of Hormuz | +0.2c |
+| US-Iran Final Nuclear Deal | +1.0c |
+| Farsi/Hengam/Hormuz/Kharg | 0.0c |
+| Bab el-Mandeb | +0.2c |
+| Russia x Ukraine ceasefire | -1.3c |
+
+**结论：0 个市场满足 ≤-2c。当前盘口不是低吸场景。** 已启动等待臂 `event-maker-bond-scalp-2c-geo-97099-dip24h-taker-shadow-7d-20261021`，每 60s 重试，直到出现真正的 24h 回撤再入场。
