@@ -32,6 +32,7 @@ const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-1c-geo-97099-mom1-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-9597-dip24h-taker-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-off10-size1k-shadow-7d-20261021',
 ];
 const candidateDirs = [
   'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021',
