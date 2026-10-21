@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场。目标账户与历史 maker ladder 共同表明：0.97–0.99 Geopolitics +2c 的最优窗口是 close 前 **3–7 天**（q2/q3/q4 约 +1.88%，2024–2026 全为正，0 结算亏损）；最后 3 天为负，0.95–0.97 不稳定，Politics 为负。11 个 Shadow 臂已切到 3–7 天窗口，当前因最近市场约 170h 而处于 LIVE/WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 10:50 +08:00<br>
+> 最后更新：2026-10-21 10:56 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -1392,3 +1392,9 @@ cd D:\Project\PolyHermes\backend
 - 新增候选 ETA 工具 `scripts/report-bond-candidate-eta.ps1`；当前扫描 1,493 个市场，eligibleNow=0，nextFuture=0，唯一高价市场已进入最后 3 天。
 - monitor 现在记录 waiting 状态和 candidate ETA，不再是静默跳过。
 - 下一步不是放宽窗口，而是等待合格市场进入 3–7d；gate 仍保持 WAIT。
+### 20.22 2026-10-21 10:56 尾部统计边界
+
+- 新增 `scripts/audit-bond-tail-risk.cjs`，按整笔归零保守假设计算 Wilson 上界与盈亏平衡率。
+- +2c q2 主策略：241 lots、0 结算亏损、上界 1.569%、盈亏平衡 1.835%、余量 +0.266% → PASS。
+- +2c q3/q4 也通过但余量更薄；+1c 不通过；+3c 通过但成交更少。
+- 结论：历史尾部风险已给出统计边界，但不能替代真实 SETTLE 与 Shadow gate；继续等待候选。

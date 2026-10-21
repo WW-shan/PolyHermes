@@ -2102,3 +2102,14 @@
   - 无 state 但进程存活时写 `WAITING`，而不是静默跳过；
   - 支持 `-Once` 做单轮自检。
 - 新增后台 monitor PID 31176；11 个 Shadow 臂仍全部存活且 WAITING。
+### 20.22 2026-10-21 10:56 尾部风险统计审计
+
+- 新增 `scripts/audit-bond-tail-risk.cjs`，对 ladder 结果计算 Wilson 95% 亏损率上界、整笔归零盈亏平衡率与上界余量。
+- 3–7d 0.97–0.99 Geopolitics 结果：
+  - +2c q2：241 lots，0 结算亏损，亏损率上界 1.569%，盈亏平衡 1.835%，余量 **+0.266% → PASS**。
+  - +2c q3：221 lots，上界 1.709%，盈亏平衡 1.841%，余量 +0.133% → PASS。
+  - +2c q4：216 lots，上界 1.747%，盈亏平衡 1.847%，余量 +0.100% → PASS。
+  - +1c q2：上界 1.307%，盈亏平衡 1.019%，余量 -0.288% → FAIL。
+  - +3c q2：上界 1.615%，盈亏平衡 2.260%，余量 +0.645% → PASS。
+- 结论：+2c q2 主策略在当前历史样本和“整笔归零”保守假设下通过统计边界；但这不等于真实 SETTLE 或 Shadow gate 通过。
+- 证据：`backend/build/research/bond-tail-risk-audit-20261021.json`、`bond-tail-risk-audit-q3-20261021.json`、`bond-tail-risk-audit-q4-20261021.json`。
