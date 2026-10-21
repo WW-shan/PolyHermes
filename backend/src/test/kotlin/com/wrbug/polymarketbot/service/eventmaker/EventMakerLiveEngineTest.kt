@@ -642,6 +642,49 @@ class EventMakerLiveEngineTest {
         assertTrue(result.errors.none { it.contains("max_open_markets") || it.contains("total_inventory_limit") })
     }
     @Test
+    fun `partial fill on one ladder leg cancels only that leg`() = runTest {
+        val now = System.currentTimeMillis()
+        val ladderConfig = config.copy(
+            maxMarkets = 1,
+            orderNotional = 10.0,
+            maxTotalInventoryNotional = 40.0,
+            improveTicks = 0,
+            ladderOffsetsCents = listOf(0.0, 1.0)
+        )
+        val ladderMarket = market().copy(tickSize = 0.001)
+        val states = ladderConfig.effectiveLadderOffsetsCents().map { offset ->
+            EventMakerLiveState(
+                ladderMarket,
+                ladderConfig.copy(entryOffsetCents = offset, ladderOffsetsCents = emptyList())
+            )
+        }
+        val currentBook = book(0.98, 0.985, now)
+        states.forEach { it.onBook(currentBook) }
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(ladderConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        val placed = engine.quote(states, mapOf("token" to currentBook), 7L, now).placed
+        assertEquals(2, placed.size)
+        val shallow = placed.first { it.order.price.compareTo(BigDecimal("0.98")) == 0 }.order
+        val deep = placed.first { it.order.price.compareTo(BigDecimal("0.97")) == 0 }.order
+
+        port.fill(shallow.orderId, BigDecimal("4.00"))
+        val result = engine.reconcile(states, 7L, now + 1)
+
+        assertTrue(result.errors.isEmpty(), "unexpected errors: ${result.errors}")
+        assertEquals(listOf(shallow.orderId), result.canceled.map { it.orderId })
+        assertEquals(BigDecimal("4.00"), states.first { it.legOffsetCents == 0.0 }.inventoryShares)
+        assertEquals(BigDecimal.ZERO, states.first { it.legOffsetCents == 1.0 }.inventoryShares)
+        assertNotNull(states.first { it.legOffsetCents == 1.0 }.activeOrder)
+
+        port.fill(deep.orderId, deep.originalShares)
+        engine.reconcile(states, 7L, now + 2)
+        assertEquals(
+            deep.originalShares,
+            states.first { it.legOffsetCents == 1.0 }.inventoryShares
+        )
+    }
+    @Test
     fun `atomic ladder requotes each leg against its own offset`() = runTest {
         val start = System.currentTimeMillis()
         val ladderConfig = config.copy(

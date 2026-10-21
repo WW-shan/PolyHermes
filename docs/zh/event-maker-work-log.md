@@ -2287,12 +2287,13 @@
   - SELL 挂单按价格从低到高；
   - 队列消耗、`fillVolumeFactor` 累计阈值和剩余成交量使用同一份 volume。
 - 这与 `scripts/analyze-bond-ladder.cjs` 的回测口径一致；此前回测会递减 `remaining`，Shadow 不会。
-- 新增 4 条回归：
+- 新增 5 条回归：
   - 单笔 SELL print 在两条 BUY leg 间按 10/5 分配；
   - 单笔 BUY print 在两条 SELL leg 间按最优价分配；
   - `fillVolumeFactor=2` 时同一 print 的成交量不会被每档重复使用；
-  - 同价挂单按真实放置顺序 FIFO，而不是按订单 ID 字符串排序。
-- 全量回归：**109 suites / 628 tests / 0 failures / 0 errors / 2 skipped**。
+  - 同价挂单按真实放置顺序 FIFO，而不是按订单 ID 字符串排序；
+  - 多档中一档部分成交只撤该档，另一档保持活动。
+- 全量回归：**109 suites / 629 tests / 0 failures / 0 errors / 2 skipped**。
 - 单档与多档 CLI 重启烟测复跑通过：单档 10 shares / 1 fill；多档 2 legs / 15 shares / 2 fills。
-- 8 个 Shadow 臂已于 2026-10-21 13:26:17 +08:00 重启加载新撮合代码；全部 `WAITING`，0 fills / 0 settlements，Gate `WAIT`。
-- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-132617.json`。
+- 8 个 Shadow 臂已于 2026-10-21 13:35:02 +08:00 重启加载新撮合代码；全部 `WAITING`，0 fills / 0 settlements，Gate `WAIT`。
+- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-133502.json`。
