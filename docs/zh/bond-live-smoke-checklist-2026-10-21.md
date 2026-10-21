@@ -1,7 +1,7 @@
 # BOND Live Smoke 检查清单（2026-10-21）
 
 > 目的：在用户明确提供账户、资金和授权后，用最小真实仓位验证下单、成交、撤单、对账和停止链路。  
-> 当前状态：**未执行**。Shadow gate 仍为 `WAIT`。本文档不是实盘授权。<br>`gate` 的结算样本按 `conditionId` 聚类计数：`min-settlement-markets=50` 表示至少 50 个独立结算市场，不是 50 条 leg。
+> 当前状态：**未执行**。Shadow gate 仍为 `WAIT`。本文档不是实盘授权。<br>`gate` 的结算样本按 `conditionId` 聚类计数：`min-settlement-markets=50` 表示至少 50 个独立结算市场，不是 50 条 leg；同时要求至少 50 个 cycle 且 `realizedRoi >= 0`。
 
 ## 1. 进入 Live 前必须满足
 

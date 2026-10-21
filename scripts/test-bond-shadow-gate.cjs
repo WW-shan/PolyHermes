@@ -11,19 +11,20 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bond-gate-test-'));
 const arms = ['off00', 'off05', 'off10', 'off20'];
 const startedAt = Date.now() - 48 * 3600 * 1000;
 
-function stateFor(n, pnl) {
+function stateFor(n, pnl, cluster = false) {
   const fills = [];
   const cycles = [];
   const settlements = [];
   for (let i = 0; i < n; i++) {
-    fills.push({ marketId: `m-${i}`, orderId: `b-${i}`, side: 'BUY', price: 0.98, shares: 25, timestamp: startedAt + i });
+    const marketId = cluster ? 'm' : `m-${i}`;
+    fills.push({ marketId, orderId: `b-${i}`, side: 'BUY', price: 0.98, shares: 25, timestamp: startedAt + i });
     cycles.push({
-      marketId: `m-${i}`, entryOrderId: `b-${i}`, exitOrderId: `s-${i}`,
+      marketId, entryOrderId: `b-${i}`, exitOrderId: `s-${i}`,
       entryAt: startedAt, exitAt: startedAt + 1000, entryPrice: 0.98, exitPrice: 1.0,
       shares: 25, pnl, holdingSeconds: 1000, exitType: 'SETTLE',
     });
     settlements.push({
-      marketId: `m-${i}`, favoriteTokenId: 't', entryOrderId: `b-${i}`, cycleExitOrderId: `s-${i}`,
+      marketId, favoriteTokenId: 't', entryOrderId: `b-${i}`, cycleExitOrderId: `s-${i}`,
       settledAt: startedAt + 1000, entryAt: startedAt, entryPrice: 0.98, exitPrice: 1.0,
       shares: 25, pnl, outcomeIndex: 0, negativeRisk: false, redemptionStatus: 'ALREADY_ABSENT',
     });
@@ -42,12 +43,12 @@ function stateFor(n, pnl) {
   };
 }
 
-function writeScenario(name, n, pnl) {
+function writeScenario(name, n, pnl, cluster = false) {
   const dirs = [];
   for (const arm of arms) {
     const dir = path.join(root, `${name}-${arm}`);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'state.json'), '\uFEFF' + JSON.stringify(stateFor(n, pnl)), 'utf8');
+    fs.writeFileSync(path.join(dir, 'state.json'), '\uFEFF' + JSON.stringify(stateFor(n, pnl, cluster)), 'utf8');
     dirs.push(dir);
   }
   return dirs;
@@ -68,11 +69,12 @@ const cases = [
   { name: 'pass', n: 250, pnl: 0.5, expected: 'PASS' },
   { name: 'wait', n: 25, pnl: 0.5, expected: 'WAIT' },
   { name: 'fail', n: 25, pnl: -24.5, expected: 'FAIL' },
+  { name: 'cluster-wait', n: 200, pnl: 0.5, cluster: true, expected: 'WAIT' },
 ];
 try {
   let passed = 0;
   for (const test of cases) {
-    const actual = runGate(writeScenario(test.name, test.n, test.pnl));
+    const actual = runGate(writeScenario(test.name, test.n, test.pnl, test.cluster));
     if (actual !== test.expected) throw new Error(`${test.name}: expected ${test.expected}, got ${actual}`);
     console.log(`gate ${test.name}: ${actual}`);
     passed++;

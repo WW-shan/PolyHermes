@@ -1431,7 +1431,7 @@ cd D:\Project\PolyHermes\backend
 
 - 修复零亏损时的盈亏平衡率：按整笔归零使用 `avgWin/(avgWin+1)`，不再因 `avgLoss=null` 跳过尾部 blocker。
 - 新增 fatal blockers：亏损率 CI 下界超限、全部结算亏损、成员缺失。
-- 新增 `scripts/test-bond-shadow-gate.cjs`，覆盖 PASS/WAIT/FAIL 三组确定性状态，结果 3/3 PASS。
+- 新增 `scripts/test-bond-shadow-gate.cjs`，覆盖 PASS/WAIT/FAIL/单市场多 leg 四组确定性状态，结果 4/4 PASS。
 - 当前真实 gate 仍为 `WAIT`，原因是 0 fills / 0 settlements / 等待市场。
 ### 20.29 2026-10-21 11:24 Live Smoke 清单
 
@@ -1499,7 +1499,7 @@ cd D:\Project\PolyHermes\backend
   - 旧 offset leg 平仓后不能重新开 BUY；
   - REST DTO 暴露 `ladderOffsetsCents`；
   - 单档/多档 CLI 重启烟测通过。
-- 全量回归：**109 suites / 624 tests / 0 failures / 0 errors / 2 skipped**；Gate 回归 3/3 PASS。
+- 全量回归：**109 suites / 624 tests / 0 failures / 0 errors / 2 skipped**；Gate 回归 4/4 PASS。
 - 8 臂于 12:50:36 +08:00 用当前代码重启，全部 WAITING，0 fills / 0 settlements，Gate WAIT。
 - 代码提交并推送：`8c2466b feat: implement atomic multi-level ladder`。
 ### 20.35 2026-10-21 13:12 Shadow 多档成交量共享
@@ -1528,5 +1528,5 @@ cd D:\Project\PolyHermes\backend
   - q4：12 个结算市场、0 亏损市场、上界 **24.250%**、盈亏平衡 **2.310%** → **FAIL**。
 - 结论：点估计仍为正，但**没有足够独立结算市场证明尾部风险可控**；此前基于 leg 数的 PASS 作废，不能据此上真钱。
 - `analyze-bond-ladder.cjs` 新增 `settleMarkets` / `settleLossMarkets` / `marketLossCi95` / `marketBreakEvenLossRate`；`audit-bond-tail-risk.cjs` 增加 market-cluster verdict。
-- `evaluate-bond-shadow-gate.cjs` 改为按 `marketId` 聚类 settlement，`min-settlement-markets=50` 现在表示 **50 个独立结算市场**；`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
-- Gate 回归仍为 3/3 PASS；当前 gate 仍 `WAIT`（0 settlement markets）。
+- `evaluate-bond-shadow-gate.cjs` 改为按 `marketId` 聚类 settlement，`min-settlement-markets=50` 现在表示 **50 个独立结算市场**；同时要求 `min-cycles=50` 且 `realizedRoi >= 0`。`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
+- Gate 回归仍为 4/4 PASS；当前 gate 仍 `WAIT`（0 settlement markets）。

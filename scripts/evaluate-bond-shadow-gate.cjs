@@ -38,6 +38,8 @@ const dirs = String(arg('dirs', defaultDirs.join(','))).split(',').map(s => s.tr
 const candidates = String(arg('candidates', candidateDirs.join(','))).split(',').map(s => s.trim()).filter(Boolean);
 const minRunHours = argNum('min-run-hours', 24);
 const minCandidateFills = argNum('min-candidate-fills', 20);
+const minCycles = argNum('min-cycles', 50);
+const minRealizedRoi = argNum('min-realized-roi', 0);
 const minSettlementMarkets = argNum('min-settlement-markets', argNum('min-settlements', 50));
 const maxSettlementLossUpper = argNum('max-settlement-loss-upper', 1.0);
 const minMarkout60Roi = argNum('min-markout60-roi', -0.01);
@@ -129,6 +131,9 @@ function readArm(dir) {
   const reasons = [];
   if (runHours == null || runHours < minRunHours) reasons.push('RUN_TIME_BELOW_MIN');
   if (fills.length < minCandidateFills) reasons.push('FILLS_BELOW_MIN');
+  if (cycles.length < minCycles) reasons.push('CYCLES_BELOW_MIN');
+  const realizedRoi = deployed > 0 ? realized / deployed : null;
+  if (cycles.length >= minCycles && realizedRoi != null && realizedRoi < minRealizedRoi) reasons.push('REALIZED_ROI_BELOW_MIN');
   if (settleRois.length === 0) reasons.push('NO_SETTLEMENTS');
   if (settleRois.length > 0 && wins.length === 0) reasons.push('NO_WINNING_SETTLEMENTS');
   if (settleRois.length > 0 && lossCi[1] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_LIMIT');
@@ -144,7 +149,7 @@ function readArm(dir) {
     settleLosses: deaths.length,
     pendingSettlements: settlements.filter(s => s.redemptionStatus === 'PENDING').length,
     openInventoryShares: markets.reduce((s, m) => s + num(m.inventoryShares), 0),
-    deployed, realized, realizedRoi: deployed > 0 ? realized / deployed : null,
+    deployed, realized, realizedRoi: realizedRoi,
     cycleLossRate: cycleRoi.length ? cycleRoi.filter(v => v < 0).length / cycleRoi.length : null,
     settlementLossRate: lossRate, settlementLossCi95: lossCi, breakEvenLossRate,
     markout60Roi: m60, markout300Roi: mean(markoutRois[300]), reasons,
@@ -194,6 +199,9 @@ function readCandidateGroup(name, groupDirs) {
   }
   if (runHours == null || runHours < minRunHours) reasons.push('RUN_TIME_BELOW_MIN');
   if (fills < minCandidateFills) reasons.push('FILLS_BELOW_MIN');
+  if (cycles < minCycles) reasons.push('CYCLES_BELOW_MIN');
+  const realizedRoi = deployed > 0 ? realized / deployed : null;
+  if (cycles >= minCycles && realizedRoi != null && realizedRoi < minRealizedRoi) reasons.push('REALIZED_ROI_BELOW_MIN');
   if (settlements === 0) reasons.push('NO_SETTLEMENTS');
   if (settlements > 0 && wins.length === 0) reasons.push('NO_WINNING_SETTLEMENTS');
   if (settlements > 0 && lossCi[1] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_LIMIT');
@@ -208,7 +216,7 @@ function readCandidateGroup(name, groupDirs) {
     settleLosses: deaths.length,
     pendingSettlements: members.reduce((s, m) => s + m.pendingSettlements, 0),
     openInventoryShares: members.reduce((s, m) => s + m.openInventoryShares, 0),
-    deployed, realized, realizedRoi: deployed > 0 ? realized / deployed : null,
+    deployed, realized, realizedRoi: realizedRoi,
     settlementLossRate: lossRate, settlementLossCi95: lossCi, breakEvenLossRate,
     markout60Roi: m60, markout300Roi: mean(markout300), reasons,
   };
@@ -231,7 +239,7 @@ for (const group of candidateGroups) (group.reasons || []).forEach(r => blockers
 const unavailable = arms.some(a => a.missing && !a.waitingForMarket) ||
   candidateGroups.some(g => g.missingMembers.length > 0 && !g.waitingForMarket);
 const fatalBlockers = [...blockers].filter(r =>
-  r.startsWith('SETTLEMENT_LOSS_CI_LOWER_') || r === 'MEMBER_MISSING_STATE' || r === 'MARKOUT60_BELOW_MIN' || r === 'NO_WINNING_SETTLEMENTS'
+  r.startsWith('SETTLEMENT_LOSS_CI_LOWER_') || r === 'MEMBER_MISSING_STATE' || r === 'MARKOUT60_BELOW_MIN' || r === 'NO_WINNING_SETTLEMENTS' || r === 'REALIZED_ROI_BELOW_MIN'
 );
 const status = blockers.size === 0 ? 'PASS' : ((unavailable || fatalBlockers.length > 0) ? 'FAIL' : 'WAIT');
 const publicArm = a => {
@@ -240,7 +248,7 @@ const publicArm = a => {
 };
 const report = {
   generatedAt: new Date().toISOString(), status,
-  thresholds: { minRunHours, minCandidateFills, minSettlementMarkets, minSettlements: minSettlementMarkets, maxSettlementLossUpper, minMarkout60Roi },
+  thresholds: { minRunHours, minCandidateFills, minCycles, minRealizedRoi, minSettlementMarkets, minSettlements: minSettlementMarkets, maxSettlementLossUpper, minMarkout60Roi },
   totals, blockers: [...blockers], fatalBlockers, candidates: candidateGroups, candidateGroups,
   arms: arms.map(publicArm),
 };

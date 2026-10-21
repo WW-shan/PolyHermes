@@ -2173,7 +2173,7 @@
   - 1000 个零亏损结算 → PASS
   - 100 个零亏损结算 → WAIT
   - 100 个全亏损结算 → FAIL
-- 结果：`bond gate regression: 3/3 PASS`。
+- 结果：`bond gate regression: 4/4 PASS`。
 ### 20.29 2026-10-21 11:28 计划状态校正
 
 - 交付计划已把旧的 12h–7d 八窗口结论标记为“已由 3–7d 主窗口 + Wilson 审计替代”，不再作为验收依据。
@@ -2322,6 +2322,6 @@
   - q3：10 个结算市场，0 亏损，Wilson 上界 27.754%，盈亏平衡 2.254% → **FAIL**。
   - q4：12 个结算市场，0 亏损，Wilson 上界 24.250%，盈亏平衡 2.310% → **FAIL**。
 - `audit-bond-tail-risk.cjs` 输出 market-cluster verdict；leg-level verdict 只保留作诊断。
-- `evaluate-bond-shadow-gate.cjs` 改为按 marketId 聚类 settlement，50 个门槛现在指 50 个独立结算市场；`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
-- Gate 回归 3/3 PASS；当前 Gate WAIT（0 settlement markets）。
+- `evaluate-bond-shadow-gate.cjs` 改为按 marketId 聚类 settlement，50 个门槛现在指 50 个独立结算市场；同时要求 `min-cycles=50` 且 `realizedRoi >= 0`。`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
+- Gate 回归 4/4 PASS；当前 Gate WAIT（0 settlement markets）。
 - 证据：`bond-ladder-cluster-q2/q3/q4-20261021.json`、`bond-tail-risk-cluster-q2/q3/q4-20261021.json`。

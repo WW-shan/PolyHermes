@@ -672,7 +672,7 @@ queue 模型，stop=0，q2，off0：
   - 1000 个零亏损结算 → `PASS`
   - 100 个零亏损结算 → `WAIT`
   - 100 个全亏损结算 → `FAIL`
-- 回归结果：`bond gate regression: 3/3 PASS`。
+- 回归结果：`bond gate regression: 4/4 PASS`。
 ### 14.11 CLI 级重启恢复烟测（2026-10-21）
 
 `scripts/smoke-bond-shadow-resume.ps1` 现在会真实启动 1 分钟的 Shadow CLI，而不是只测状态机：
