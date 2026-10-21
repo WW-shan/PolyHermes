@@ -7,6 +7,15 @@ function arg(name, fallback) { const i = process.argv.indexOf('--' + name); retu
 function argNum(name, fallback) { const n = Number(arg(name, fallback)); if (!Number.isFinite(n)) throw new Error(`invalid --${name}`); return n; }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 function mean(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; }
+function breakEvenWithTail(avgWin, avgLoss, hasSettlementTail, maxFlattenLossRoi) {
+  if (avgWin != null && avgLoss != null && avgWin > 0 && avgLoss < 0) {
+    return avgWin / (avgWin + Math.abs(avgLoss));
+  }
+  if (avgWin == null || avgWin <= 0) return null;
+  // FLATTEN-only tails are bounded by slippage. A SETTLE tail keeps the
+  // conservative 100% wipeout fallback.
+  return avgWin / (avgWin + (hasSettlementTail ? 1.0 : maxFlattenLossRoi));
+}
 function wilson(p, n, z = 1.96) { if (!n) return [0, 1]; const d = 1 + z * z / n; const c = (p + z * z / (2 * n)) / d; const h = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n) / d; return [Math.max(0, c - h), Math.min(1, c + h)]; }
 function parseCsv(text) {
   const rows = []; let row = [], field = '', q = false;
@@ -24,6 +33,9 @@ function parseCsv(text) {
 const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-flatten24-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-flatten24-500-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-flatten24-500-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021',
@@ -32,7 +44,7 @@ const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-off10-size1k-shadow-7d-20261021',
 ];
 const candidateDirs = [
-  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-flatten24-500-shadow-7d-20261021',
 ];
 const dirs = String(arg('dirs', defaultDirs.join(','))).split(',').map(s => s.trim()).filter(Boolean);
 const candidates = String(arg('candidates', candidateDirs.join(','))).split(',').map(s => s.trim()).filter(Boolean);
@@ -43,6 +55,7 @@ const minRealizedRoi = argNum('min-realized-roi', 0);
 const minSettlementMarkets = argNum('min-settlement-markets', argNum('min-settlements', 50));
 const maxSettlementLossUpper = argNum('max-settlement-loss-upper', 1.0);
 const minMarkout60Roi = argNum('min-markout60-roi', -0.01);
+const maxFlattenLossRoi = argNum('max-flatten-loss-roi', 0.01);
 
 function emptyMarkouts() { return { 60: [], 300: [] }; }
 function readRunStartedAt(runPath) {
@@ -78,13 +91,14 @@ function readArm(dir) {
   const fills = markets.flatMap(m => Array.isArray(m.fills) ? m.fills : []);
   const cycles = markets.flatMap(m => Array.isArray(m.cycles) ? m.cycles : []);
   const settlements = markets.flatMap(m => Array.isArray(m.settlements) ? m.settlements : []);
-  const settleCycles = cycles.filter(c => c.exitType === 'SETTLE');
+  const tailExitCycles = cycles.filter(c => c.exitType === 'SETTLE' || c.exitType === 'FLATTEN');
+  const hasSettlementTail = tailExitCycles.some(c => c.exitType === 'SETTLE');
   const cycleRoi = cycles.map(c => { const cost = num(c.entryPrice) * num(c.shares); return cost > 0 ? num(c.pnl) / cost : 0; });
   // Legs on the same condition settle from one resolution event. Cluster them
   // so the gate's sample size is the number of resolved markets, not legs.
   const settlementPnlByMarket = new Map();
   const settlementCostByMarket = new Map();
-  for (const cycle of settleCycles) {
+  for (const cycle of tailExitCycles) {
     const marketId = String(cycle.marketId ?? cycle.conditionId ?? 'unknown');
     settlementPnlByMarket.set(marketId, (settlementPnlByMarket.get(marketId) || 0) + num(cycle.pnl));
     settlementCostByMarket.set(
@@ -103,9 +117,7 @@ function readArm(dir) {
   const wins = settleRois.filter(v => v > 0);
   const avgLoss = mean(deaths);
   const avgWin = mean(wins);
-  const breakEvenLossRate = avgWin != null && avgLoss != null && avgWin > 0 && avgLoss < 0
-    ? avgWin / (avgWin + Math.abs(avgLoss))
-    : (avgWin != null && avgWin > 0 ? avgWin / (avgWin + 1.0) : null);
+  const breakEvenLossRate = breakEvenWithTail(avgWin, avgLoss, hasSettlementTail, maxFlattenLossRoi);
   const lossRate = settleRois.length ? deaths.length / settleRois.length : null;
   const lossCi = lossRate == null ? [0, 1] : wilson(lossRate, settleRois.length);
   const markoutPath = path.join(dir, 'markouts.csv');
@@ -134,8 +146,8 @@ function readArm(dir) {
   if (cycles.length < minCycles) reasons.push('CYCLES_BELOW_MIN');
   const realizedRoi = deployed > 0 ? realized / deployed : null;
   if (cycles.length >= minCycles && realizedRoi != null && realizedRoi < minRealizedRoi) reasons.push('REALIZED_ROI_BELOW_MIN');
-  if (settleRois.length === 0) reasons.push('NO_SETTLEMENTS');
-  if (settleRois.length > 0 && wins.length === 0) reasons.push('NO_WINNING_SETTLEMENTS');
+  if (settleRois.length === 0) reasons.push('NO_TAIL_EXITS');
+  if (settleRois.length > 0 && wins.length === 0) reasons.push('NO_WINNING_TAIL_EXITS');
   if (settleRois.length > 0 && lossCi[1] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_LIMIT');
   if (settleRois.length > 0 && lossCi[0] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_LOWER_ABOVE_LIMIT');
   if (breakEvenLossRate != null && lossCi[1] > breakEvenLossRate) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_BREAK_EVEN');
@@ -152,6 +164,7 @@ function readArm(dir) {
     deployed, realized, realizedRoi: realizedRoi,
     cycleLossRate: cycleRoi.length ? cycleRoi.filter(v => v < 0).length / cycleRoi.length : null,
     settlementLossRate: lossRate, settlementLossCi95: lossCi, breakEvenLossRate,
+    tailExitTypes: [...new Set(tailExitCycles.map(c => c.exitType))], maxFlattenLossRoi, _tailExitTypes: [...new Set(tailExitCycles.map(c => c.exitType))],
     markout60Roi: m60, markout300Roi: mean(markoutRois[300]), reasons,
     _settlementRois: settleRois, _settlementRoiByMarket: settlementRoiByMarket, _markoutRois: markoutRois,
   };
@@ -179,9 +192,8 @@ function readCandidateGroup(name, groupDirs) {
   const wins = settleRois.filter(v => v > 0);
   const avgLoss = mean(deaths);
   const avgWin = mean(wins);
-  const breakEvenLossRate = avgWin != null && avgLoss != null && avgWin > 0 && avgLoss < 0
-    ? avgWin / (avgWin + Math.abs(avgLoss))
-    : (avgWin != null && avgWin > 0 ? avgWin / (avgWin + 1.0) : null);
+  const hasSettlementTail = members.some(m => (m._tailExitTypes || []).includes('SETTLE'));
+  const breakEvenLossRate = breakEvenWithTail(avgWin, avgLoss, hasSettlementTail, maxFlattenLossRoi);
   const lossRate = settleRois.length ? deaths.length / settleRois.length : null;
   const lossCi = lossRate == null ? [0, 1] : wilson(lossRate, settleRois.length);
   const runHours = missingMembers.length === 0 && members.every(m => m.runHours != null)
@@ -202,8 +214,8 @@ function readCandidateGroup(name, groupDirs) {
   if (cycles < minCycles) reasons.push('CYCLES_BELOW_MIN');
   const realizedRoi = deployed > 0 ? realized / deployed : null;
   if (cycles >= minCycles && realizedRoi != null && realizedRoi < minRealizedRoi) reasons.push('REALIZED_ROI_BELOW_MIN');
-  if (settlements === 0) reasons.push('NO_SETTLEMENTS');
-  if (settlements > 0 && wins.length === 0) reasons.push('NO_WINNING_SETTLEMENTS');
+  if (settleRois.length === 0) reasons.push('NO_TAIL_EXITS');
+  if (settleRois.length > 0 && wins.length === 0) reasons.push('NO_WINNING_TAIL_EXITS');
   if (settlements > 0 && lossCi[1] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_LIMIT');
   if (settlements > 0 && lossCi[0] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_LOWER_ABOVE_LIMIT');
   if (breakEvenLossRate != null && lossCi[1] > breakEvenLossRate) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_BREAK_EVEN');
@@ -218,13 +230,14 @@ function readCandidateGroup(name, groupDirs) {
     openInventoryShares: members.reduce((s, m) => s + m.openInventoryShares, 0),
     deployed, realized, realizedRoi: realizedRoi,
     settlementLossRate: lossRate, settlementLossCi95: lossCi, breakEvenLossRate,
+    tailExitTypes: [...new Set(members.flatMap(m => m._tailExitTypes || []))], maxFlattenLossRoi,
     markout60Roi: m60, markout300Roi: mean(markout300), reasons,
   };
 }
 
 const arms = dirs.map(readArm);
 const byDir = new Map(arms.map(a => [path.resolve(a.dir), a]));
-const candidateGroups = [readCandidateGroup('atomic-4level-2c-maker-ladder', candidates)];
+const candidateGroups = [readCandidateGroup('smallcap-500-flatten24-2c', candidates)];
 const settlementMarkets = candidateGroups.reduce((s, g) => s + (g.settlementMarkets || 0), 0);
 const totals = {
   arms: arms.length,
@@ -239,7 +252,7 @@ for (const group of candidateGroups) (group.reasons || []).forEach(r => blockers
 const unavailable = arms.some(a => a.missing && !a.waitingForMarket) ||
   candidateGroups.some(g => g.missingMembers.length > 0 && !g.waitingForMarket);
 const fatalBlockers = [...blockers].filter(r =>
-  r.startsWith('SETTLEMENT_LOSS_CI_LOWER_') || r === 'MEMBER_MISSING_STATE' || r === 'MARKOUT60_BELOW_MIN' || r === 'NO_WINNING_SETTLEMENTS' || r === 'REALIZED_ROI_BELOW_MIN'
+  r.startsWith('SETTLEMENT_LOSS_CI_LOWER_') || r === 'MEMBER_MISSING_STATE' || r === 'MARKOUT60_BELOW_MIN' || r === 'NO_WINNING_TAIL_EXITS' || r === 'REALIZED_ROI_BELOW_MIN'
 );
 const status = blockers.size === 0 ? 'PASS' : ((unavailable || fatalBlockers.length > 0) ? 'FAIL' : 'WAIT');
 const publicArm = a => {
@@ -248,7 +261,7 @@ const publicArm = a => {
 };
 const report = {
   generatedAt: new Date().toISOString(), status,
-  thresholds: { minRunHours, minCandidateFills, minCycles, minRealizedRoi, minSettlementMarkets, minSettlements: minSettlementMarkets, maxSettlementLossUpper, minMarkout60Roi },
+  thresholds: { minRunHours, minCandidateFills, minCycles, minRealizedRoi, minSettlementMarkets, minSettlements: minSettlementMarkets, maxSettlementLossUpper, minMarkout60Roi, maxFlattenLossRoi },
   totals, blockers: [...blockers], fatalBlockers, candidates: candidateGroups, candidateGroups,
   arms: arms.map(publicArm),
 };

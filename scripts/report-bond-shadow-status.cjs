@@ -26,6 +26,9 @@ function parseCsv(text) {
 const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-flatten24-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-flatten24-500-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-flatten24-500-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021',
@@ -76,7 +79,7 @@ for (const dir of dirs) {
   const markets = Array.isArray(state.markets) ? state.markets : [];
   const fills = markets.reduce((s, m) => s + (Array.isArray(m.fills) ? m.fills.length : 0), 0);
   const cycles = markets.reduce((s, m) => s + (Array.isArray(m.cycles) ? m.cycles.length : 0), 0);
-  const settlementCycles = markets.flatMap(m => Array.isArray(m.cycles) ? m.cycles : []).filter(c => c.exitType === 'SETTLE');
+  const settlementCycles = markets.flatMap(m => Array.isArray(m.cycles) ? m.cycles : []).filter(c => c.exitType === 'SETTLE' || c.exitType === 'FLATTEN');
   const settlements = settlementCycles.length;
   const settlementPnlByMarket = new Map();
   for (const cycle of settlementCycles) {

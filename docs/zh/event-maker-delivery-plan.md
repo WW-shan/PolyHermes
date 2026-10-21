@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量 109 suites / 632 tests 通过。2026-10-21 当前代码复跑 4,189 市场数据集：0.97–0.99 Geopolitics、3–7 天、+2c、4 档 maker ladder 的点估计 ROI 为 q2/q3/q4 +1.87% / +1.88% / +1.88%，2024–2026 全为正；但按 conditionId 聚类后只有 9 / 10 / 12 个真正结算市场，0 亏损的 Wilson 95% 上界为 29.9% / 27.8% / 24.3%，均远高于 2.1% / 2.3% / 2.3% 的盈亏平衡率 → **市场级统计证据不足，不能判定可实盘**。之前按 leg 计数（241/221/216 lots）的 PASS 是 pseudo-replication，已作废。8 个 Shadow 臂全部 WAITING；真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 13:56 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量 109 suites / 637 tests 通过。2026-10-21 小资金候选切换为 `smallcap-500-flatten24-2c`：0.97–0.99 Geopolitics、$500/档、4 档、最大库存 $2,000、close 前 24h taker flatten、2 tick 滑点、+2c。历史回测 169 lots、fill rate 49.4%、mean ROI +1.759%、PnL $1,486.57；53 个独立 tail 市场、0 tail 亏损，1% 滑点压力下 Wilson 上界 6.76% < 盈亏平衡 58.20%，tail audit PASS。+3c 对照 64 个 tail 市场、PnL $1,654.71。11 个 Shadow 臂已干净重启但全部 WAITING、0 fills / 0 settlements；真实 Shadow 的 50 个独立 tail 市场和 50 个 cycle 仍未取得，真实 Live smoke 仍需账户、资金和明确授权。**
+> 最后更新：2026-10-21 15:09 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读本文件末尾最新 checkpoint 和工作日志末尾，最后核对运行中的 Shadow PID、`git status` 与 Gate 输出。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -144,7 +144,8 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [x] 逆势流 Guard 在回测、Shadow、Live 共用引擎中实现并通过边界/撤单测试。
 - [x] 完成 4,189 市场 Guard A/B、三笔历史归零因果审计和 Shadow 冒烟。
 - [ ] 完全消除不可预测的第一笔大额卖单尾部风险。（市场聚类后 q2 只有 9 个结算市场，Wilson 上界 29.915% > 盈亏平衡 2.075%，未通过；不能宣称完全消除）
-- [ ] close 前 24h 强制平仓变体（taker SELL）完成 Live/Shadow 执行路径和独立样本验证。
+- [x] close 前 24h 强制平仓变体（taker SELL）完成 Live/Shadow 执行路径。
+- [ ] flatten24 变体完成独立 Shadow 样本并通过 gate。
 - [ ] 实际小资金 live smoke 通过（需要用户账户和显式授权）。**执行清单：[bond-live-smoke-checklist-2026-10-21.md](bond-live-smoke-checklist-2026-10-21.md)**
 - [x] 更新策略文档、运行手册和故障处理手册。
 - [x] 全量测试通过。
@@ -167,7 +168,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
 | Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；v5 主臂/一档实验臂已用 69649e5 重启；实验臂已选中真实市场并挂单 |
 | 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；候选 q15–q50 零归零，50bps +0.069%、100bps -0.914% |
-| 全量回归 | 109 suites / 632 tests / 0 failures / 0 errors / 2 skipped | 已完成（2026-10-21 13:45） |
+| 全量回归 | 109 suites / 637 tests / 0 failures / 0 errors / 2 skipped | 已完成（2026-10-21 14:37） |
 | 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
@@ -1537,3 +1538,11 @@ cd D:\Project\PolyHermes\backend
 - q2 close 前 24h 平仓、2 tick 滑点：+1.726%，62 个平仓市场，0 平仓亏损，最差 lot +0.101%。
 - 不强制平仓基准：+1.870%，9 个结算市场，最差 lot +1.011%。
 - 该变体收益略低但可能显著降低结算尾部风险；尚未实现 Live taker SELL，也尚未新增 Shadow 臂，不能作为已实盘验证。
+### 20.41 2026-10-21 14:37 close 前 24h 强制平仓实现
+
+- 可选配置 `flattenBeforeCloseMinutes` / `flattenSlippageTicks`，默认关闭。
+- 新增 taker SELL intent；Live adapter 对 taker entry/exit 使用 `postOnly=false`，普通 maker 仍 post-only。
+- Engine 在 flatten 窗口撤普通挂单并下 marketable SELL，15 秒未成交撤单重试；Shadow port 立即成交。
+- `FLATTEN` cycle、`forcedFlatten` 持久化、gate/report 聚类均已贯通。
+- 新增 `flatten24` Shadow 臂（1440 分钟、2 tick），当前 WAITING。
+- 全量 **109 suites / 637 tests**；gate 回归 **5/5 PASS**。

@@ -30,6 +30,8 @@ $common = @{
   ExitImproveTicks = 0
   RequoteSeconds = 300
   MaxOrderAgeSeconds = 1800
+  FlattenBeforeCloseMinutes = 0
+  FlattenSlippageTicks = 0
   FlowGuardWindowSeconds = 0
   MaxTotalInventoryNotional = 400
   MaxDailyLoss = 1000
@@ -45,6 +47,9 @@ function Merge-Hashtable([hashtable]$base, [hashtable]$overrides) {
 $arms = @(
   @{ Name = "3c-geo-9597"; Args = (Merge-Hashtable $common @{ MinPrice = 0.95; MaxPrice = 0.97; Output = "build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021"; ExitSpreadCents = 3; MaxCyclesPerMarket = 3; EntryOffsetCents = 0; MaxTotalInventoryNotional = 1000; EntryMomentumMaxCents = 999 }) },
   @{ Name = "ladder4"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021"; LadderOffsetsCents = "0,0.5,1,2"; EntryOffsetCents = 0; EntryMomentumMaxCents = 999; MaxTotalInventoryNotional = 400 }) },
+  @{ Name = "flatten24"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-flatten24-shadow-7d-20261021"; LadderOffsetsCents = "0,0.5,1,2"; EntryOffsetCents = 0; EntryMomentumMaxCents = 999; MaxTotalInventoryNotional = 400; FlattenBeforeCloseMinutes = 1440; FlattenSlippageTicks = 2 }) },
+  @{ Name = "smallcap-flatten24-2c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-flatten24-500-shadow-7d-20261021"; LadderOffsetsCents = "0,0.5,1,2"; EntryOffsetCents = 0; EntryMomentumMaxCents = 999; OrderNotional = 500; MaxMarkets = 3; MaxTotalInventoryNotional = 2000; MaxDailyLoss = 100; FlattenBeforeCloseMinutes = 1440; FlattenSlippageTicks = 2 }) },
+  @{ Name = "smallcap-flatten24-3c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-flatten24-500-shadow-7d-20261021"; LadderOffsetsCents = "0,0.5,1,2"; EntryOffsetCents = 0; EntryMomentumMaxCents = 999; OrderNotional = 500; MaxMarkets = 3; MaxTotalInventoryNotional = 2000; MaxDailyLoss = 100; FlattenBeforeCloseMinutes = 1440; FlattenSlippageTicks = 2; ExitSpreadCents = 3 }) },
   @{ Name = "taker00c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021"; ExitSpreadCents = 3; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true; EntryMomentumMaxCents = 999 }) },
   @{ Name = "taker2c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021"; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true; EntryMomentumMaxCents = 999 }) },
   @{ Name = "mom1-taker2c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021"; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true }) },
@@ -54,7 +59,7 @@ $arms = @(
 )
 
 if ($DryRun) {
-  $arms | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Output = $_.Args.Output; OrderNotional = $_.Args.OrderNotional; LadderOffsetsCents = $_.Args.LadderOffsetsCents; EntryOffsetCents = $_.Args.EntryOffsetCents; ExitSpreadCents = $_.Args.ExitSpreadCents; ImproveTicks = $_.Args.ImproveTicks; ExitImproveTicks = $_.Args.ExitImproveTicks; FillFactor = $_.Args.FillVolumeFactor; MomentumMaxCents = $_.Args.EntryMomentumMaxCents; MaxCycles = $_.Args.MaxCyclesPerMarket; MinRemaining = $_.Args.MinRemainingMinutes; MaxRemaining = $_.Args.MaxRemainingMinutes; Taker = [bool]$_.Args.TakerEntry } } | Format-Table -AutoSize
+  $arms | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Output = $_.Args.Output; OrderNotional = $_.Args.OrderNotional; LadderOffsetsCents = $_.Args.LadderOffsetsCents; FlattenBeforeCloseMinutes = $_.Args.FlattenBeforeCloseMinutes; FlattenSlippageTicks = $_.Args.FlattenSlippageTicks; EntryOffsetCents = $_.Args.EntryOffsetCents; ExitSpreadCents = $_.Args.ExitSpreadCents; ImproveTicks = $_.Args.ImproveTicks; ExitImproveTicks = $_.Args.ExitImproveTicks; FillFactor = $_.Args.FillVolumeFactor; MomentumMaxCents = $_.Args.EntryMomentumMaxCents; MaxCycles = $_.Args.MaxCyclesPerMarket; MinRemaining = $_.Args.MinRemainingMinutes; MaxRemaining = $_.Args.MaxRemainingMinutes; Taker = [bool]$_.Args.TakerEntry } } | Format-Table -AutoSize
   return
 }
 

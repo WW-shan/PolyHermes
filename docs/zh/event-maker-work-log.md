@@ -2333,3 +2333,59 @@
 - 分年：2024 +1.088%、2025 +1.782%、2026 +1.791%，均为正。
 - 结论：强制平仓变体可能显著降低结算尾部风险，但需要新增 Live taker SELL 执行路径和新 Shadow 臂验证；当前不能把它当作已实盘验证。
 - 证据：`bond-flatten24-q2-20261021.json`、`bond-flatten24-s1-q2-20261021.json`、`bond-flatten24-s2-q2-20261021.json`。
+### 20.41 2026-10-21 14:37 close 前 24h 强制平仓执行路径
+
+- 新增可选配置 `flattenBeforeCloseMinutes` / `flattenSlippageTicks`，默认 0 关闭，不改变现有策略。
+- `EventMakerQuoteIntent` 增加 `takerExit`；planner 新增 bid 下方 slippage 的 marketable SELL。
+- Live adapter 对 taker entry/exit 使用 `postOnly=false`；普通 maker 仍强制 post-only。
+- Engine 在 flatten 窗口内先撤普通挂单，再下 taker SELL；15 秒未成交会撤单重试；Shadow 端口对 taker exit 立即成交。
+- Cycle 增加 `FLATTEN` 类型，持久化 `forcedFlatten`；gate/report 把 `SETTLE` 和 `FLATTEN` 都作为 tail exit，并按 `marketId` 聚类。
+- Shadow suite 新增 `flatten24` 臂：0.97–0.99 Geopolitics、0/0.5/1/2c、每档 $100、close 前 1440 分钟平仓、2 tick 滑点。
+- 全量回归：**109 suites / 637 tests / 0 failures / 0 errors / 2 skipped**；Gate 回归 **5/5 PASS**。
+- 9 个 Shadow 臂（含 flatten24）于 14:36:07 +08:00 重启，全部 WAITING；尚无 fill/settlement 样本。
+- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-143607.json`。
+
+### 20.42 2026-10-21 14:42 当前 Gate 与候选市场复核
+
+- 重跑 `evaluate-bond-shadow-gate.cjs` 与 `report-bond-shadow-status.cjs`：9 个 Shadow 臂全部 `WAITING`，0 fills / 0 cycles / 0 settlements / 0 settlement markets，Gate 结果为 `WAIT`。
+- 重跑 `report-bond-candidate-eta.ps1`：扫描 1,492 个 Geopolitics 市场，符合 3–7 天、0.97–0.99、非 NegRisk、24h 成交量 ≥ 10,000 的当前候选为 **0**，未来进入该窗口的候选也为 **0**。
+- 当前仅有两个高价市场但都太接近结算：Israel x Iran ceasefire 21.27h 后关闭（24h 量 89,207.9），US x Yemen ceasefire 17.27h 后关闭（24h 量 5,996.55）；均不应作为主策略样本。
+- 因此“现在”的历史回测结论仍是正的点估计，但实盘影子还没有任何可验证成交样本；必须等待新的 3–7 天 Geopolitics 市场进入窗口。
+### 20.43 2026-10-21 14:50 当前目标：继续收口回测与实盘策略验证
+
+- 目标：按交付计划完成剩余验收项，直到回测、Shadow 与执行链路都经证据验证；真实资金 Live smoke 仍需用户账户和显式授权。
+- 前置状态：flatten24 代码已实现但尚未提交；9 个 Shadow 臂在运行，全部 WAITING；历史回测点估计为正、市场级统计仍 FAIL。
+- 本轮先做：复核 flatten 实现边界 → 全量单元/集成测试 → Gate 回归 → 重跑回测产物对照 → 检查 Shadow 进程和候选市场。
+- 约束：运行中的 Shadow 不重新编译；如需加载新代码，必须停止旧进程并记录干净重启证据。
+### 20.44 2026-10-21 14:54 规模复核：为什么目标账户赚得多而当前回测只有 $450
+
+- 目标账户公开事实：累计买入 **$5,626,529.09**，已实现 PnL **+$29,919.56**，390 个已平仓记录，单次周转 ROI **0.532%**；公开成交中 2,868 笔买入有 markout，按股数分组的中位最大库存约 **7,000 股**，对应 0.97–0.99 价格约 **$6.8k** 库存。
+- 当前 $100 ladder：241 lots、117/160 成交市场、fill rate 73.1%、mean ROI +1.870%、PnL **$450.55**、平均最大库存 **$198.46**。这不是目标账户的规模，而是最小单档验证。
+- 当前代码重跑规模敏感性（q2、0.97–0.99、+2c、4 档）：
+  - $1,000/tranche：129 lots、63 个成交市场、fill rate 39.4%、mean ROI +1.950%、PnL **$2,515.70**、平均最大库存 $2,009.89。
+  - $5,000/tranche：47 lots、29 个成交市场、fill rate 18.1%、mean ROI +1.890%、PnL **$4,442.63**、平均最大库存 $8,133.00。
+- 结论：从 $100 放大到 $5,000，PnL 约 9.9 倍，但 fill rate 从 73.1% 降到 18.1%，不是线性放大；目标账户的绝对收益来自**更大库存 + 更多市场/轮次 + 事件选择**，不是靠把同一小样本无限加仓。
+- 全价格带简单 ladder（$100、q2、3–7d、max 8 tranches）复核：0.5–0.8 Geopolitics +2c **-15.33%**，0.8–0.9 **-8.31%**，0.9–0.95 **-5.20%**；即使 close 前 24h 平仓仍为负。只有 0.97–0.99 Geopolitics 为正。目标账户在低价格带的利润不能由当前 hold/ladder 模型复刻，必须另做事件选择与主动退出。
+- 全量回归（强制重跑）：**109 suites / 637 tests / 0 failures / 0 errors / 2 skipped**。Gate 回归 **5/5 PASS**。
+- 9 个 Shadow 臂已停止旧进程、测试后于 14:54:54 用当前代码干净重启；当前全部 WAITING、0 fills / 0 settlements，Gate `WAIT`。
+- 证据：`bond-capacity-1k-q2-current-20261021.json`、`bond-capacity-5k-q2-current-20261021.json`、`bond-broad-band-q2-100-20261021.json`、`bond-broad-band-q2-100-flatten24-s2-20261021.json`、`bond-shadow-suite-start-20261021-145454.json`。
+### 20.45 2026-10-21 15:09 按用户体量收敛到 $500/档的 flatten24 策略
+
+- 用户体量：几千 USDC，不需要复刻目标账户的大库存和高周转；目标是资金适配、尾部可控、可执行。
+- 新回测统计口径：`SETTLE` 与 `FLATTEN` 都作为 tail exit，按 `conditionId` 聚类；强制平仓的无亏损样本使用 1% 滑点压力损失计算盈亏平衡，不再套用“结算归零”的 -100% 回退。
+- 0.97–0.99 Geopolitics、+2c、q2、4 档、close 前 24h 平仓、2 tick 滑点、不同单档仓位：
+
+| 单档 | lots | fill rate | mean ROI | 总 PnL | 平均最大库存 | tail markets | tail losses | tail CI95 上界 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| $250 | 201 | 58.8% | +1.735% | $871.82 | $519 | 57 | 0 | 6.31% |
+| **$500** | **169** | **49.4%** | **+1.759%** | **$1,486.57** | **$1,037** | **53** | **0** | **6.76%** |
+| $750 | 144 | 43.1% | +1.764% | $1,904.60 | $1,507 | 48 | 0 | 7.41% |
+| $1,000 | 129 | 39.4% | +1.771% | $2,285.17 | $2,010 | 44 | 0 | 8.03% |
+
+- $500、+2c、flatten24：tail 聚类 53 个市场、0 亏损、1% 压力损失下盈亏平衡率 58.20%，Wilson 上界 6.76% → **PASS**。
+- $500、+3c、flatten24：165 lots、64 个 tail 市场、mean ROI +2.006%、总 PnL $1,654.71、tail CI 上界 5.66% → **PASS**；收益更高但更依赖 +3c 成交。
+- 结论：在几千 USDC 体量下，首选 **$500/档、4 档、最大库存 $2,000、0.97–0.99 Geopolitics、+2c、24h flatten**；保留 $1,000 现金缓冲。+3c 作为收益增强对照臂。
+- 新增 Shadow 臂：`smallcap-flatten24-2c` 与 `smallcap-flatten24-3c`，均为 $500/档、max inventory $2,000、max daily loss $100、max markets 3。Gate 主候选已切换为 `smallcap-500-flatten24-2c`。
+- 当前 11 个 Shadow 臂已干净重启，全部 WAITING，0 fills / 0 settlements；Gate 仍为 WAIT。历史统计 PASS 不等于真实 Shadow 或 Live 通过。
+- 回归：`test-bond-tail-audit.cjs` 2/2 PASS；`test-bond-shadow-gate.cjs` 5/5 PASS。
+- 证据：`bond-smallcap-500-flat24-q2-tailcluster-20261021.json`、`bond-smallcap-500-flat24-q2-tailaudit-20261021.json`、`bond-smallcap-750-flat24-q2-tailcluster-20261021.json`、`bond-shadow-suite-start-20261021-150907.json`。

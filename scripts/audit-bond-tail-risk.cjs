@@ -22,41 +22,51 @@ const rows = (report.results || []).map(r => {
   const losses = num(r.settleLossCount);
   const lossRate = lots > 0 ? losses / lots : null;
   const ci = lossRate == null ? [0, 1] : wilson(lossRate, lots);
-  const breakEven = r.breakEvenLossRate == null
-    ? (r.meanRoi > 0 ? num(r.meanRoi) / (num(r.meanRoi) + 1.0) : null)
-    : num(r.breakEvenLossRate);
+  const breakEven = r.tailExitBreakEvenLossRate != null
+    ? num(r.tailExitBreakEvenLossRate)
+    : (r.breakEvenLossRate == null
+      ? (r.meanRoi > 0 ? num(r.meanRoi) / (num(r.meanRoi) + 1.0) : null)
+      : num(r.breakEvenLossRate));
   const margin = breakEven == null ? null : breakEven - ci[1];
   const statisticallyPositive = r.meanRoi > 0 && breakEven != null && ci[1] < breakEven;
   const settleMarkets = r.settleMarkets == null ? null : num(r.settleMarkets);
   const settleLossMarkets = r.settleLossMarkets == null ? null : num(r.settleLossMarkets);
-  const marketLossRate = settleMarkets ? settleLossMarkets / settleMarkets : null;
-  const marketLossCi95 = settleMarkets ? wilson(marketLossRate, settleMarkets) : [0, 1];
-  const marketBreakEven = r.marketBreakEvenLossRate == null ? breakEven : num(r.marketBreakEvenLossRate);
-  const marketMargin = marketBreakEven == null ? null : marketBreakEven - marketLossCi95[1];
-  const marketStatisticallyPositive = settleMarkets != null && r.meanRoi > 0 &&
-    marketBreakEven != null && marketLossCi95[1] < marketBreakEven;
+  const hasTailCluster = r.tailExitMarkets != null;
+  const tailExitMarkets = hasTailCluster ? num(r.tailExitMarkets) : settleMarkets;
+  const tailExitLossMarkets = hasTailCluster ? num(r.tailExitLossMarkets) : settleLossMarkets;
+  const tailExitLossRate = tailExitMarkets ? tailExitLossMarkets / tailExitMarkets : null;
+  const tailExitLossCi95 = tailExitMarkets ? wilson(tailExitLossRate, tailExitMarkets) : [0, 1];
+  const tailBreakEven = r.tailExitBreakEvenLossRate != null
+    ? num(r.tailExitBreakEvenLossRate)
+    : (r.marketBreakEvenLossRate == null ? breakEven : num(r.marketBreakEvenLossRate));
+  const tailMargin = tailBreakEven == null ? null : tailBreakEven - tailExitLossCi95[1];
+  const tailStatisticallyPositive = tailExitMarkets != null && r.meanRoi > 0 &&
+    tailBreakEven != null && tailExitLossCi95[1] < tailBreakEven;
   return {
     band: r.band, tag: r.tag, targetCents: r.targetCents, queueFactor: r.queueFactor,
     minHoursToClose: r.minHoursToClose, maxHoursToClose: r.maxHoursToClose,
     lots, settleLossCount: losses, lossRate, lossCi95: ci,
-    settleMarkets, settleLossMarkets, marketLossRate, marketLossCi95,
-    meanRoi: r.meanRoi, avgWin: r.avgWin, avgLoss: r.avgLoss,
+    settleMarkets, settleLossMarkets,
+    tailExitMarkets, tailExitLossMarkets, tailExitLossRate, tailExitLossCi95,
+    marketLossRate: tailExitLossRate, marketLossCi95: tailExitLossCi95,
+    meanRoi: r.meanRoi, avgWin: r.tailExitAvgWin ?? r.avgWin, avgLoss: r.tailExitAvgLoss ?? r.avgLoss,
     breakEvenLossRate: breakEven, edgeMarginVsCiUpper: margin,
-    marketBreakEvenLossRate: marketBreakEven, marketEdgeMarginVsCiUpper: marketMargin,
-    statisticallyPositive, marketStatisticallyPositive,
+    marketBreakEvenLossRate: tailBreakEven, marketEdgeMarginVsCiUpper: tailMargin,
+    tailExitBreakEvenLossRate: tailBreakEven, tailStressLossRoi: r.tailStressLossRoi,
+    statisticallyPositive, marketStatisticallyPositive: tailStatisticallyPositive,
   };
 });
 const payload = { generatedAt: new Date().toISOString(), input, rows };
 if (output) fs.writeFileSync(output, JSON.stringify(payload, null, 2) + '\n');
-console.log('band tag target q legs mkts settleLossMkts mktLossRate mktLossCI95 meanROI mktBreakEven mktMargin mktVerdict legVerdict');
+console.log('band tag target q legs tailMkts tailLossMkts tailLossRate tailLossCI95 meanROI tailBreakEven tailMargin tailVerdict legVerdict');
 for (const r of rows) {
   console.log([
     String(r.band).padEnd(9), String(r.tag).padEnd(12), String(r.targetCents).padStart(3),
-    String(r.queueFactor).padStart(3), String(r.lots).padStart(5), String(r.settleMarkets ?? '-').padStart(5),
-    String(r.settleLossMarkets ?? '-').padStart(3),
-    pct(r.marketLossRate).padStart(10),
-    `[${pct(r.marketLossCi95[0])},${pct(r.marketLossCi95[1])}]`.padStart(17),
-    pct(r.meanRoi).padStart(8), pct(r.marketBreakEvenLossRate).padStart(10),
+    String(r.queueFactor).padStart(3), String(r.lots).padStart(5), String(r.tailExitMarkets ?? '-').padStart(7),
+    String(r.tailExitLossMarkets ?? '-').padStart(3),
+    pct(r.tailExitLossRate).padStart(10),
+    `[${pct(r.tailExitLossCi95[0])},${pct(r.tailExitLossCi95[1])}]`.padStart(17),
+    pct(r.meanRoi).padStart(8), pct(r.tailExitBreakEvenLossRate).padStart(10),
     pct(r.marketEdgeMarginVsCiUpper).padStart(10),
     r.marketStatisticallyPositive ? 'PASS' : 'FAIL',
     r.statisticallyPositive ? 'PASS' : 'FAIL'

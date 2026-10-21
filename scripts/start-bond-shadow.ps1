@@ -25,6 +25,8 @@ param(
   [int]$TakerEntrySlippageTicks = 0,
   [int]$RequoteSeconds = 120,
   [int]$MaxOrderAgeSeconds = 3600,
+  [int]$FlattenBeforeCloseMinutes = 0,
+  [int]$FlattenSlippageTicks = 0,
   [double]$MaxTotalInventoryNotional = 100,
   [double]$MaxDailyLoss = 5,
   [int]$MinRecentTrades = 0,
@@ -75,6 +77,8 @@ $appArgs = @(
   "--exit-spread-cents", "$ExitSpreadCents",
   "--requote-seconds", "$RequoteSeconds",
   "--max-order-age-seconds", "$MaxOrderAgeSeconds",
+  "--flatten-before-close-minutes", "$FlattenBeforeCloseMinutes",
+  "--flatten-slippage-ticks", "$FlattenSlippageTicks",
   "--flow-guard-window-seconds", "$FlowGuardWindowSeconds",
   "--order-notional", "$OrderNotional",
   "--fill-volume-factor", "$FillVolumeFactor",
@@ -128,6 +132,8 @@ $info = [pscustomobject]@{
   takerEntrySlippageTicks = $TakerEntrySlippageTicks
   requoteSeconds = $RequoteSeconds
   maxOrderAgeSeconds = $MaxOrderAgeSeconds
+  flattenBeforeCloseMinutes = $FlattenBeforeCloseMinutes
+  flattenSlippageTicks = $FlattenSlippageTicks
   minRemainingMinutes = $MinRemainingMinutes
   maxRemainingMinutes = $MaxRemainingMinutes
   waitForMarketMinutes = $WaitForMarketMinutes

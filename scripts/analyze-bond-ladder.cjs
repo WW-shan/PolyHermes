@@ -140,6 +140,7 @@ function simulateMarket(market, ref, targetCents) {
             shares: lot.shares,
             pnl,
             exitType: 'FLATTEN',
+            tickSize: tick,
             offsetCents: lot.offsetCents
           });
         }
@@ -260,8 +261,11 @@ for(let bi=0;bi<bands.length-1;bi++){
       // Legs in the same market share one resolution event, so settlement
       // statistics must be clustered by conditionId rather than treating each
       // ladder leg as an independent observation.
+      const settleLots = allLots.filter(l=>l.exitType==='SETTLE');
+      const flattenLots = allLots.filter(l=>l.exitType==='FLATTEN');
+      const tailLots = allLots.filter(l=>l.exitType==='SETTLE'||l.exitType==='FLATTEN');
       const settlePnlByMarket = new Map();
-      for (const lot of allLots.filter(l=>l.exitType==='SETTLE')) {
+      for (const lot of settleLots) {
         settlePnlByMarket.set(lot.conditionId, (settlePnlByMarket.get(lot.conditionId) || 0) + lot.pnl);
       }
       const marketSettleRois = [...settlePnlByMarket.values()].map(p => p / trancheNotional);
@@ -273,6 +277,45 @@ for(let bi=0;bi<bands.length-1;bi++){
       const marketBreakEvenLossRate = marketAw > 0 && marketAl < 0
         ? marketAw / (marketAw + Math.abs(marketAl))
         : (marketAw > 0 ? marketAw / (marketAw + 1.0) : null);
+
+      // Tail exits include both settlement and forced flatten. Cluster by
+      // conditionId so ladder legs on one market are one observation.
+      const tailPnlByMarket = new Map();
+      const tailCostByMarket = new Map();
+      const flattenLossByMarket = new Map();
+      for (const lot of tailLots) {
+        const id = lot.conditionId;
+        const cost = lot.entryPrice * lot.shares;
+        tailPnlByMarket.set(id, (tailPnlByMarket.get(id) || 0) + lot.pnl);
+        tailCostByMarket.set(id, (tailCostByMarket.get(id) || 0) + cost);
+        if (lot.exitType === 'FLATTEN') {
+          const flatLossRoi = lot.entryPrice > 0
+            ? flattenSlippageTicks * (lot.tickSize || 0.001) / lot.entryPrice
+            : 0;
+          flattenLossByMarket.set(id, (flattenLossByMarket.get(id) || 0) + cost * flatLossRoi);
+        }
+      }
+      const tailRoiByMarket = [...tailPnlByMarket.entries()].map(([id, pnl]) => {
+        const cost = tailCostByMarket.get(id) || 0;
+        return cost > 0 ? pnl / cost : 0;
+      });
+      const tailDeaths = tailRoiByMarket.filter(x => x < 0);
+      const tailWins = tailRoiByMarket.filter(x => x > 0);
+      const tailLossRate = tailRoiByMarket.length ? tailDeaths.length / tailRoiByMarket.length : 0;
+      const tailAvgWin = mean(tailWins), tailAvgLoss = mean(tailDeaths);
+      // For flatten-only tail exits the maximum loss is bounded by slippage,
+      // not a full 100% settlement loss. Use the worst market-weighted
+      // slippage as the stress loss when no actual flatten loss was observed.
+      const maxFlattenLossRoi = flattenLossByMarket.size
+        ? Math.max(...[...flattenLossByMarket.entries()].map(([id, loss]) => {
+            const cost = tailCostByMarket.get(id) || 0;
+            return cost > 0 ? loss / cost : 0;
+          }))
+        : 0;
+      const tailStressLoss = tailAvgLoss < 0
+        ? Math.abs(tailAvgLoss)
+        : (settleLots.length > 0 ? 1.0 : Math.max(maxFlattenLossRoi, 0.01));
+      const tailBreakEvenLossRate = tailAvgWin > 0 ? tailAvgWin / (tailAvgWin + tailStressLoss) : null;
       results.push({
         band:bandLabel(low, high), bandLow:low, bandHigh:high, tag, targetCents:target, momentumMinCents, momentumMaxCents, momentumLookbackSeconds, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose,
         eligible:eligibleCount, filledMarkets, fillRate:eligibleCount?filledMarkets/eligibleCount:0,
@@ -298,6 +341,15 @@ for(let bi=0;bi<bands.length-1;bi++){
         marketLossRate,
         marketLossCi95:settlePnlByMarket.size ? wilson(marketLossRate, settlePnlByMarket.size) : [0,1],
         marketBreakEvenLossRate,
+        tailExitMarkets:tailPnlByMarket.size,
+        tailExitLossMarkets:tailDeaths.length,
+        tailExitLossRate:tailLossRate,
+        tailExitLossCi95:tailPnlByMarket.size ? wilson(tailLossRate, tailPnlByMarket.size) : [0,1],
+        tailExitBreakEvenLossRate:tailBreakEvenLossRate,
+        tailExitAvgWin:tailAvgWin,
+        tailExitAvgLoss:tailAvgLoss,
+        tailExitWorstRoi:tailRoiByMarket.length ? Math.min(...tailRoiByMarket) : 0,
+        tailStressLossRoi:tailStressLoss,
         totalPnl:pnls.reduce((a,b)=>a+b,0), deployed,
         maxDrawdownUsd:maxDrawdownUsd(allLots),
         byYear:summarizeByYear(allLots)
@@ -306,8 +358,8 @@ for(let bi=0;bi<bands.length-1;bi++){
   }
 }
 fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,flattenHoursBeforeClose,flattenSlippageTicks,levelsCents,targetsCents,momentumMinCents,momentumMaxCents,momentumLookbackSeconds,results},null,2));
-console.log('band tag tgt levels elig filled fill% lots buys sells win% meanRoi roiCI worst settleLoss settleMkts lossMkts mktLossCI maxInv$');
+console.log('band tag tgt levels elig filled fill% lots buys sells win% meanRoi roiCI worst tailMkts tailLossMkts tailLossCI maxInv');
 for(const r of results){
-  console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.settleLossCount).padStart(3),String(r.settleMarkets).padStart(5),String(r.settleLossMarkets).padStart(3),`[${(100*r.marketLossCi95[0]).toFixed(2)},${(100*r.marketLossCi95[1]).toFixed(2)}]`.padStart(15),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
+  console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.tailExitMarkets).padStart(5),String(r.tailExitLossMarkets).padStart(3),`[${(100*r.tailExitLossCi95[0]).toFixed(2)},${(100*r.tailExitLossCi95[1]).toFixed(2)}]`.padStart(15),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
 }
 console.log('wrote '+outputPath);

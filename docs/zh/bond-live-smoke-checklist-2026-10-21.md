@@ -6,7 +6,7 @@
 ## 1. 进入 Live 前必须满足
 
 - [ ] `node scripts/evaluate-bond-shadow-gate.cjs` 输出 **PASS**，不是 `WAIT`。
-- [ ] 主候选 `atomic-4level-2c-maker-ladder`（`ladder4`）有足够的真实 Shadow 成交/结算样本。
+- [ ] 主候选 `smallcap-500-flatten24-2c`（$500/档、最大库存 $2,000、24h flatten）有足够的真实 Shadow 成交/tail exit 样本。
 - [ ] 结算亏损率 Wilson 95% 上界低于盈亏平衡率。
 - [ ] 60s / 300s markout 不低于 gate 阈值。
 - [ ] 最近 24h 无重复成交、未知订单状态、未解释的 active order。
@@ -30,6 +30,12 @@
 | Taker fallback | 禁止 |
 
 > 不建议首次就使用 $1,000 或 $5,000。历史 $1k/$5k 的零亏损样本不足以把尾部 CI 压到盈亏平衡以下。
+### 2.1 用户体量适配（2026-10-21）
+
+- 推荐正式策略：`0.97–0.99 Geopolitics`、`0.97–0.99` 4 档 ladder、单档 `$500`、最大库存 `$2,000`、close 前 24h taker flatten、2 tick 滑点、+2c 目标。
+- 历史回测（$500/档、+2c、flatten24）：169 lots、fill rate 49.4%、mean ROI +1.759%、总 PnL $1,486.57、53 个独立 tail 市场、0 tail 亏损；1% 滑点压力下 Wilson 上界 6.76% < 盈亏平衡 58.20%。
+- +3c 对照：165 lots、64 个 tail 市场、mean ROI +2.006%、总 PnL $1,654.71；收益更高但更依赖 +3c 成交。
+- 实盘顺序仍应是：先用 `$100` 单市场验证执行闭环，确认状态/持仓/PnL 一致后，才允许升到 `$500` 档；不要直接跳过 smoke。
 
 ## 3. 启动步骤
 
