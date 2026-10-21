@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场。目标账户与历史 maker ladder 共同表明：0.97–0.99 Geopolitics +2c 的最优窗口是 close 前 **3–7 天**（q2/q3/q4 约 +1.88%，2024–2026 全为正，0 结算亏损）；最后 3 天为负，0.95–0.97 不稳定，Politics 为负。11 个 Shadow 臂已切到 3–7 天窗口，当前因最近市场约 170h 而处于 LIVE/WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 10:23 +08:00<br>
+> 最后更新：2026-10-21 10:50 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -1385,3 +1385,10 @@ cd D:\Project\PolyHermes\backend
 - 旧 active order 在重启后丢弃队列、保留已成交库存；outside-window flat 市场不允许重新开仓，库存仍可退出。
 - 订单 ID、日志续写、gate 的 `runHours` 和分布式 ladder 聚合已修正。
 - 当前 gate 仍为 `WAIT`：0 fills、0 settlements、候选组等待市场。下一步仍是积累真实 Shadow 样本，而不是上真钱。
+### 20.21 2026-10-21 10:50 候选 ETA、NegRisk 与费用审计
+
+- 官方费率复核：maker 全类别 0；Geopolitics taker 0。
+- 主策略 160 个 0.97–0.99 Geopolitics 3–7d 历史候选全部 `negRisk=false`，当前 Shadow 排除 NegRisk 与回测口径一致。
+- 新增候选 ETA 工具 `scripts/report-bond-candidate-eta.ps1`；当前扫描 1,493 个市场，eligibleNow=0，nextFuture=0，唯一高价市场已进入最后 3 天。
+- monitor 现在记录 waiting 状态和 candidate ETA，不再是静默跳过。
+- 下一步不是放宽窗口，而是等待合格市场进入 3–7d；gate 仍保持 WAIT。

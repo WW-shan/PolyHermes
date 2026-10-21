@@ -558,3 +558,30 @@ queue 模型，stop=0，q2，off0：
 6. gate 候选改为 `off00/off05/off10/off20` 四个 maker 臂聚合，因为单臂并不等价于历史 ladder。
 
 仍未完成：真实 SETTLE 样本、24–48h 真实 fill 样本、60s/300s markout 验证和 gate PASS。当前不能上真钱。
+### 14.1 Maker-only 回测费用审计（2026-10-21）
+
+- `scripts/analyze-bond-ladder.cjs` 的两条腿都是 maker：BUY 挂单、SELL 挂单，因此按官方口径 maker fee = 0。
+- 删除了脚本中未使用的 `takerFeeRate` 死代码，避免让读者误以为 ladder 回测扣了 taker 费。
+- 同时修复了自定义 `--bands` 时标签仍按默认区间硬编码的问题；现在标签由实际 bands 动态生成。
+- 复核输出：`backend/build/research/bond-ladder-fee-audit-20261021.json`
+  - 0.97–0.99 Geopolitics +2c q2，3–7d：241 lots，fill rate 73.1%，mean ROI +1.87%，0 结算亏损。
+  - 这与费用模型为 0 的 maker-only 结果一致；不是漏扣 taker 费。
+### 14.2 回测与 Shadow 的 NegRisk 口径核对（2026-10-21）
+
+- 历史 dataset 没有保存 `negRisk` 字段，而 Shadow discovery 默认 `allowNegRisk=false`；这原本可能导致“回测包含 NegRisk、实盘却排除”的口径不一致。
+- 已对主策略全部 0.97–0.99 Geopolitics、3–7d 候选逐个通过 Gamma `condition_ids` 回查：
+  - 候选市场数：**160**
+  - 成功回查：**160**
+  - `negRisk=true`：**0**
+  - `negRisk=false`：**160**
+- 证据：
+  - `backend/build/research/bond-geo-97099-3to7d-candidates-20261021.json`
+  - `backend/build/research/bond-geo-negrisk-map-20261021.json`
+  - 查询脚本：`scripts/fetch-gamma-negrisk-map.ps1`
+- 结论：主策略 0.97–0.99 Geopolitics 的 160 个历史候选全部是非 NegRisk，当前 Shadow 的 `allowNegRisk=false` 与回测口径一致。
+### 14.3 当前候选可用性（2026-10-21 10:50）
+
+- 扫描 1,493 个 Geopolitics 市场：`eligibleNow=0`。
+- 唯一价格在 0.97–0.99、成交量足够的市场是 `Israel x Iran ceasefire continues through October 21?`，距 close 约 25.2h，已进入最后 3 天禁区，不能交易。
+- 未发现未来会进入 3–7d 窗口且满足成交量/价格/NegRisk 条件的候选。
+- 这不是 Shadow 故障；11 个 JVM 全部存活，日志持续输出 `marketWait`。证据：`backend/build/research/bond-candidate-eta-20261021.json`。

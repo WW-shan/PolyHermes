@@ -33,9 +33,12 @@ const maxHoursToClose = numArg('max-hours-to-close', horizonDays * 24);
 const levelsCents = listArg('levels-cents', '0,0.5,1,2');
 const targetsCents = listArg('sell-target-cents', '1,2,3');
 const bands = listArg('bands', '0.9,0.95,0.97,0.99,1.0000001');
-const BAND_LABELS = ['0.9-0.95','0.95-0.97','0.97-0.99','0.99-1.0'];
-const TAKER_FEE_BY_TAG = { Politics: 0.04, Geopolitics: 0.0 };
-function takerFeeRate(tag){ return Object.prototype.hasOwnProperty.call(TAKER_FEE_BY_TAG,tag)?TAKER_FEE_BY_TAG[tag]:0.04; }
+function bandLabel(low, high) {
+  const format = value => value >= 1 ? '1.0' : String(value);
+  return `${format(low)}-${format(high)}`;
+}
+// Both ladder legs are maker orders. Official protocol maker fee is 0 for every
+// current category, so no fee term is applied anywhere in this replay.
 function referenceAt(market, ts) {
   let l0=null,l1=null;
   for(const t of market.trades){ if(t.timestamp>ts||t.price<=0||t.price>=1) continue; if(t.outcomeIndex===0)l0=t; else if(t.outcomeIndex===1)l1=t; }
@@ -181,7 +184,7 @@ for(const m of dataset.markets){
   if(r) refs.push({m,r});
 }
 const results=[];
-for(let bi=0;bi<BAND_LABELS.length;bi++){
+for(let bi=0;bi<bands.length-1;bi++){
   const low=bands[bi], high=bands[bi+1]; if(low==null||high==null) continue;
   const eligible=refs.filter(({r})=>r.price>=low&&r.price<high);
   const tags=[...new Set(eligible.map(({m})=>m.tag))].sort();
@@ -201,7 +204,7 @@ for(let bi=0;bi<BAND_LABELS.length;bi++){
       const lr=allLots.length?losses/allLots.length:0;
       const deployed=allLots.reduce((s,l)=>s+l.entryPrice*l.shares,0);
       results.push({
-        band:BAND_LABELS[bi], tag, targetCents:target, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose,
+        band:bandLabel(low, high), bandLow:low, bandHigh:high, tag, targetCents:target, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose,
         eligible:eligibleCount, filledMarkets, fillRate:eligibleCount?filledMarkets/eligibleCount:0,
         lots:allLots.length, buys:totalBuys, sells:totalSells,
         avgBuysPerFilledMarket:filledMarkets?totalBuys/filledMarkets:0,

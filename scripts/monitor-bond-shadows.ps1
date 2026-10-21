@@ -2,7 +2,9 @@ param(
   [string]$Outputs = "build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021,build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021,build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021,build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021,build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021,build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021,build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021,build/research/event-maker-bond-scalp-2c-geo-9597-dip24h-taker-shadow-7d-20261021,build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021,build/research/event-maker-bond-scalp-1c-geo-97099-mom1-taker-shadow-7d-20261021,build/research/event-maker-bond-scalp-2c-geo-97099-off10-size1k-shadow-7d-20261021",
   [int]$IntervalMinutes = 30,
   [string]$Log = "build/research/bond-shadow-monitor.log",
-  [string]$Series = "build/research/bond-shadow-audit-series.jsonl"
+  [string]$Series = "build/research/bond-shadow-audit-series.jsonl",
+  [string]$EtaOutput = "build/research/bond-candidate-eta-latest.json",
+  [switch]$Once
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -21,10 +23,63 @@ $dirs = $Outputs.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 Write-Log ("monitor armed: interval={0}m outputs={1}" -f $IntervalMinutes, ($dirs -join ';'))
 
 while ($true) {
+  try {
+    $etaPath = Join-Path $backend $EtaOutput
+    & (Join-Path $PSScriptRoot "report-bond-candidate-eta.ps1") -Output $etaPath | Out-Null
+    $eta = Get-Content -LiteralPath $etaPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $nextEta = @($eta.nextFutureCandidates) | Select-Object -First 1
+    [pscustomobject]@{
+      type = "candidate_eta"
+      at = (Get-Date).ToUniversalTime().ToString("o")
+      scanned = $eta.scanned
+      eligibleNow = @($eta.eligibleNow).Count
+      nextFutureCandidates = @($eta.nextFutureCandidates).Count
+      highPriceTooClose = @($eta.highPriceTooClose).Count
+      nextFutureHours = if ($nextEta) { $nextEta.hoursUntilFutureWindow } else { $null }
+      nextFutureQuestion = if ($nextEta) { $nextEta.question } else { $null }
+    } | ConvertTo-Json -Compress | Add-Content -LiteralPath $seriesPath -Encoding UTF8
+  } catch {
+    Write-Log "candidate eta failed: $($_.Exception.Message)"
+  }
   foreach ($rel in $dirs) {
     $dir = Join-Path $backend $rel
+    $runPath = Join-Path $dir "run.json"
+    $armPid = $null
+    $processAlive = $false
+    if (Test-Path -LiteralPath $runPath) {
+      try {
+        $run = Get-Content -LiteralPath $runPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $armPid = [int]$run.pid
+        $proc = Get-Process -Id $armPid -ErrorAction SilentlyContinue
+        $processAlive = ($null -ne $proc -and $proc.ProcessName -eq "java")
+      } catch { }
+    }
     if (-not (Test-Path (Join-Path $dir "state.json"))) {
-      Write-Log "skip missing state: $rel"
+      $waitingStatus = if ($processAlive) { "WAITING" } elseif ($armPid) { "DEAD" } else { "MISSING" }
+      [pscustomobject]@{
+        type = "arm"
+        at = (Get-Date).ToUniversalTime().ToString("o")
+        output = $rel
+        status = $waitingStatus
+        pid = $armPid
+        processAlive = $processAlive
+        markets = $null
+        fills = $null
+        cycles = $null
+        settlements = $null
+        settlementLosses = $null
+        pendingSettlements = $null
+        activeOrders = $null
+        inventoryShares = $null
+        realizedPnl = $null
+        realizedRoi = $null
+        markout60Count = $null
+        markout60Mean = $null
+        markout300Mean = $null
+        markout60NegativeShare = $null
+        flags = $waitingStatus
+      } | ConvertTo-Json -Compress | Add-Content -LiteralPath $seriesPath -Encoding UTF8
+      Write-Log "no state yet: $rel status=$waitingStatus pid=$armPid alive=$processAlive"
       continue
     }
     $audit = Join-Path $dir "audit-latest.json"
@@ -55,8 +110,12 @@ while ($true) {
       }
     }
     $record = [pscustomobject]@{
+      type = "arm"
       at = (Get-Date).ToUniversalTime().ToString("o")
       output = $rel
+      status = "ACTIVE"
+      pid = $armPid
+      processAlive = $processAlive
       markets = $a.state.markets
       fills = $a.state.fills
       cycles = $a.state.cycles
@@ -75,5 +134,6 @@ while ($true) {
     }
     $record | ConvertTo-Json -Compress | Add-Content -LiteralPath $seriesPath -Encoding UTF8
   }
+  if ($Once) { break }
   Start-Sleep -Seconds ($IntervalMinutes * 60)
 }

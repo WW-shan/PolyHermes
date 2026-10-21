@@ -2086,3 +2086,19 @@
   - `EventMakerLiveEngineTest`：outside-window 禁止新开仓但允许库存退出；
   - `EventMakerShadowExecutionPortTest`：跨实例订单 ID 唯一。
 - 当前 gate 仍为 `WAIT`：候选组等待 3–7 天市场、0 fills、0 settlements；这是样本不足，不是策略已通过。
+### 20.21 2026-10-21 10:50 候选 ETA 与等待证据
+
+- 新增 `scripts/report-bond-candidate-eta.ps1`：扫描当前 Geopolitics 市场，输出：
+  - 当前满足 3–7d + 0.97–0.99 + volume≥10k + non-NegRisk 的候选；
+  - 未来会进入窗口的高价候选及预计等待小时数；
+  - 价格已到 0.97–0.99 但已进入最后 3 天的市场。
+- 当前扫描 1,493 个 Geopolitics 市场：
+  - **eligibleNow = 0**
+  - **nextFutureCandidates = 0**
+  - highPriceTooClose = 1（Israel x Iran ceasefire through October 21，约 25.2h，属于最后 3 天禁区）
+- 证据：`backend/build/research/bond-candidate-eta-20261021.json`
+- `monitor-bond-shadows.ps1` 已改为：
+  - 每轮写 `candidate_eta` 记录；
+  - 无 state 但进程存活时写 `WAITING`，而不是静默跳过；
+  - 支持 `-Once` 做单轮自检。
+- 新增后台 monitor PID 31176；11 个 Shadow 臂仍全部存活且 WAITING。
