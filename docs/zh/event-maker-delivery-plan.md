@@ -1438,3 +1438,9 @@ cd D:\Project\PolyHermes\backend
 - 明确首次 Live smoke 只能用 $100 单笔、$100–$200 总库存、1–2 个市场、MaxCycles=1。
 - 明确 gate 必须 PASS，且用户必须提供账户、资金、授权和时间窗口。
 - 当前仍未执行真实订单；文档只是执行前检查清单。
+### 20.30 2026-10-21 11:33 CLI 重启恢复烟测
+
+- 新增 `scripts/smoke-bond-shadow-resume.ps1`，真实启动 Shadow CLI 1 分钟。
+- 恢复 10 股库存和 1 条 fill，丢弃 1 个旧 active order；重启后 activeOrderId=null、inventory=10.00、fills=1。
+- 结果：`resume smoke PASS`；证据在 `backend/build/research/resume-smoke-latest/`。
+- 这补充了单元测试之外的 CLI/JVM 级恢复验证。

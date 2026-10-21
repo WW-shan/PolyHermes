@@ -672,3 +672,19 @@ queue 模型，stop=0，q2，off0：
   - 100 个零亏损结算 → `WAIT`
   - 100 个全亏损结算 → `FAIL`
 - 回归结果：`bond gate regression: 3/3 PASS`。
+### 14.11 CLI 级重启恢复烟测（2026-10-21）
+
+`scripts/smoke-bond-shadow-resume.ps1` 现在会真实启动 1 分钟的 Shadow CLI，而不是只测状态机：
+
+- 构造：10 股库存 + 1 条 BUY fill + 旧 active SELL。
+- 重启后验证：
+  - `resumed=true`
+  - `recoveredInventoryShares=10.0`
+  - `abandonedRecoveredOrders=1`
+  - `activeOrderId=null`
+  - `inventoryShares=10.00`
+  - `fills=1`
+  - 无 haltedReason / lastErrors。
+- 结果：`resume smoke PASS`。
+- 证据：`backend/build/research/resume-smoke-latest/`。
+- 这说明恢复链路在真实 JVM 启动、发现、状态写入和关闭路径上都可工作。

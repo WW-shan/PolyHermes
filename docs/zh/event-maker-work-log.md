@@ -2178,3 +2178,17 @@
 - 尾部风险项保留未勾选，但记录 q2 的统计边界：上界 1.569% < 盈亏平衡 1.835%。
 - 全量回归更新为 **109 suites / 609 tests / 0 failures / 0 errors / 2 skipped**。
 - Live smoke 仍未执行，清单已链接到交付计划。
+### 20.30 2026-10-21 11:33 实际 CLI 重启恢复烟测
+
+- 新增 `scripts/smoke-bond-shadow-resume.ps1`，自动构造一个带 10 股库存、1 条历史 BUY fill、旧 active SELL 的 Shadow state/recovery。
+- 实际启动 `EventMakerShadowCli` 1 分钟，验证：
+  - `summary.resumed=true`
+  - `recoveredInventoryShares=10.0`
+  - `abandonedRecoveredOrders=1`
+  - 重启后 `activeOrderId=null`
+  - `inventoryShares=10.00`
+  - `fills=1`
+  - `haltedReason=null`，`lastErrors=[]`
+- 输出：`resume smoke PASS`。
+- 证据目录：`backend/build/research/resume-smoke-latest/`（state、recovery、summary、logs）。
+- 这验证了实际 JVM 路径，而不只是单元测试里的状态机恢复。
