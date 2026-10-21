@@ -2028,3 +2028,10 @@
 - `audit-bond-shadow.cjs` 新增 settlements、settlementLosses、pendingSettlements、duplicateSettlementIds、missingSettlementCycles、settlementRealizedPnl 审计字段与 flags。
 - monitor 的 `bond-shadow-audit-series.jsonl` 新增 settlements / settlementLosses / pendingSettlements。
 - 当前 10/10 Shadow 臂 LIVE；另有 7 fills，SETTLE 仍为 0，等待真实到期样本。
+### 09:40 自动验收闸门
+
+- 新增 `scripts/evaluate-bond-shadow-gate.cjs`，只读扫描全部 Shadow state/markout。
+- 默认门槛：候选臂运行 ≥24h、候选成交 ≥20、全臂结算 ≥50；结算亏损率 Wilson 95% 上界必须低于盈亏平衡亏损率；60s markout ROI 不得低于 -1%。
+- 当前判定：`WAIT`；blockers 为 `TOTAL_SETTLEMENTS_BELOW_50`、`RUN_TIME_BELOW_MIN`、`FILLS_BELOW_MIN`、`NO_SETTLEMENTS`。
+- 当前 60s markout ROI：taker 约 -0.36%，mom1 约 -0.31%，dip24h 约 -1.05%；佐证当前 taker 入场仍有逆向选择，不能上真钱。
+- 证据：`backend/build/research/bond-shadow-gate-20261021.json`。

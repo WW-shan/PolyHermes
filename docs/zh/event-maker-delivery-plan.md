@@ -1351,3 +1351,8 @@ cd D:\Project\PolyHermes\backend
 - `execution-diagnostics.json` 每快照周期刷新；报告新增 crossTrades / queueConsumed。
 - `audit-bond-shadow.cjs` 与 monitor series 增加 settlement / pending redemption / duplicate / missing-cycle 审计。
 - 直接 JVM 冒烟已通过；全量测试通过；当前等待结算样本。
+### 20.15 2026-10-21 09:40 自动验收闸门
+
+- 新增 `scripts/evaluate-bond-shadow-gate.cjs`，输出 `PASS / WAIT / FAIL` 与 JSON 证据。
+- 当前为 `WAIT`：结算样本 0/50、候选运行时长 <24h、候选成交不足、60s markout 仍为负。
+- 进入真实小资金前必须让该闸门变为 `PASS`；不能人工绕过。
