@@ -32,6 +32,7 @@ const minHoursToClose = numArg('min-hours-to-close', 0);
 const flattenHoursBeforeClose = numArg('flatten-hours-before-close', 0);
 const flattenSlippageTicks = numArg('flatten-slippage-ticks', 0);
 const stopLossCents = numArg('stop-loss-cents', 0);
+const takerFeeRate = numArg('taker-fee-rate', 0); // applied to FLATTEN (taker) exits only
 const lotsOutputPath = arg('lots-output');
 if (stopLossCents < 0) throw new Error('invalid --stop-loss-cents');
 const maxHoursToClose = numArg('max-hours-to-close', horizonDays * 24);
@@ -134,7 +135,8 @@ function simulateMarket(market, ref, targetCents) {
     if (flattenTs != null && !flattened && trade.timestamp >= flattenTs) {
       if (flattenPrice != null) {
         for (const lot of openLots) {
-          const pnl = (flattenPrice - lot.entryPrice) * lot.shares;
+          const flattenFee = takerFeeRate > 0 ? lot.shares * takerFeeRate * flattenPrice * (1 - flattenPrice) : 0;
+          const pnl = (flattenPrice - lot.entryPrice) * lot.shares - flattenFee;
           closedLots.push({
             entryTs: lot.entryTs,
             entryPrice: lot.entryPrice,
@@ -397,3 +399,4 @@ for(const r of results){
   console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),String(r.stopCount).padStart(4),String(r.stopLossCount).padStart(3),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.tailExitMarkets).padStart(5),String(r.tailExitLossMarkets).padStart(3),`[${(100*r.tailExitLossCi95[0]).toFixed(2)},${(100*r.tailExitLossCi95[1]).toFixed(2)}]`.padStart(15),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
 }
 console.log('wrote '+outputPath);
+

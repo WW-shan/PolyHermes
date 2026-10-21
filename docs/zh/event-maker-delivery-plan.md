@@ -1546,3 +1546,12 @@ cd D:\Project\PolyHermes\backend
 - `FLATTEN` cycle、`forcedFlatten` 持久化、gate/report 聚类均已贯通。
 - 新增 `flatten24` Shadow 臂（1440 分钟、2 tick），当前 WAITING。
 - 全量 **109 suites / 637 tests**；gate 回归 **5/5 PASS**。
+## 收尾状态（2026-10-21）
+
+- 研究结论：策略内核可复刻，收益量级不可复刻；几千 USDC 下机械上限约 30% 年化。
+- 最终候选：`core2-flat12-2c`（0.97–0.99 Geopolitics + 0.95–0.97 Politics，$500/档，8 档，3–7d，flatten 12h，2 tick）。
+- 尾部审计：两条腿均 PASS。
+- Shadow：14 个臂全部 WAITING，0 fills / 0 settlements（当前无合格市场）。
+- Live：未执行，等待账户、资金、凭证与明确授权。
+- 最终记录：`docs/zh/leader-replication-archive-2026-10-21.md`、`docs/zh/leader-replication-ceiling-2026-10-21.md`。
+- OpenSpec 已完成变更已归档到 `openspec/changes/archive/`。

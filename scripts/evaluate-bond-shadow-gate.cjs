@@ -43,9 +43,12 @@ const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-1c-geo-97099-mom1-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-9597-dip24h-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-off10-size1k-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-core2-flat12-geo-97099-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-core2-flat12-pol-9597-shadow-7d-20261021',
 ];
 const candidateDirs = [
-  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-flatten24-500-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-core2-flat12-geo-97099-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-core2-flat12-pol-9597-shadow-7d-20261021',
 ];
 const dirs = String(arg('dirs', defaultDirs.join(','))).split(',').map(s => s.trim()).filter(Boolean);
 const candidates = String(arg('candidates', candidateDirs.join(','))).split(',').map(s => s.trim()).filter(Boolean);
@@ -238,7 +241,7 @@ function readCandidateGroup(name, groupDirs) {
 
 const arms = dirs.map(readArm);
 const byDir = new Map(arms.map(a => [path.resolve(a.dir), a]));
-const candidateGroups = [readCandidateGroup('smallcap-500-flatten24-2c', candidates)];
+const candidateGroups = [readCandidateGroup('core2-flat12-2c', candidates)];
 const settlementMarkets = candidateGroups.reduce((s, g) => s + (g.settlementMarkets || 0), 0);
 const totals = {
   arms: arms.length,
