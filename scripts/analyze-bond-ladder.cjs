@@ -48,6 +48,28 @@ function median(a){if(!a.length)return 0;const s=[...a].sort((x,y)=>x-y);const m
 function wilson(p,n,z=1.96){if(!n)return[0,0];const d=1+z*z/n,c=(p+z*z/(2*n))/d,h=z*Math.sqrt((p*(1-p)+z*z/(4*n))/n)/d;return[Math.max(0,c-h),Math.min(1,c+h)];}
 function bootstrapCi(v,runs=3000){if(v.length<2)return[v[0]||0,v[0]||0];const m=[];for(let r=0;r<runs;r++){let s=0;for(let i=0;i<v.length;i++)s+=v[(Math.random()*v.length)|0];m.push(s/v.length);}m.sort((a,b)=>a-b);return[m[Math.floor(0.025*(m.length-1))],m[Math.floor(0.975*(m.length-1))]];}
 function maxDrawdownUsd(lots){const o=[...lots].sort((a,b)=>a.exitTs-b.exitTs);let c=0,p=0,d=0;for(const t of o){c+=t.pnl;p=Math.max(p,c);d=Math.max(d,p-c);}return d;}
+function summarizeLots(lots){
+  if(!lots.length) return {lots:0,meanRoi:0,portfolioRoi:0,winRate:0,totalPnl:0,settleLossCount:0,worstRoi:0};
+  const rois=lots.map(l=>l.roi), pnls=lots.map(l=>l.pnl);
+  const deployed=lots.reduce((s,l)=>s+l.entryPrice*l.shares,0);
+  return {
+    lots:lots.length,
+    meanRoi:mean(rois),
+    portfolioRoi:deployed>0?pnls.reduce((a,b)=>a+b,0)/deployed:0,
+    winRate:rois.filter(x=>x>0).length/rois.length,
+    totalPnl:pnls.reduce((a,b)=>a+b,0),
+    settleLossCount:lots.filter(l=>l.exitType==='SETTLE'&&l.pnl<0).length,
+    worstRoi:Math.min(...rois)
+  };
+}
+function summarizeByYear(lots){
+  const groups={};
+  for(const lot of lots){
+    const year=new Date(lot.exitTs*1000).getUTCFullYear();
+    (groups[year]??=[]).push(lot);
+  }
+  return Object.fromEntries(Object.entries(groups).sort(([a],[b])=>a.localeCompare(b)).map(([year,group])=>[year,summarizeLots(group)]));
+}
 
 function simulateMarket(market, ref, targetCents) {
   const entryTs = market.closedTimestamp - horizonDays*86400;
@@ -188,7 +210,8 @@ for(let bi=0;bi<BAND_LABELS.length;bi++){
         settleCount:allLots.filter(l=>l.exitType==='SETTLE').length,
         settleLossCount:allLots.filter(l=>l.exitType==='SETTLE'&&l.pnl<0).length,
         totalPnl:pnls.reduce((a,b)=>a+b,0), deployed,
-        maxDrawdownUsd:maxDrawdownUsd(allLots)
+        maxDrawdownUsd:maxDrawdownUsd(allLots),
+        byYear:summarizeByYear(allLots)
       });
     }
   }

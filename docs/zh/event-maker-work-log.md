@@ -1931,3 +1931,13 @@
 - 首轮：2 笔 BUY 立即成交（0.985×101.52、0.981×101.93），SELL 已挂 0.999；inventory 203.45，0 cycles。
 - 60s markout -0.30、负占比 100%（2 笔）；说明立即成交、对账、退出挂单、markout 四条链路跑通，但样本远不足。
 - monitor 重启并加入 taker 臂；status 报告默认 6 臂。
+
+### 08:05 年度外样本复核：纠正“7 天样本”口径
+
+- 核对数据集元数据：`event-maker-full-v2-7d-20261019-dataset.json.gz` 的 `fromDate=2024-01-01`、`toDate=2026-10-01`、`entryHorizonSeconds=604800`，共 4,189 个市场。**“7d”是每个市场入场前 7 天窗口，不是整个数据集只有 7 天。**
+- `scripts/analyze-bond-ladder.cjs` 新增 `byYear` 分组。
+- 0.97–0.99 Geopolitics +3c ladder：263 lots，mean ROI +2.34%，95% CI [2.25%, 2.42%]；2024 25 lots +1.77%、2025 89 lots +2.40%、2026 149 lots +2.40%，三年均为正、0 结算亏损。
+- 队列敏感性：queueFactor=2/3/4 分别为 263/246/240 lots，mean ROI 均为 +2.34%。
+- 尾部压力：95% Wilson 亏损率上界 1.44%，盈亏平衡亏损率约 2.29%；假设真实亏损率 1% 时期望 ROI +1.32%，2% 时 +0.29%，3% 时 -0.73%。
+- 结论修正：0.97–0.99 Geopolitics +3c 不是“只靠 7 天顺风窗口”，在 2024–2026 年度外样本中仍是正期望；但 0 次尾部亏损不能外推为 0%，真实 L2/延迟/部分成交仍未验证。
+- 证据：`backend/build/research/bond-ladder-periods-20261021.json`、`bond-ladder-q3b-20261021.json`、`bond-ladder-q4b-20261021.json`。

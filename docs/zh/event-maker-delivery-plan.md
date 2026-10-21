@@ -1207,9 +1207,10 @@ cd D:\Project\PolyHermes\backend
 
 - 目标账户的策略家族真实盈利，但核心是**高频 favorite scalping / 做市 + 选择性止损**，不是机械 hold-to-settlement。
 - 价格止损、时间止损、逆向流止损在 queue 模型中全部破坏 edge；不能用一个固定规则复刻他的“该砍/该扛”判断。
-- 0.95–0.97 只有 **Geopolitics** 为正（+3c 回测 +3.17%，69 cycles，0 结算亏损）；Politics 为负（+3c -1.14%）。
-- 0.97–0.99 两个 tag 都为正（Geopolitics +1c +1.06% / +3c +1.82%；Politics +1c +1.04% / +3c +1.81%）。
-- 7 天样本 0 亏损，而目标账户一年期 Geopolitics 真实亏损率 25.5%；7 天样本是顺风窗口，不能把 100% 胜率当长期预期。
+- 0.95–0.97 Geopolitics 单档 queue 模型全样本 +3.17%，但 ladder 年度拆分不稳定：2024 -31.2%、2025 -2.9%、2026 +3.2%；不能作为主策略。
+- 0.97–0.99 Geopolitics 单档 queue +1c +1.06% / +3c +1.82%；ladder 版本 +1c +1.03% / +3c **+2.34%**，是当前最佳候选。
+- 0.97–0.99 Politics 单档 queue 为正，但 ladder +3c 为 -0.04%，不做。
+- “7d”数据集是每个市场 7 天窗口，实际覆盖 2024-01-01 至 2026-10-01、4,189 个市场；0.97–0.99 Geopolitics +3c 三年均为正，但仍不能把 0 次尾部亏损当长期 0%。
 
 ### 20.2 目标账户真实结构
 
@@ -1254,9 +1255,9 @@ cd D:\Project\PolyHermes\backend
 
 ### 20.6 下一步
 
-1. 5 个 LIVE 臂继续跑 24–48h，检查 fill / markout / 首轮 cycle。
-2. 重点观察 `3c-geo-9597` 与 `1c/3c-97099` 的真实 fill rate 和 markout。
-3. 若 7 天仍无 fill 或 markout 持续为负，停止机械 maker 方向，不再调参。
+1. 当前 6 个 LIVE 臂继续跑 24–48h，检查 fill / markout / 首轮 cycle。
+2. 重点观察 `3c-geo-97099-off00/05/10/20` 与 `taker00c`；`3c-geo-9597` 只作为对照，不再作为主策略。
+3. 目标候选固定为 **0.97–0.99 Geopolitics +3c ladder**；不要因为 maker 臂 0 fill 就放宽价格带或降低门槛。
 4. 真实资金前必须满足：覆盖 50–100 个结算事件、亏损率 CI 上界低于盈亏平衡率、最大回撤可承受。
 
 ### 20.7 2026-10-21 07:53 taker-entry 链路与首个 A/B
@@ -1271,3 +1272,25 @@ cd D:\Project\PolyHermes\backend
 - 首轮 2 笔立即成交（0.985、0.981），SELL 0.999；inventory 203.45；60s markout -0.30（2 笔，负占比 100%）。
 - 验收：先跑 24–48h，比较 maker offset 臂与 taker 臂的 fill、60s/300s markout、cycle、结算亏损；不达标记不得上真钱。
 - 全量 `gradlew test`：BUILD SUCCESSFUL。
+
+### 20.8 2026-10-21 08:05 年度外样本与尾部压力测试
+
+- 纠正口径：`event-maker-full-v2-7d-20261019-dataset.json.gz` 的 “7d” 是每个市场 close 前 7 天窗口；数据集实际覆盖 **2024-01-01 至 2026-10-01**，共 **4,189 个市场**。
+- `scripts/analyze-bond-ladder.cjs` 新增 `byYear` 输出。
+- 0.97–0.99 Geopolitics +3c ladder：
+  - 合计 263 lots，mean ROI **+2.34%**，95% CI [2.25%, 2.42%]，0 结算亏损；
+  - 2024：25 lots，+1.77%；
+  - 2025：89 lots，+2.40%；
+  - 2026：149 lots，+2.40%。
+- 队列敏感性：
+  - queueFactor=2：263 lots，+2.34%；
+  - queueFactor=3：246 lots，+2.34%；
+  - queueFactor=4：240 lots，+2.34%。
+- 尾部压力：
+  - 95% Wilson 亏损率上界约 1.44%，盈亏平衡亏损率约 2.29%；
+  - 假设亏损率 1% → 期望 ROI +1.32%；2% → +0.29%；2.29% → 0；3% → -0.73%。
+- 结论：**在 trade-print 近似模型下，0.97–0.99 Geopolitics +3c ladder 是统计正期望；但真实 L2 队列、延迟、部分成交和尾部爆冷仍未验证。**
+- 输出证据：
+  - `backend/build/research/bond-ladder-periods-20261021.json`
+  - `backend/build/research/bond-ladder-q3b-20261021.json`
+  - `backend/build/research/bond-ladder-q4b-20261021.json`
