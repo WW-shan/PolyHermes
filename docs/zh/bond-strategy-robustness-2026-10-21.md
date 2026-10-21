@@ -651,3 +651,12 @@ queue 模型，stop=0，q2，off0：
   - 时间加权平均并发：**0.805**
 - 结论：suite 的 `MaxMarkets=20` 高于历史最大并发 17，不会因为市场数量上限而漏掉主策略候选。
 - 证据：`backend/build/research/bond-concurrency-20261021.json`。
+### 14.9 MaxCyclesPerMarket 校验（2026-10-21）
+
+- ladder 回测新增每市场成交 lot 数统计。
+- 0.97–0.99 Geopolitics +2c q2：
+  - 241 lots / 117 filled markets
+  - 单市场最大 lots：**7**
+  - 超过 10 lots 的市场：**0**
+  - 超过 20 lots 的市场：**0**
+- 结论：suite 的 `MaxCyclesPerMarket=10` 足以覆盖历史主策略的单市场最大 7 个回合，不会截断历史成交。

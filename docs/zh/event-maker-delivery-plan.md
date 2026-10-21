@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场。目标账户与历史 maker ladder 共同表明：0.97–0.99 Geopolitics +2c 的最优窗口是 close 前 **3–7 天**（q2/q3/q4 约 +1.88%，2024–2026 全为正，0 结算亏损）；最后 3 天为负，0.95–0.97 不稳定，Politics 为负。11 个 Shadow 臂已切到 3–7 天窗口，当前因最近市场约 170h 而处于 LIVE/WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 11:12 +08:00<br>
+> 最后更新：2026-10-21 11:15 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -1421,3 +1421,7 @@ cd D:\Project\PolyHermes\backend
 - 0.97–0.99 Geopolitics 3–7d 历史候选 160 个，最大并发 17，时间加权平均 0.805。
 - `MaxMarkets=20` 足以覆盖历史主策略候选，不会因上限漏单。
 - 证据：`bond-concurrency-20261021.json`、`scripts/analyze-bond-concurrency.cjs`。
+### 20.27 2026-10-21 11:15 MaxCycles 校验
+
+- 0.97–0.99 Geopolitics +2c q2 单市场最大 7 lots，超过 10 lots 的市场为 0。
+- `MaxCyclesPerMarket=10` 足够，不会截断历史主策略。

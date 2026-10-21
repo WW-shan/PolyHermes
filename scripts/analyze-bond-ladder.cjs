@@ -210,12 +210,12 @@ for(let bi=0;bi<bands.length-1;bi++){
   const tags=[...new Set(eligible.map(({m})=>m.tag))].sort();
   for(const tag of tags){
     for(const target of targetsCents){
-      const allLots=[]; let eligibleCount=0, filledMarkets=0, totalBuys=0, totalSells=0, maxInvNotionalSum=0, avgInvSum=0;
+      const allLots=[]; let eligibleCount=0, filledMarkets=0, totalBuys=0, totalSells=0, maxInvNotionalSum=0, avgInvSum=0, maxLotsPerMarket=0, marketsOver10Lots=0, marketsOver20Lots=0;
       for(const {m,r} of eligible){
         if(m.tag!==tag) continue;
         eligibleCount++;
         const sim=simulateMarket(m,r,target);
-        if(sim.filled){ filledMarkets++; totalBuys+=sim.buys; totalSells+=sim.sells; maxInvNotionalSum+=sim.maxInventoryNotional; avgInvSum+=sim.avgInventory; }
+        if(sim.filled){ filledMarkets++; totalBuys+=sim.buys; totalSells+=sim.sells; maxInvNotionalSum+=sim.maxInventoryNotional; avgInvSum+=sim.avgInventory; const marketLots=sim.lots.length; if(marketLots>maxLotsPerMarket)maxLotsPerMarket=marketLots; if(marketLots>10)marketsOver10Lots++; if(marketLots>20)marketsOver20Lots++; }
         for(const l of sim.lots) allLots.push({...l, roi:l.pnl/trancheNotional, tag:m.tag, conditionId:m.conditionId});
       }
       const rois=allLots.map(l=>l.roi), pnls=allLots.map(l=>l.pnl);
@@ -230,7 +230,7 @@ for(let bi=0;bi<bands.length-1;bi++){
         avgBuysPerFilledMarket:filledMarkets?totalBuys/filledMarkets:0,
         avgSellsPerFilledMarket:filledMarkets?totalSells/filledMarkets:0,
         avgMaxInventoryNotional:filledMarkets?maxInvNotionalSum/filledMarkets:0,
-        avgInventoryShares:filledMarkets?avgInvSum/filledMarkets:0,
+        avgInventoryShares:filledMarkets?avgInvSum/filledMarkets:0, maxLotsPerMarket, marketsOver10Lots, marketsOver20Lots,
         wins, losses, winRate:allLots.length?wins/allLots.length:0,
         meanRoi:mean(rois), medianRoi:median(rois), portfolioRoi:deployed>0?pnls.reduce((a,b)=>a+b,0)/deployed:0,
         roiCi95:bootstrapCi(rois), worstRoi:rois.length?Math.min(...rois):0,

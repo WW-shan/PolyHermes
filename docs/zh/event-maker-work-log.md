@@ -2149,3 +2149,8 @@
 - 0.97–0.99 Geopolitics：160 个候选，最大并发 17，时间加权平均并发 0.805。
 - 因此 suite 的 `MaxMarkets=20` 不会截断历史主策略候选。
 - 证据：`backend/build/research/bond-concurrency-20261021.json`。
+### 20.27 2026-10-21 11:15 MaxCycles 校验
+
+- ladder 回测新增 `maxLotsPerMarket` / `marketsOver10Lots` / `marketsOver20Lots`。
+- 0.97–0.99 Geopolitics +2c q2：241 lots / 117 markets，单市场最大 7 lots，超过 10 的市场为 0。
+- suite 的 `MaxCyclesPerMarket=10` 足够覆盖历史主策略，不会提前截断。
