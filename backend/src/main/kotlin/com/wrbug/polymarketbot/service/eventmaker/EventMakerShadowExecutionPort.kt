@@ -65,6 +65,8 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
     @Volatile
     private var fillVolumeFactor = 1.0
 
+    private var settlementResolver: (suspend (LivePaperMarket) -> Result<EventMakerSettlementSnapshot>)? = null
+
     /**
      * Requires cumulative crossing taker flow of [factor] times the order size after queue
      * ahead is exhausted. The default 1 is the conservative baseline; tests may explicitly
@@ -73,6 +75,12 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
     fun configureFillModel(factor: Double) = synchronized(lock) {
         require(factor >= 0.0) { "fillVolumeFactor must be non-negative" }
         fillVolumeFactor = factor
+    }
+
+    fun configureSettlementResolver(
+        resolver: suspend (LivePaperMarket) -> Result<EventMakerSettlementSnapshot>
+    ) = synchronized(lock) {
+        settlementResolver = resolver
     }
 
     override suspend fun validateAccount(accountId: Long): Result<Unit> = Result.success(Unit)
@@ -119,6 +127,31 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         Result.success(order.toLiveOrder())
     }
 
+    override suspend fun getSettlementSnapshot(
+        accountId: Long,
+        market: LivePaperMarket
+    ): Result<EventMakerSettlementSnapshot> {
+        val resolver = synchronized(lock) { settlementResolver }
+            ?: return Result.failure(IllegalStateException("shadow_settlement_resolver_missing"))
+        return resolver(market)
+    }
+
+    /**
+     * Shadow positions are virtual. Once the engine has booked the terminal
+     * payoff, the corresponding on-chain position is therefore already absent.
+     */
+    override suspend fun getSettlementPosition(
+        accountId: Long,
+        settlement: EventMakerSettlementRecord
+    ): Result<EventMakerSettlementPosition> = Result.success(
+        EventMakerSettlementPosition(
+            tokenId = settlement.favoriteTokenId,
+            shares = BigDecimal.ZERO,
+            redeemable = false,
+            outcomeIndex = settlement.outcomeIndex,
+            negativeRisk = settlement.negativeRisk
+        )
+    )
     override suspend fun getOrder(accountId: Long, orderId: String): Result<EventMakerLiveOrder> = synchronized(lock) {
         val order = orders[orderId]
             ?: return@synchronized Result.failure(EventMakerOrderNotFoundException(orderId))
@@ -236,6 +269,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
     fun reset() = synchronized(lock) {
         orders.clear()
         immediateFills.clear()
+        settlementResolver = null
     }
 
     fun activeOrderCount(): Int = synchronized(lock) { orders.values.count { it.status == "LIVE" } }

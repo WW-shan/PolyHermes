@@ -1998,3 +1998,24 @@
 - 当前选中 1 个市场（Bab el-Mandeb，+0.2c），已挂 BUY @0.97；这样可与未过滤的 off00/off05/off20 以及 taker2c/mom1 对比。
 - 9597 dip24h 等待臂仍在等待 ≤-2c；当前 5 个 0.95–0.97 市场最接近 -1.8c，0 selected。
 - 当前 8 个带 state 的 LIVE 臂 + 1 个等待臂。
+### 09:25 官方费率与 Shadow 结算闭环
+
+- 再次直连 `https://docs.polymarket.com/trading/fees.md` 复核：Maker Fee Rate 全类别为 0，官方原文为 “Makers are never charged fees. Only takers pay fees.”。
+- Geopolitics 同时是 Taker Fee Rate = 0、Maker Rebate = 0；Politics 是 Maker 0 / Taker 0.04 / Maker Rebate 25%。因此 Geopolitics 的 maker/taker A/B 不是手续费差异，而是成交质量、逆向选择与 markout 差异。
+- 修复 Shadow 长期运行不结算的问题：`EventMakerShadowCli` 现在在 reconcile 后调用 `settleResolved` 和 `redeemPendingRedemptions`，只对已到期且有虚拟库存的市场检查 Gamma 终态。
+- `LivePaperDataClient.getMarketResolution` 新增：Gamma `closed=true` 查询、`outcomePrices` 唯一 1/0 校验、未找到/未结算时返回 unresolved 而不是制造失败。
+- `EventMakerShadowExecutionPort` 新增 settlement resolver；Shadow 的“链上仓位”在记账后按 `ALREADY_ABSENT` 关闭，不伪造交易哈希。
+- `summary.json` 新增 `settlements`、`settlementLosses`；`events.jsonl` 新增 `settlements` / `redemptions`；状态报告新增结算列。
+- 新增 Shadow 胜/负结算集成测试：验证 SETTLE cycle、realized PnL、库存归零、虚拟赎回关闭。
+- 全量 `gradlew test`：BUILD SUCCESSFUL。
+### 09:22 新结算代码上线与 Shadow 重启
+
+- 归档重启前数据：`backend/build/research/archive/bond-shadow-pre-settlement-20261021-0930.zip`。
+- 停掉旧 10 个 Shadow 进程，使用新代码全部重启；监控 PID 14956 已用新脚本重启。
+- 新进程独立验证：10/10 臂均为 LIVE，`events.jsonl` 已出现 `settlements: []` / `redemptions: []` 字段，stderr 无异常。
+- 重启后首批成交：
+  - taker00c 与 taker2c 各 2 fills；
+  - 1c/2c mom1 taker 各 1 fill @0.981，SELL 0.991/0.999；
+  - 0.95–0.97 dip24h 臂首次成交 1 笔 @0.95，SELL 0.97，说明该过滤条件确实能等到市场；
+  - 所有 cycle 仍为 0，结算链路等待市场到期后验证。
+- 当前不进入真实资金；继续积累 fill、markout、cycle 和 SETTLE 样本。

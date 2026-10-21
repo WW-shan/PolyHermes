@@ -32,18 +32,20 @@ const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-1c-geo-97099-mom1-taker-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-9597-dip24h-taker-shadow-7d-20261021',
 ];
 const dirs = (arg('dirs') || defaultDirs.join(',')).split(',').map(s => s.trim()).filter(Boolean);
 const lines = [];
-lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | inventory | realizedPnl | unrealizedPnl | totalPnl | markout60 | markout300 | neg60 |');
-lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
-let totalFills = 0, totalCycles = 0, totalRealized = 0, totalUnrealized = 0;
+lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | settlements | settleLosses | inventory | realizedPnl | unrealizedPnl | totalPnl | markout60 | markout300 | neg60 |');
+lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+let totalFills = 0, totalCycles = 0, totalSettlements = 0, totalSettleLosses = 0, totalRealized = 0, totalUnrealized = 0;
 const stale = [];
 for (const dir of dirs) {
   const statePath = path.join(dir, 'state.json');
   const arm = path.basename(dir);
   if (!fs.existsSync(statePath)) {
-    lines.push(`| ${arm} | MISSING | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
+    lines.push(`| ${arm} | MISSING | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
     stale.push(arm + ' (missing)');
     continue;
   }
@@ -65,6 +67,9 @@ for (const dir of dirs) {
   const markets = Array.isArray(state.markets) ? state.markets : [];
   const fills = markets.reduce((s, m) => s + (Array.isArray(m.fills) ? m.fills.length : 0), 0);
   const cycles = markets.reduce((s, m) => s + (Array.isArray(m.cycles) ? m.cycles.length : 0), 0);
+  const settlementCycles = markets.flatMap(m => Array.isArray(m.cycles) ? m.cycles : []).filter(c => c.exitType === 'SETTLE');
+  const settlements = settlementCycles.length;
+  const settleLosses = settlementCycles.filter(c => num(c.pnl) < 0).length;
   const active = markets.filter(m => m.activeOrderId).length;
   const inventory = markets.reduce((s, m) => s + num(m.inventoryShares), 0);
   const realized = markets.reduce((s, m) => s + num(m.realizedPnl), 0);
@@ -92,12 +97,12 @@ for (const dir of dirs) {
     m60 = mean(vals60); m300 = mean(vals300);
     neg60 = vals60.length ? vals60.filter(v => v < 0).length / vals60.length : null;
   }
-  totalFills += fills; totalCycles += cycles; totalRealized += realized; totalUnrealized += unrealized;
+  totalFills += fills; totalCycles += cycles; totalSettlements += settlements; totalSettleLosses += settleLosses; totalRealized += realized; totalUnrealized += unrealized;
   const fmt = v => v == null ? '-' : (Math.round(v * 100) / 100).toString();
   const pct = v => v == null ? '-' : (Math.round(v * 1000) / 10).toString() + '%';
-  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(unrealized)} | ${fmt(realized + unrealized)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
+  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${settlements} | ${settleLosses} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(unrealized)} | ${fmt(realized + unrealized)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
 }
-lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | | **${Math.round(totalRealized * 100) / 100}** | **${Math.round(totalUnrealized * 100) / 100}** | **${Math.round((totalRealized + totalUnrealized) * 100) / 100}** | | | |`);
+lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | **${totalSettlements}** | **${totalSettleLosses}** | | **${Math.round(totalRealized * 100) / 100}** | **${Math.round(totalUnrealized * 100) / 100}** | **${Math.round((totalRealized + totalUnrealized) * 100) / 100}** | | | |`);
 if (stale.length) { lines.push(''); lines.push(`**NOT LIVE:** ${stale.join(', ')}`); }
 const text = lines.join('\n');
 console.log(text);

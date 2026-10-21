@@ -20,6 +20,7 @@ import com.wrbug.polymarketbot.service.eventmaker.EventMakerQuotePlanner
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerRiskPolicy
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerShadowExecutionPort
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerShadowFill
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerSettlementSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -112,6 +113,8 @@ private data class ShadowSummary(
     val completedCycles: Int,
     val winningCycles: Int,
     val losingCycles: Int,
+    val settlements: Int,
+    val settlementLosses: Int,
     val realizedPnl: Double,
     val unrealizedPnl: Double,
     val totalPnl: Double,
@@ -563,6 +566,14 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         shadowExecution = EventMakerShadowExecutionPort()
         shadowExecution.reset()
         shadowExecution.configureFillModel(options.fillVolumeFactor)
+        shadowExecution.configureSettlementResolver { market ->
+            dataClient.getMarketResolution(market.conditionId).map { resolution ->
+                EventMakerSettlementSnapshot(
+                    resolutionOutcomeIndex = resolution.resolvedOutcomeIndex,
+                    position = null
+                )
+            }
+        }
         val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), shadowExecution)
         if (options.flowGuardWindowSeconds > 0) {
             discovered.forEach { market -> dataClient.getRecentTrades(market).forEach(engine::onTrade) }
@@ -627,7 +638,10 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     if (now >= deadline) break@loop
                     continue@loop
                 }
-                val result = engine.reconcile(states, 0L, now).merge(engine.quote(states, books, 0L, now))
+                val result = engine.reconcile(states, 0L, now)
+                    .merge(engine.settleResolved(states.filter { it.isExpired(now) }, 0L, now))
+                    .merge(engine.redeemPendingRedemptions(states, 0L, now))
+                    .merge(engine.quote(states, books, 0L, now))
                 recordEngineResult(result)
                 if (result.haltedReason != null) {
                     haltedReason = result.haltedReason
@@ -696,6 +710,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             completedCycles = cycles.size,
             winningCycles = cycles.count { it.pnl > 0.0 },
             losingCycles = cycles.count { it.pnl < 0.0 },
+            settlements = cycles.count { it.exitType == "SETTLE" },
+            settlementLosses = cycles.count { it.exitType == "SETTLE" && it.pnl < 0.0 },
             realizedPnl = realized,
             unrealizedPnl = unrealized,
             totalPnl = realized + unrealized,
@@ -853,6 +869,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                     "canceled" to result.canceled,
                     "reconciled" to meaningfulReconciled,
                     "blocked" to flowGuardBlocks,
+                    "settlements" to result.settlements,
+                    "redemptions" to result.redemptions,
                     "errors" to actionableErrors,
                     "haltedReason" to result.haltedReason
                 )

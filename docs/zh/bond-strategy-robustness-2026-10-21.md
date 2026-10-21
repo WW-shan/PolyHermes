@@ -3,10 +3,14 @@
 > 目标账户：`0x0260366a9add43c25d4f4d35d2210526c6750d88`（adonpoli / Noted-Shop）
 > 结论：**目标账户的策略家族是真实盈利的，但它的核心 alpha 是“高频 favorite 做市/ scalping + 选择性止损”，不是机械 hold-to-settlement。我们测试过的所有机械止损/时间止损/流止损都会破坏 edge。**
 
-## 1. 官方费率（已二次复核）
+## 1. 官方费率（2026-10-21 再次直连复核）
 
-- 官方 `Fees` 页：**“Makers are never charged fees. Only takers pay fees.”**
-- 所有预测市场类别 `Maker Fee Rate = 0`；Geopolitics 的 taker 也是 0。
+- 官方页面：`https://docs.polymarket.com/trading/fees`（HTTP 200），Markdown 源：`https://docs.polymarket.com/trading/fees.md`。
+- 官方原文：**“Makers are never charged fees. Only takers pay fees.”**
+- 全类别 `Maker Fee Rate = 0`；我们的主战场 **Geopolitics 的 Taker Fee Rate 也是 0**，且 Maker Rebate 为 0。
+  - Politics：Maker 0、Taker 0.04、Maker Rebate 25%。
+  - Geopolitics：Maker 0、Taker 0、Maker Rebate 无。
+- 费用公式：`fee = C × feeRate × p × (1 - p)`；Maker 不进入收费路径。
 - Gamma 的 `makerBaseFee=1000` 是历史遗留字段，实际看 `feeSchedule.takerOnly=true`。
 - 详细证据见 `leader-bond-strategy-replication-2026-10-20.md` 的 4.1.1 / 4.1.2。
 

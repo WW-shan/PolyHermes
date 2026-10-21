@@ -14,6 +14,7 @@ import okhttp3.Request
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URI
+import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -79,6 +80,12 @@ data class MarketDiscoveryResult(
     val activityPassedMarkets: List<LivePaperMarket>,
     val activityDiagnostics: List<MarketActivityDiagnostic>,
     val stats: MarketDiscoveryStats
+)
+
+data class LivePaperMarketResolution(
+    val closed: Boolean,
+    val outcomePrices: List<BigDecimal>,
+    val resolvedOutcomeIndex: Int?
 )
 
 class LivePaperDataClient(
@@ -379,6 +386,38 @@ class LivePaperDataClient(
         }.getOrNull()
     }
 
+    /**
+     * Reads Gamma's terminal 0/1 prices for a market. Closed markets are only
+     * returned by Gamma when closed=true; a closed market without a unique
+     * 1/0 pair remains unresolved.
+     */
+    suspend fun getMarketResolution(conditionId: String): Result<LivePaperMarketResolution> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                require(conditionId.isNotBlank()) { "conditionId is blank" }
+                val url = gammaBaseUrl.toHttpUrl().newBuilder()
+                    .addPathSegment("markets")
+                    .addQueryParameter("condition_ids", conditionId)
+                    .addQueryParameter("closed", "true")
+                    .build()
+                val raw = gson.fromJson(executeGet(url), Array<GammaMarketJson>::class.java)
+                    ?.firstOrNull { it.conditionId.equals(conditionId, ignoreCase = true) }
+                    ?: return@runCatching LivePaperMarketResolution(
+                        closed = false,
+                        outcomePrices = emptyList(),
+                        resolvedOutcomeIndex = null
+                    )
+                val prices = readStringArray(raw.outcomePrices)
+                    .mapNotNull { it.toBigDecimalOrNull() }
+                val closed = raw.closed == true
+                val resolvedOutcomeIndex = prices.takeIf { it.size == 2 && closed }?.let { values ->
+                    val ones = values.indices.filter { values[it].compareTo(BigDecimal.ONE) == 0 }
+                    val zeros = values.indices.filter { values[it].compareTo(BigDecimal.ZERO) == 0 }
+                    ones.singleOrNull().takeIf { ones.size == 1 && zeros.size == 1 }
+                }
+                LivePaperMarketResolution(closed, prices, resolvedOutcomeIndex)
+            }
+        }
     suspend fun getTickSize(tokenId: String): Double? = withContext(Dispatchers.IO) {
         val url = clobBaseUrl.toHttpUrl().newBuilder()
             .addPathSegment("tick-size")
@@ -583,11 +622,13 @@ class LivePaperDataClient(
     private data class GammaMarketJson(
         val conditionId: String?,
         val question: String?,
+        val closed: Boolean?,
         val volume24hr: Double?,
         val endDate: String?,
         val bestBid: Double?,
         val bestAsk: Double?,
         val outcomes: JsonElement?,
+        val outcomePrices: JsonElement?,
         val clobTokenIds: JsonElement?,
         val negRisk: Boolean?,
         val negRiskOther: Boolean?,

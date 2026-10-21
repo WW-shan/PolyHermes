@@ -1,7 +1,9 @@
 package com.wrbug.polymarketbot.service.eventmaker
 
+import com.wrbug.polymarketbot.research.livepaper.BookLevel
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import com.wrbug.polymarketbot.research.livepaper.LiveTradePrint
+import com.wrbug.polymarketbot.research.livepaper.MarketBook
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -111,6 +113,80 @@ class EventMakerShadowExecutionPortTest {
         assertEquals(0, BigDecimal("10.00").compareTo(fills.single().shares))
         assertEquals("FILLED", port.getOrder(0L, placed.orderId).getOrThrow().status)
     }
+
+    @Test
+    fun `shadow settlement books a winning SETTLE cycle and virtual redemption`() = runTest {
+        val state = openShadowLong(resolvedOutcomeIndex = 0)
+        val settlement = state.settlements.single()
+
+        assertEquals(BigDecimal.ONE, settlement.exitPrice)
+        assertEquals(EventMakerRedemptionStatus.ALREADY_ABSENT, settlement.redemptionStatus)
+        assertEquals("SETTLE", state.cycles.single().exitType)
+        assertTrue(state.cycles.single().pnl > 0.0)
+        assertTrue(state.realizedPnl > 0.0)
+        assertEquals(0, BigDecimal.ZERO.compareTo(state.inventoryShares))
+        assertNull(state.pendingRedemption())
+    }
+
+    @Test
+    fun `shadow settlement books a losing SETTLE cycle`() = runTest {
+        val state = openShadowLong(resolvedOutcomeIndex = 1)
+        val settlement = state.settlements.single()
+
+        assertEquals(BigDecimal.ZERO, settlement.exitPrice)
+        assertEquals(EventMakerRedemptionStatus.ALREADY_ABSENT, settlement.redemptionStatus)
+        assertEquals(1, state.settlementLossesForTest())
+        assertTrue(state.realizedPnl < 0.0)
+        assertEquals(0, BigDecimal.ZERO.compareTo(state.inventoryShares))
+    }
+
+    private suspend fun openShadowLong(resolvedOutcomeIndex: Int): EventMakerLiveState {
+        val config = EventMakerConfig(
+            mode = EventMakerMode.SHADOW,
+            minPrice = 0.95,
+            maxPrice = 0.99,
+            minSpreadTicks = 2,
+            improveTicks = 1,
+            flowGuardWindowSeconds = 0,
+            orderNotional = 10.0,
+            shadowFillVolumeFactor = 0.0,
+            maxCyclesPerMarket = 3,
+            maxTotalInventoryNotional = 1_000.0,
+            maxDailyLoss = 100.0
+        )
+        val port = EventMakerShadowExecutionPort().apply {
+            configureFillModel(0.0)
+            configureSettlementResolver {
+                Result.success(EventMakerSettlementSnapshot(resolvedOutcomeIndex, null))
+            }
+        }
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        val state = EventMakerLiveState(market, config)
+        val start = System.currentTimeMillis()
+        state.onBook(book(0.95, 0.97, start))
+        val placed = engine.quote(listOf(state), mapOf(market.favoriteTokenId to state.lastBook!!), 0L, start)
+            .placed.single().order
+        val fills = port.onTrade(trade("SELL", 0.96, 20.0, placed.createdAt + 10L))
+        assertTrue(fills.isNotEmpty())
+        engine.reconcile(listOf(state), 0L, placed.createdAt + 20L)
+        assertTrue(state.inventoryShares > BigDecimal.ZERO)
+
+        val settlementResult = engine.settleResolved(listOf(state), 0L, placed.createdAt + 2_000L)
+        assertEquals(1, settlementResult.settlements.size)
+        val redemption = engine.redeemPendingRedemptions(listOf(state), 0L, placed.createdAt + 2_100L)
+        assertEquals(EventMakerRedemptionStatus.ALREADY_ABSENT, redemption.redemptions.single().status)
+        return state
+    }
+
+    private fun EventMakerLiveState.settlementLossesForTest(): Int =
+        cycles.count { it.exitType == "SETTLE" && it.pnl < 0.0 }
+
+    private fun book(bid: Double, ask: Double, now: Long) = MarketBook(
+        tokenId = market.favoriteTokenId,
+        bids = listOf(BookLevel(bid, 100.0)),
+        asks = listOf(BookLevel(ask, 100.0)),
+        updatedAt = now
+    )
 
     private fun intent(side: EventMakerSide, price: String, shares: String, queue: Double) =
         EventMakerQuoteIntent(side, BigDecimal(price), BigDecimal(shares), queue, "test")

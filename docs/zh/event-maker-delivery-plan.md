@@ -1326,3 +1326,20 @@ cd D:\Project\PolyHermes\backend
 - 当前选中 1 个市场（Bab el-Mandeb，+0.2c），已挂 BUY @0.97。
 - 9597 dip24h 等待臂仍 0 selected，最近市场 -1.8c。
 - 当前 8 个带 state 的 LIVE 臂 + 1 个等待臂；继续观察 fill、markout、cycle。
+### 20.12 2026-10-21 09:25 Shadow 结算闭环
+
+- 官方费率复核：`https://docs.polymarket.com/trading/fees.md`；Maker 全类别 0，Geopolitics taker 也是 0，Politics taker 0.04。
+- Shadow CLI 以前只做 `reconcile + quote`，长期运行不会产生 SETTLE cycle。现已加入：
+  - 对已到期市场调用 `settleResolved`；
+  - 用 Gamma `closed=true` + `outcomePrices` 唯一 1/0 判断终态；
+  - 记账后调用 `redeemPendingRedemptions`，虚拟仓位按 `ALREADY_ABSENT` 关闭；
+  - `summary.json` / `events.jsonl` / 状态报告记录 settlements 与 settlementLosses。
+- Shadow port 新增 settlement resolver 与虚拟 settlement position；不伪造链上赎回哈希。
+- 新增胜/负结算集成测试，验证 `SETTLE` cycle、realized PnL 和库存归零。
+- 全量 `gradlew test`：BUILD SUCCESSFUL。
+### 20.13 2026-10-21 09:22 新代码上线
+
+- 归档旧运行：`backend/build/research/archive/bond-shadow-pre-settlement-20261021-0930.zip`。
+- 10 个 Shadow 臂全部用新代码重启，监控同步重启（PID 14956）。
+- 重启后 dip24h 臂首次成交：0.95–0.97 / Geopolitics / +2c taker / 24h 动量 ≤-2c，entry 0.95，SELL 0.97。
+- 所有进程 stderr 无异常；等待 SETTLE 样本以验证结算链路。
