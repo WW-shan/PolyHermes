@@ -164,6 +164,7 @@ function entryBucket(deltaCents) {
   return '>+1c';
 }
 const entryTiming = {};
+const entryTimingByBand = {};
 for (const rt of roundTrips) {
   const arr = tradePricesByAsset.get(String(rt.asset)) ?? [];
   const p1h = lastPriceAtOrBefore(arr, rt.buyAt - 3600);
@@ -181,6 +182,16 @@ for (const rt of roundTrips) {
     b.roiSum += rt.roi;
     if (m60 != null) { b.markout60Sum += m60; b.markout60Count += 1; }
   }
+  if (d24h != null) {
+    const key = band(rt.buyPrice) + ':' + entryBucket(d24h);
+    if (!entryTimingByBand[key]) entryTimingByBand[key] = { key, count: 0, wins: 0, roiSum: 0, pnlSum: 0, costSum: 0 };
+    const b = entryTimingByBand[key];
+    b.count += 1;
+    if (rt.pnl > 0) b.wins += 1;
+    b.roiSum += rt.roi;
+    b.pnlSum += rt.pnl;
+    b.costSum += rt.buyPrice * rt.shares;
+  }
 }
 const entryTimingReport = Object.values(entryTiming).map(b => ({
   key: b.key,
@@ -188,6 +199,14 @@ const entryTimingReport = Object.values(entryTiming).map(b => ({
   winRate: b.count ? b.wins / b.count : 0,
   meanRoi: b.count ? b.roiSum / b.count : 0,
   markout60Mean: b.markout60Count ? b.markout60Sum / b.markout60Count : null
+})).sort((a, b) => a.key.localeCompare(b.key));
+const entryTimingByBandReport = Object.values(entryTimingByBand).map(b => ({
+  key: b.key,
+  count: b.count,
+  winRate: b.count ? b.wins / b.count : 0,
+  meanRoi: b.count ? b.roiSum / b.count : 0,
+  portfolioRoi: b.costSum > 0 ? b.pnlSum / b.costSum : 0,
+  pnl: b.pnlSum
 })).sort((a, b) => a.key.localeCompare(b.key));
 const closedApiRealized = closed.reduce((s,r)=>s+num(r.realizedPnl),0);
 const closedApiBought = closed.reduce((s,r)=>s+num(r.totalBought),0);
@@ -308,6 +327,7 @@ const report = {
   activity: activityByType,
   roundTripStats,
   entryTiming: entryTimingReport,
+  entryTimingByBand: entryTimingByBandReport,
   bands: aggregate(allClosed, r => band(r.buyPrice)),
   outcomes: aggregate(allClosed, r => r.outcome || 'unknown'),
   categories: aggregate(allClosed, r => category(r.title)),
