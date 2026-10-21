@@ -2389,3 +2389,8 @@
 - 当前 11 个 Shadow 臂已干净重启，全部 WAITING，0 fills / 0 settlements；Gate 仍为 WAIT。历史统计 PASS 不等于真实 Shadow 或 Live 通过。
 - 回归：`test-bond-tail-audit.cjs` 2/2 PASS；`test-bond-shadow-gate.cjs` 5/5 PASS。
 - 证据：`bond-smallcap-500-flat24-q2-tailcluster-20261021.json`、`bond-smallcap-500-flat24-q2-tailaudit-20261021.json`、`bond-smallcap-750-flat24-q2-tailcluster-20261021.json`、`bond-shadow-suite-start-20261021-150907.json`。
+### 20.46 2026-10-21 15:14 提交与推送
+
+- 提交 `a49377b feat: implement pre-close flatten execution`：Live/Shadow 强制平仓执行路径、taker SELL、FLATTEN cycle、状态持久化与 637 tests。
+- 提交 `cea36fb feat: add small-cap flatten24 validation`：tail exit 聚类、1% flatten 滑点压力、$500/档小资金候选、两个新 Shadow 臂、Gate 主候选切换和文档。
+- 已推送 `cfff747..cea36fb main -> main`；工作区 clean。
