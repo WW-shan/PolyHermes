@@ -2134,3 +2134,12 @@
   - 3c 臂和 $1k 臂也已对齐。
 - 当前没有 state / 成交，所以这次修正没有污染已有样本。
 - 新增回归测试：0.001 tick 下 0/0.5/1/2c 必须映射为 0.980/0.975/0.970/0.960；`EventMakerQuotePlannerTest` 通过。
+### 20.25 2026-10-21 11:08 Momentum 过滤口径对齐
+
+- 发现主 maker 臂之前继承了 `EntryMomentumMaxCents=1`，而 3–7d ladder 主回测并未应用该过滤；这会缩小候选池并降低统计样本。
+- 新增加 causal momentum 过滤到 `analyze-bond-ladder.cjs`，用 entry 前 24h 第一笔 favorite 成交对比 entry 时 favorite 价格。
+- 回测对比（3–7d、0.97–0.99、Geopolitics、+2c、q2）：
+  - 不过滤：160 eligible → 241 lots，mean ROI +1.87%，0 结算亏损，Wilson 上界 1.569%，余量 +0.266%。
+  - 过滤 24h ≤+1c：131 eligible → 208 lots，mean ROI +1.87%，0 结算亏损，Wilson 上界 1.813%，余量仅 +0.020%。
+- 结论：主 maker ladder **不做 24h 动量过滤**，以匹配历史主回测并保留 241 lots 的统计样本；`mom1` taker 臂继续独立测试过滤版本。
+- 已将 off00/05/10/20 和 $1k 臂的 `EntryMomentumMaxCents` 改为 999；`mom1-taker*` 保持 1。已重启 11 臂并逐臂核对 `run.json`。

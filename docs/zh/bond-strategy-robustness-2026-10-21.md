@@ -629,3 +629,16 @@ queue 模型，stop=0，q2，off0：
 - 同时 `ExitImproveTicks=1` 可能让卖单早于 entry+2c 目标成交。
 - 已改为 `ImproveTicks=0`、`ExitImproveTicks=0`，使 maker 臂精确对应历史 ladder 的 0/0.5/1/2c 入口和 entry+target 出口。
 - 全部 11 个 Shadow 臂已重启，`run.json` 逐臂核对通过；当前仍无 state/fill，因此没有旧样本污染。
+### 14.7 Momentum 过滤的回测对齐（2026-10-21）
+
+`analyze-bond-ladder.cjs` 新增 causal 24h momentum 过滤后，3–7d 0.97–0.99 Geopolitics +2c q2 对比如下：
+
+| 过滤 | eligible | lots | mean ROI | 结算亏损 | Wilson 上界 | 盈亏平衡 | 余量 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 无 | 160 | 241 | +1.87% | 0 | 1.569% | 1.835% | +0.266% |
+| 24h ≤ +1c | 131 | 208 | +1.87% | 0 | 1.813% | 1.833% | +0.020% |
+
+- 过滤没有提高 ladder 的 mean ROI，却把样本从 241 降到 208，使统计安全余量从 +0.266% 缩到 +0.020%。
+- 因此主 maker ladder 不做 24h momentum 过滤；4 个 maker 臂和 $1k 臂使用 `EntryMomentumMaxCents=999`。
+- `mom1` taker 臂仍保留过滤，作为独立对照，不纳入主候选组。
+- 证据：`bond-ladder-3to7d-mom1-q2-20261021.json`、`bond-tail-risk-audit-mom1-q2-20261021.json`。

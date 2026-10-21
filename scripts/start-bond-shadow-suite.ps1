@@ -43,16 +43,16 @@ function Merge-Hashtable([hashtable]$base, [hashtable]$overrides) {
 }
 $arms = @(
   @{ Name = "3c-geo-9597"; Args = (Merge-Hashtable $common @{ MinPrice = 0.95; MaxPrice = 0.97; Output = "build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021"; ExitSpreadCents = 3; MaxCyclesPerMarket = 3; EntryOffsetCents = 0; MaxTotalInventoryNotional = 1000; EntryMomentumMaxCents = 999 }) },
-  @{ Name = "off00"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021"; EntryOffsetCents = 0 }) },
-  @{ Name = "off05"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021"; EntryOffsetCents = 0.5 }) },
-  @{ Name = "off10"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021"; EntryOffsetCents = 1 }) },
-  @{ Name = "off20"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021"; EntryOffsetCents = 2 }) },
+  @{ Name = "off00"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021"; EntryOffsetCents = 0; EntryMomentumMaxCents = 999 }) },
+  @{ Name = "off05"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021"; EntryOffsetCents = 0.5; EntryMomentumMaxCents = 999 }) },
+  @{ Name = "off10"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021"; EntryOffsetCents = 1; EntryMomentumMaxCents = 999 }) },
+  @{ Name = "off20"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021"; EntryOffsetCents = 2; EntryMomentumMaxCents = 999 }) },
   @{ Name = "taker00c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021"; ExitSpreadCents = 3; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true; EntryMomentumMaxCents = 999 }) },
   @{ Name = "taker2c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021"; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true; EntryMomentumMaxCents = 999 }) },
   @{ Name = "mom1-taker2c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021"; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true }) },
   @{ Name = "mom1-taker1c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-1c-geo-97099-mom1-taker-shadow-7d-20261021"; ExitSpreadCents = 1; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true }) },
   @{ Name = "dip24h-taker2c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.95; MaxPrice = 0.97; Output = "build/research/event-maker-bond-scalp-2c-geo-9597-dip24h-taker-shadow-7d-20261021"; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true; EntryMomentumMaxCents = -2 }) },
-  @{ Name = "off10-size1k"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-off10-size1k-shadow-7d-20261021"; OrderNotional = 1000; EntryOffsetCents = 1; MaxTotalInventoryNotional = 4000 }) }
+  @{ Name = "off10-size1k"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-off10-size1k-shadow-7d-20261021"; OrderNotional = 1000; EntryOffsetCents = 1; EntryMomentumMaxCents = 999; MaxTotalInventoryNotional = 4000 }) }
 )
 
 if ($DryRun) {

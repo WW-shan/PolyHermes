@@ -30,6 +30,9 @@ const maxTranches = numArg('max-tranches', 8);
 const maxHoldingDays = numArg('max-holding-days', 0);
 const minHoursToClose = numArg('min-hours-to-close', 0);
 const maxHoursToClose = numArg('max-hours-to-close', horizonDays * 24);
+const momentumMinCents = arg('entry-momentum-min-cents') == null ? null : numArg('entry-momentum-min-cents', -999);
+const momentumMaxCents = arg('entry-momentum-max-cents') == null ? null : numArg('entry-momentum-max-cents', 999);
+const momentumLookbackSeconds = numArg('entry-momentum-lookback-seconds', 86400);
 const levelsCents = listArg('levels-cents', '0,0.5,1,2');
 const targetsCents = listArg('sell-target-cents', '1,2,3');
 const bands = listArg('bands', '0.9,0.95,0.97,0.99,1.0000001');
@@ -45,6 +48,21 @@ function referenceAt(market, ts) {
   const p0=l0?l0.price:(l1?1-l1.price:null), p1=l1?l1.price:(l0?1-l0.price:null);
   if(p0==null||p1==null) return null;
   return p0>=p1?{favorite:0,price:p0}:{favorite:1,price:p1};
+}
+function momentumDeltaCents(market, entryTs, favoriteIndex) {
+  const cutoff = entryTs - momentumLookbackSeconds;
+  const first = market.trades.find(t => t.outcomeIndex === favoriteIndex && t.timestamp >= cutoff && t.timestamp <= entryTs && t.price > 0 && t.price < 1);
+  const current = referenceAt(market, entryTs);
+  if (!first || !current || current.favorite !== favoriteIndex) return null;
+  return (current.price - first.price) * 100.0;
+}
+function momentumPasses(market, entryTs, ref) {
+  if (momentumMinCents == null && momentumMaxCents == null) return true;
+  const delta = momentumDeltaCents(market, entryTs, ref.favorite);
+  if (delta == null) return false;
+  const min = momentumMinCents == null ? -999 : momentumMinCents;
+  const max = momentumMaxCents == null ? 999 : momentumMaxCents;
+  return delta >= min && delta <= max;
 }
 function roundDownToTick(v,t){ return Math.max(t, Math.floor(v/t+1e-9)*t); }
 function roundUpToTick(v,t){ return Math.min(0.999, Math.max(t, Math.ceil(v/t-1e-9)*t)); }
@@ -180,13 +198,15 @@ function simulateMarket(market, ref, targetCents) {
 const dataset=JSON.parse(zlib.gunzipSync(fs.readFileSync(datasetPath)).toString('utf8'));
 const refs=[];
 for(const m of dataset.markets){
-  const r=referenceAt(m,m.closedTimestamp-horizonDays*86400);
-  if(r) refs.push({m,r});
+  const entryTs=m.closedTimestamp-horizonDays*86400;
+  const r=referenceAt(m,entryTs);
+  if(r) refs.push({m,r,entryTs});
 }
 const results=[];
 for(let bi=0;bi<bands.length-1;bi++){
   const low=bands[bi], high=bands[bi+1]; if(low==null||high==null) continue;
-  const eligible=refs.filter(({r})=>r.price>=low&&r.price<high);
+  const priceEligible=refs.filter(({r})=>r.price>=low&&r.price<high);
+  const eligible=priceEligible.filter(({m,r,entryTs})=>momentumPasses(m,entryTs,r));
   const tags=[...new Set(eligible.map(({m})=>m.tag))].sort();
   for(const tag of tags){
     for(const target of targetsCents){
@@ -204,7 +224,7 @@ for(let bi=0;bi<bands.length-1;bi++){
       const lr=allLots.length?losses/allLots.length:0;
       const deployed=allLots.reduce((s,l)=>s+l.entryPrice*l.shares,0);
       results.push({
-        band:bandLabel(low, high), bandLow:low, bandHigh:high, tag, targetCents:target, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose,
+        band:bandLabel(low, high), bandLow:low, bandHigh:high, tag, targetCents:target, momentumMinCents, momentumMaxCents, momentumLookbackSeconds, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose,
         eligible:eligibleCount, filledMarkets, fillRate:eligibleCount?filledMarkets/eligibleCount:0,
         lots:allLots.length, buys:totalBuys, sells:totalSells,
         avgBuysPerFilledMarket:filledMarkets?totalBuys/filledMarkets:0,
@@ -226,7 +246,7 @@ for(let bi=0;bi<bands.length-1;bi++){
     }
   }
 }
-fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,levelsCents,targetsCents,results},null,2));
+fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,levelsCents,targetsCents,momentumMinCents,momentumMaxCents,momentumLookbackSeconds,results},null,2));
 console.log('band tag tgt levels elig filled fill% lots buys sells win% meanRoi roiCI worst settleLoss maxInv$');
 for(const r of results){
   console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.settleLossCount).padStart(3),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
