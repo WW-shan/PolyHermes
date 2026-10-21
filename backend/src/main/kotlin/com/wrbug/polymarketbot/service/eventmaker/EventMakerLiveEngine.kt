@@ -126,8 +126,15 @@ class EventMakerLiveEngine(
     ): EventMakerEngineResult {
         haltedReason?.let { return EventMakerEngineResult.halted(it) }
         var result = EventMakerEngineResult()
+        val configuredEntryOffsets = config.effectiveLadderOffsetsCents()
         for (state in states) {
-            val entryEligible = eligibleMarketIds == null || state.market.conditionId in eligibleMarketIds
+            val marketEligible = eligibleMarketIds == null || state.market.conditionId in eligibleMarketIds
+            // A persisted leg whose offset is no longer configured may still exit,
+            // but it must never start a new BUY cycle after it becomes flat.
+            val legEligible = configuredEntryOffsets.any {
+                kotlin.math.abs(it - state.legOffsetCents) <= 1e-9
+            }
+            val entryEligible = marketEligible && legEligible
             if (!entryEligible) {
                 val recoveredActive = state.activeOrder
                 if (recoveredActive == null && state.inventoryShares <= BigDecimal.ZERO) continue
@@ -148,9 +155,9 @@ class EventMakerLiveEngine(
                 if (adverseFlow) flowSuppressedMarkets.add(state.market.conditionId)
                 val desired = if (bookFresh) {
                     when (active.side) {
-                        EventMakerSide.BUY -> quotePlanner.planBuy(config, book!!, tick, now)
+                        EventMakerSide.BUY -> quotePlanner.planBuy(state.config, book!!, tick, now)
                         EventMakerSide.SELL -> quotePlanner.planSell(
-                            config = config,
+                            config = state.config,
                             book = book!!,
                             tickSize = tick,
                             entryPrice = state.entryPrice,
@@ -217,11 +224,16 @@ class EventMakerLiveEngine(
             } ?: continue
 
             if (intent.side == EventMakerSide.BUY) {
+                val openMarketIds = states
+                    .filter { it.inventoryShares > BigDecimal.ZERO || it.activeOrder != null }
+                    .map { it.market.conditionId }
+                    .toSet()
                 val snapshot = EventMakerRiskSnapshot(
                     totalInventoryNotional = states.sumOf { it.inventoryNotional() + it.pendingBuyNotional() },
-                    openMarketCount = states.count { it.inventoryShares > BigDecimal.ZERO || it.activeOrder != null },
+                    openMarketCount = openMarketIds.size,
                     dailyPnl = initialRealizedPnl + states.sumOf { it.realizedPnl } +
-                        states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) } - dailyPnlBaseline
+                        states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) } - dailyPnlBaseline,
+                    currentMarketAlreadyOpen = state.market.conditionId in openMarketIds
                 )
                 val decision = riskPolicy.canOpenBuy(config, snapshot)
                 if (!decision.allowed) {
@@ -288,16 +300,16 @@ class EventMakerLiveEngine(
     ): EventMakerEngineResult {
         haltedReason?.let { return EventMakerEngineResult.halted(it) }
         var result = EventMakerEngineResult()
-        for (state in states) {
-            if (state.activeOrder != null || state.inventoryShares <= BigDecimal.ZERO ||
-                state.pendingRedemption() != null
-            ) {
-                continue
-            }
-            val key = state.market.conditionId
+        for ((conditionId, group) in states.groupBy { it.market.conditionId }) {
+            val withInventory = group.filter { it.inventoryShares > BigDecimal.ZERO }
+            if (withInventory.isEmpty()) continue
+            if (group.any { it.activeOrder != null || it.pendingRedemption() != null }) continue
+            val totalInventory = withInventory.fold(BigDecimal.ZERO) { sum, state -> sum + state.inventoryShares }
+            val key = conditionId
             if (now < (settlementCheckAfter[key] ?: 0L)) continue
             settlementCheckAfter[key] = now + SETTLEMENT_CHECK_INTERVAL_MS
-            val snapshot = executionPort.getSettlementSnapshot(accountId, state.market).fold(
+            val market = group.first().market
+            val snapshot = executionPort.getSettlementSnapshot(accountId, market).fold(
                 onSuccess = { it },
                 onFailure = { error ->
                     val count = settlementFailures.merge(key, 1, Int::plus) ?: 1
@@ -315,40 +327,37 @@ class EventMakerLiveEngine(
             }
             val position = snapshot.position
             if (position == null) {
-                // A resolved market with a locally booked inventory but no
+                // A resolved market with locally booked inventory but no
                 // observable token position is ambiguous. Never fabricate a
                 // payout: retry briefly, then fail closed for manual reconciliation.
                 val count = settlementFailures.merge(key, 1, Int::plus) ?: 1
                 if (count >= MAX_SETTLEMENT_FAILURES) {
-                    val reason = "settlement_position_missing:${state.market.conditionId}"
+                    val reason = "settlement_position_missing:$conditionId"
                     halt(reason)
                     return EventMakerEngineResult.halted(reason)
                 }
-                return EventMakerEngineResult(
-                    errors = listOf("settlement_position_missing:${state.market.conditionId}")
-                )
+                return EventMakerEngineResult(errors = listOf("settlement_position_missing:$conditionId"))
             }
-            if (position.shares <= BigDecimal.ZERO ||
-                position.shares.compareTo(state.inventoryShares) != 0
-            ) {
-                val reason =
-                    "settlement_position_size_mismatch:${state.market.conditionId}:${position.shares}!=${state.inventoryShares}"
+            if (position.shares <= BigDecimal.ZERO || position.shares.compareTo(totalInventory) != 0) {
+                val reason = "settlement_position_size_mismatch:$conditionId:${position.shares}!=$totalInventory"
                 halt(reason)
                 return EventMakerEngineResult.halted(reason)
             }
-            val outcomeIndex = position.outcomeIndex ?: state.market.favoriteIndex
-            val negativeRisk = position.negativeRisk ?: state.market.negRisk
-            if (outcomeIndex != state.market.favoriteIndex) {
-                val reason = "settlement_position_market_mismatch:${state.market.conditionId}"
+            val outcomeIndex = position.outcomeIndex ?: group.first().market.favoriteIndex
+            val negativeRisk = position.negativeRisk ?: group.first().market.negRisk
+            if (outcomeIndex != group.first().market.favoriteIndex) {
+                val reason = "settlement_position_market_mismatch:$conditionId"
                 halt(reason)
                 return EventMakerEngineResult.halted(reason)
             }
             val exitPrice = if (snapshot.resolutionOutcomeIndex == outcomeIndex) BigDecimal.ONE else BigDecimal.ZERO
             try {
-                val settlement = state.recordSettlement(exitPrice, now, outcomeIndex, negativeRisk)
+                val settlementRecords = withInventory.map { state ->
+                    state.recordSettlement(exitPrice, now, outcomeIndex, negativeRisk)
+                }
                 settlementFailures.remove(key)
                 settlementCheckAfter.remove(key)
-                result = result.merge(EventMakerEngineResult(settlements = listOf(settlement)))
+                result = result.merge(EventMakerEngineResult(settlements = settlementRecords))
             } catch (error: Exception) {
                 val reason = "settlement_booking_failed:${error.message}"
                 halt(reason)
@@ -357,7 +366,6 @@ class EventMakerLiveEngine(
         }
         return result
     }
-
     /**
      * Redeems a booked settlement. A missing on-chain position is accepted only
      * because the payout was already persisted; this is the crash-recovery path.
@@ -369,84 +377,98 @@ class EventMakerLiveEngine(
     ): EventMakerEngineResult {
         haltedReason?.let { return EventMakerEngineResult.halted(it) }
         var result = EventMakerEngineResult()
-        for (state in states) {
-            val pending = state.pendingRedemption() ?: continue
-            if (now < (redemptionBackoffUntil[pending.cycleExitOrderId] ?: 0L)) continue
-            val position = executionPort.getSettlementPosition(accountId, pending).fold(
+        for ((conditionId, group) in states.groupBy { it.market.conditionId }) {
+            val pending = group.flatMap { state ->
+                state.settlements.filter { it.redemptionStatus == EventMakerRedemptionStatus.PENDING }
+            }
+            if (pending.isEmpty()) continue
+            if (now < (redemptionBackoffUntil[conditionId] ?: 0L)) continue
+            val signatures = pending.map { it.favoriteTokenId to (it.outcomeIndex to it.negativeRisk) }.distinct()
+            if (signatures.size != 1) {
+                val reason = "settlement_redemption_position_mismatch:$conditionId"
+                halt(reason)
+                return result.merge(EventMakerEngineResult.halted(reason))
+            }
+            val totalShares = pending.fold(BigDecimal.ZERO) { sum, record -> sum + record.shares }
+            val aggregate = pending.first().copy(
+                cycleExitOrderId = "redemption:$conditionId",
+                shares = totalShares
+            )
+            val position = executionPort.getSettlementPosition(accountId, aggregate).fold(
                 onSuccess = { it },
                 onFailure = { error ->
                     return redemptionFailure(
-                        pending = pending,
+                        conditionId = conditionId,
                         message = "settlement_position_failed:${error.message}",
                         now = now
                     )
                 }
             )
-            redemptionFailures.remove(pending.cycleExitOrderId)
+            redemptionFailures.remove(conditionId)
             if (position.shares < BigDecimal.ZERO) {
-                val reason = "settlement_position_negative:${pending.marketId}"
+                val reason = "settlement_position_negative:$conditionId"
                 halt(reason)
                 return result.merge(EventMakerEngineResult.halted(reason))
             }
             if (position.shares.compareTo(BigDecimal.ZERO) == 0) {
-                val updated = state.markRedemption(
-                    pending.cycleExitOrderId,
-                    EventMakerRedemptionStatus.ALREADY_ABSENT,
+                markGroupRedemptions(
+                    group = group,
+                    status = EventMakerRedemptionStatus.ALREADY_ABSENT,
                     transactionHash = null,
                     now = now
                 )
-                redemptionFailures.remove(pending.cycleExitOrderId)
-                redemptionBackoffUntil.remove(pending.cycleExitOrderId)
-                if (updated != null) {
-                    result = result.merge(
-                        EventMakerEngineResult(
-                            redemptions = listOf(
-                                EventMakerEngineRedemption(pending.marketId, updated.redemptionStatus)
-                            )
+                redemptionFailures.remove(conditionId)
+                redemptionBackoffUntil.remove(conditionId)
+                result = result.merge(
+                    EventMakerEngineResult(
+                        redemptions = listOf(
+                            EventMakerEngineRedemption(conditionId, EventMakerRedemptionStatus.ALREADY_ABSENT)
                         )
                     )
-                }
+                )
                 continue
             }
-            if (position.shares.compareTo(pending.shares) != 0 ||
-                (position.outcomeIndex != null && position.outcomeIndex != pending.outcomeIndex) ||
-                (position.negativeRisk != null && position.negativeRisk != pending.negativeRisk)
+            if (position.shares.compareTo(totalShares) != 0 ||
+                (position.outcomeIndex != null && position.outcomeIndex != aggregate.outcomeIndex) ||
+                (position.negativeRisk != null && position.negativeRisk != aggregate.negativeRisk)
             ) {
-                val reason = "settlement_redemption_position_mismatch:${pending.marketId}"
+                val reason = "settlement_redemption_position_mismatch:$conditionId"
                 halt(reason)
                 return result.merge(EventMakerEngineResult.halted(reason))
             }
             if (!position.redeemable) continue
-            executionPort.redeemSettlement(accountId, pending).fold(
+            executionPort.redeemSettlement(accountId, aggregate).fold(
                 onSuccess = { transactionHash ->
                     if (transactionHash.isBlank()) {
                         return redemptionFailure(
-                            pending = pending,
-                            message = "settlement_redemption_hash_missing:${pending.marketId}",
+                            conditionId = conditionId,
+                            message = "settlement_redemption_hash_missing:$conditionId",
                             now = now
                         )
                     }
-                    val updated = state.markRedemption(
-                        pending.cycleExitOrderId,
-                        EventMakerRedemptionStatus.REDEEMED,
+                    markGroupRedemptions(
+                        group = group,
+                        status = EventMakerRedemptionStatus.REDEEMED,
                         transactionHash = transactionHash,
                         now = now
                     )
-                    redemptionFailures.remove(pending.cycleExitOrderId)
-                    redemptionBackoffUntil.remove(pending.cycleExitOrderId)
-                    if (updated != null) {
-                        result = result.merge(
-                            EventMakerEngineResult(
-                                redemptions = listOf(
-                                    EventMakerEngineRedemption(pending.marketId, updated.redemptionStatus, transactionHash)
+                    redemptionFailures.remove(conditionId)
+                    redemptionBackoffUntil.remove(conditionId)
+                    result = result.merge(
+                        EventMakerEngineResult(
+                            redemptions = listOf(
+                                EventMakerEngineRedemption(
+                                    conditionId,
+                                    EventMakerRedemptionStatus.REDEEMED,
+                                    transactionHash
                                 )
                             )
                         )
-                    }
+                    )
                 },
                 onFailure = { error ->
                     return redemptionFailure(
-                        pending = pending,
+                        conditionId = conditionId,
                         message = "settlement_redemption_failed:${error.message}",
                         now = now
                     )
@@ -455,16 +477,34 @@ class EventMakerLiveEngine(
         }
         return result
     }
-
+    private fun markGroupRedemptions(
+        group: List<EventMakerLiveState>,
+        status: EventMakerRedemptionStatus,
+        transactionHash: String?,
+        now: Long
+    ) {
+        group.forEach { state ->
+            state.settlements
+                .filter { it.redemptionStatus == EventMakerRedemptionStatus.PENDING }
+                .forEach { record ->
+                    state.markRedemption(
+                        record.cycleExitOrderId,
+                        status,
+                        transactionHash = transactionHash,
+                        now = now
+                    )
+                }
+        }
+    }
     private fun redemptionFailure(
-        pending: EventMakerSettlementRecord,
+        conditionId: String,
         message: String,
         now: Long
     ): EventMakerEngineResult {
-        val failures = redemptionFailures.merge(pending.cycleExitOrderId, 1, Int::plus) ?: 1
-        redemptionBackoffUntil[pending.cycleExitOrderId] = now + REDEMPTION_RETRY_BACKOFF_MS
+        val failures = redemptionFailures.merge(conditionId, 1, Int::plus) ?: 1
+        redemptionBackoffUntil[conditionId] = now + REDEMPTION_RETRY_BACKOFF_MS
         return if (failures >= MAX_SETTLEMENT_FAILURES) {
-            val reason = "settlement_redemption_unresolved:${pending.marketId}:$message"
+            val reason = "settlement_redemption_unresolved:$conditionId:$message"
             halt(reason)
             EventMakerEngineResult.halted(reason)
         } else {

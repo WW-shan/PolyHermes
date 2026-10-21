@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场。目标账户与历史 maker ladder 共同表明：0.97–0.99 Geopolitics +2c 的最优窗口是 close 前 **3–7 天**（q2/q3/q4 约 +1.88%，2024–2026 全为正，0 结算亏损）；最后 3 天为负，0.95–0.97 不稳定，Politics 为负。11 个 Shadow 臂已切到 3–7 天窗口，当前因最近市场约 170h 而处于 LIVE/WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 11:28 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场。目标账户与历史 maker ladder 共同表明：0.97–0.99 Geopolitics +2c 的最优窗口是 close 前 **3–7 天**（q2/q3/q4 约 +1.88%，2024–2026 全为正，0 结算亏损）；最后 3 天为负，0.95–0.97 不稳定，Politics 为负。8 个 Shadow 臂已切到 3–7 天窗口；主候选改为单进程 4 档 ladder4，当前全部 WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
+> 最后更新：2026-10-21 12:40 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -1257,7 +1257,7 @@ cd D:\Project\PolyHermes\backend
 ### 20.6 下一步
 
 1. 当前 6 个 LIVE 臂继续跑 24–48h，检查 fill / markout / 首轮 cycle。
-2. 重点观察 `3c-geo-97099-off00/05/10/20`、`taker00c`（+3c）与 `2c taker`；`3c-geo-9597` 只作为对照，不再作为主策略。
+2. 重点观察 `ladder4`（0/0.5/1/2c 原子多档）、`taker00c`（+3c）与 `2c taker`；`3c-geo-9597` 只作为对照，不再作为主策略。
 3. 目标候选固定为 **0.97–0.99 Geopolitics +2c ladder**（+1c 保守对照、+3c 上限）；不要因为 maker 臂 0 fill 就放宽价格带或降低门槛。
 4. 真实资金前必须满足：覆盖 50–100 个结算事件、亏损率 CI 上界低于盈亏平衡率、最大回撤可承受。
 
@@ -1372,7 +1372,7 @@ cd D:\Project\PolyHermes\backend
 
 - $100/$1,000/$5,000 单档 3–7d +2c 的 fill rate 分别为 73.1%/39.4%/18.1%，ROI 约 +1.87%/+1.95%/+1.89%。
 - 年化量级约 $164/$914/$1,615（按 2.75 年数据折算）；策略容量有限。
-- 新增 $1,000 单档 Shadow 臂，验证真实规模成交；当前 11 个 Shadow 臂全部 WAITING。
+- 新增 $1,000 单档 Shadow 臂，验证真实规模成交；当前 8 个 Shadow 臂全部 WAITING，主候选为 `ladder4`。
 ### 20.19 2026-10-21 10:12 一键 suite
 
 - 新增 `scripts/start-bond-shadow-suite.ps1`：统一 11 臂配置，支持 DryRun、Restart 和自动重启 monitor。
@@ -1409,7 +1409,7 @@ cd D:\Project\PolyHermes\backend
 
 - 修复 suite 的隐性 `ImproveTicks=1` / `ExitImproveTicks=1`。
 - 0.001 tick 市场现在精确对应 0/0.5/1/2c 入口，出口使用 entry+2c 目标。
-- 11 个 Shadow 臂已重启；`run.json` 已核对；当前仍无 state/fill，无旧样本污染。
+- 8 个 Shadow 臂已重启；`run.json` 已核对；当前仍无 state/fill，无旧样本污染。
 ### 20.25 2026-10-21 11:08 Momentum 过滤对齐
 
 - ladder 回测新增 causal 24h momentum 过滤。
@@ -1452,10 +1452,35 @@ cd D:\Project\PolyHermes\backend
 - 已解析市场但没有可观察仓位时不再直接记 1/0 payout；连续 3 次缺失后以 `settlement_position_missing` fail-closed。
 - Shadow settlement resolver 改为返回虚拟库存仓位，确保 Shadow 到期结算路径可执行。
 - 全量回归：109 suites / 611 tests / 0 failures / 0 errors / 2 skipped。
-- 11 个 Shadow 臂已重启，全部 WAITING；Gate 仍为 WAIT，真实 Live 仍受账户、资金、授权和 Gate PASS 约束。
+- 8 个 Shadow 臂已重启，全部 WAITING；Gate 仍为 WAIT，真实 Live 仍受账户、资金、授权和 Gate PASS 约束。
 ### 20.32 2026-10-21 11:58 结算仓位双源对账
 
 - 解析市场记账前，Data API position 与链上 CTF `balanceOf` 必须股数一致；不一致、索引缺失或链上查询失败均 fail-closed。
 - 赎回恢复阶段以链上余额为准：链上为 0 时接受为已经赎回，即使 Data API 仍短暂返回旧仓位。
 - 新增 mismatch / index missing / stale index absence 三组适配器测试。
 - 全量回归：109 suites / 614 tests / 0 failures / 0 errors / 2 skipped。
+### 20.33 2026-10-21 12:40 单引擎原子多档 ladder
+
+- 发现历史 ladder 回测同时挂 4 档，但旧 Live/Shadow 引擎每个市场只有一个 active order，只能靠 4 个独立进程近似，账本和风险不原子。
+- 已实现：
+  - `EventMakerConfig.ladderOffsetsCents` 支持单引擎多档；
+  - 每个市场每条 leg 独立维护 active order、inventory、fills、cycles；
+  - 持久化增加 `legOffsetCents`，同一 condition 允许多条 leg，但旧单档与多档混用会 fail-closed；
+  - 仓位检查按 condition 汇总所有 leg；
+  - 结算按 condition 汇总仓位并生成每 leg 独立 settlement，赎回按 condition 聚合为一次链上调用；
+  - `maxMarkets` 按不同 condition 计数，同市场新增 leg 不重复占用市场名额；
+  - Live/Shadow 恢复都会重建 persisted offsets 中已有的 leg；
+  - snapshot CSV 增加 `leg_offset_cents`，报告按 leg 去重 unrealized PnL。
+- Shadow suite 已从 11 臂收敛为 8 臂，主候选为 `ladder4`：0.97–0.99 Geopolitics、3–7d、0/0.5/1/2c、每档 $100、总库存上限 $400。
+- 旧 `off00/off05/off10/off20` 分布式近似进程已停止并从默认 Gate/报告/监控路径移除。
+- 新增回归：
+  - 单市场 4 leg 同时挂出 0.980/0.975/0.970/0.960；
+  - 多 leg 启动恢复与 offset 持久化；
+  - 多 leg 仓位按 condition 汇总；
+  - 多 leg 一次结算、一次聚合赎回；
+  - 旧 state 升级投影不重复计数；
+  - Shadow CLI `--ladder-offsets-cents`；
+  - `maxMarkets` 同市场多 leg 不误拦截。
+- 全量回归：**109 suites / 622 tests / 0 failures / 0 errors / 2 skipped**。
+- 当前 8 臂全部 `WAITING`，`0 fills / 0 settlements`，Gate 仍为 `WAIT`。
+- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-124019.json`。

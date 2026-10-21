@@ -16,6 +16,7 @@ param(
   [int]$MaxCyclesPerMarket = 1,
   [double]$FillVolumeFactor = 1,
   [double]$EntryOffsetCents = 0,
+  [string]$LadderOffsetsCents = "",
   [int]$MinSpreadTicks = 1,
   [int]$MaxQueue = 500,
   [int]$ImproveTicks = 1,
@@ -91,6 +92,7 @@ $appArgs = @(
   "--entry-momentum-lookback-seconds", "$EntryMomentumLookbackSeconds",
   "--output", $Output
 )
+if ($LadderOffsetsCents) { $appArgs += @("--ladder-offsets-cents", $LadderOffsetsCents) }
 if ($TakerEntry) { $appArgs += "--taker-entry" }
 
 function Quote-JavaArg([string]$value) {
@@ -117,6 +119,7 @@ $info = [pscustomobject]@{
   maxCyclesPerMarket = $MaxCyclesPerMarket
   fillVolumeFactor = $FillVolumeFactor
   entryOffsetCents = $EntryOffsetCents
+  ladderOffsetsCents = $LadderOffsetsCents
   minSpreadTicks = $MinSpreadTicks
   maxQueue = $MaxQueue
   improveTicks = $ImproveTicks

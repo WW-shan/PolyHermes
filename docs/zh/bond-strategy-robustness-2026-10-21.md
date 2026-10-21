@@ -258,9 +258,9 @@ queue 模型，stop=0，q2，off0：
 
 **注意：**
 
-- 4 个 offset 臂使用 `maxCyclesPerMarket=10`（不是 3），以接近 ladder 的持续回补；每个最多 $400 库存。
+- 原子 4 档 ladder 的每条 leg 使用 `entryOffsetCents=0/0.5/1/2`、`maxCyclesPerMarket=10`，共享 `maxTotalInventoryNotional=$400` 风险预算。
 - 2026-10-21 08:15 起：`off00` 使用 `fillVolumeFactor=1` 作为更宽松成交对照；`off10` 改为 +2c（首选候选）；其余仍为 +3c。
-- 它们是独立进程，合起来近似一个 4 档 ladder，但不是同一个引擎里的原子多档账本；真实实盘前需要把 ladder 做进同一个引擎。
+- 2026-10-21 12:40 起已实现单引擎原子多档：同一市场的 4 条 leg 共享一个风险/库存视图，状态按 `conditionId + legOffsetCents` 持久化；旧的 4 进程近似已退役。
 - 当前实盘 Geopolitics 0.97–0.99 池只有 8 个 qualified，单臂只选中 2–3 个市场；回测里的 160 个 eligible 是 7 天累计，不是同时可交易。**容量受当前事件供给限制，不能按回测的 160 个市场估算收益。**
 
 ## 11. Taker-entry 实现与首个 A/B Shadow（2026-10-21）
@@ -555,7 +555,7 @@ queue 模型，stop=0，q2，off0：
 3. 重启时恢复库存和已结算记录，旧进程留下的 Shadow active order 被标记为放弃，不保留虚假队列；
 4. 有库存的旧市场允许继续卖出/结算；已经 flat 且不在当前窗口的旧市场禁止重新开仓；
 5. 日志文件续写，订单 ID 带进程命名空间，gate 的 `runHours` 使用持久化 `startedAt`；
-6. gate 候选改为 `off00/off05/off10/off20` 四个 maker 臂聚合，因为单臂并不等价于历史 ladder。
+6. gate 主候选改为单进程 `ladder4`（0/0.5/1/2c 原子多档），不再用四个进程近似历史 ladder。
 
 仍未完成：真实 SETTLE 样本、24–48h 真实 fill 样本、60s/300s markout 验证和 gate PASS。当前不能上真钱。
 ### 14.1 Maker-only 回测费用审计（2026-10-21）

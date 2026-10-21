@@ -79,6 +79,7 @@ internal data class ShadowOptions(
     val minSpreadTicks: Int,
     val improveTicks: Int,
     val entryOffsetCents: Double,
+    val ladderOffsetsCents: List<Double>,
     val exitImproveTicks: Int,
     val takerEntry: Boolean,
     val takerEntrySlippageTicks: Int,
@@ -173,6 +174,7 @@ private data class MomentumFilterReport(
 private data class ShadowSnapshot(
     val timestamp: Long,
     val marketId: String,
+    val legOffsetCents: Double,
     val phase: String,
     val bestBid: Double?,
     val bestAsk: Double?,
@@ -235,6 +237,15 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
     val takerEntry = args.contains("--taker-entry")
     val takerEntrySlippageTicks = option("taker-entry-slippage-ticks")?.toIntOrNull() ?: 0
     require(takerEntrySlippageTicks >= 0)
+    val ladderOffsetsCents = option("ladder-offsets-cents")
+        ?.split(',')
+        ?.map { it.trim().toDouble() }
+        ?: emptyList()
+    require(ladderOffsetsCents.all { it >= 0.0 && it < 100.0 })
+    require(ladderOffsetsCents.distinct().size == ladderOffsetsCents.size)
+    require(ladderOffsetsCents.isEmpty() || !takerEntry) {
+        "--ladder-offsets-cents is maker-only and cannot be combined with --taker-entry"
+    }
     val maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99
     require(minutes > 0)
     require(snapshotSeconds > 0)
@@ -296,6 +307,7 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
         minSpreadTicks = option("min-spread-ticks")?.toIntOrNull() ?: 2,
         improveTicks = option("improve-ticks")?.toIntOrNull() ?: 1,
         entryOffsetCents = option("entry-offset-cents")?.toDoubleOrNull() ?: 0.0,
+        ladderOffsetsCents = ladderOffsetsCents,
         exitImproveTicks = option("exit-improve-ticks")?.toIntOrNull() ?: 1,
         takerEntry = takerEntry,
         takerEntrySlippageTicks = takerEntrySlippageTicks,
@@ -403,7 +415,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         val snapshotHeader = needsHeader("snapshots.csv")
         snapshotsWriter = openLog("snapshots.csv")
         if (snapshotHeader) {
-            snapshotsWriter.write("timestamp,market_id,phase,best_bid,best_ask,entry_price,inventory_shares,active_order_id,active_order_price,realized_pnl,unrealized_pnl,completed_cycles,fills\n")
+            snapshotsWriter.write("timestamp,market_id,leg_offset_cents,phase,best_bid,best_ask,entry_price,inventory_shares,active_order_id,active_order_price,realized_pnl,unrealized_pnl,completed_cycles,fills\n")
         }
         val tradeHeader = needsHeader("trades.csv")
         tradesWriter = openLog("trades.csv")
@@ -586,9 +598,9 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         discoveryAttemptsWriter.close()
         val marketWaitSeconds = (System.currentTimeMillis() - runnerStartedAt) / 1_000L
         val ledgerMarkets = persistedState?.markets.orEmpty()
-        val ledgerByCondition = ledgerMarkets.associateBy { it.conditionId }
+        val ledgerByCondition = ledgerMarkets.groupBy { it.conditionId.lowercase() }
         val recoveredByCondition = recoveryMarkets.associateBy { it.conditionId }
-        val recoveredMarketMetadata = ledgerMarkets.mapNotNull { persistedMarket ->
+        val recoveredMarketMetadata = ledgerMarkets.distinctBy { it.conditionId }.mapNotNull { persistedMarket ->
             recoveredByCondition[persistedMarket.conditionId]
                 ?: EventMakerShadowRecoveryStore.reconstructMarket(persistedMarket)
                 ?: throw IllegalStateException(
@@ -618,6 +630,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             minSpreadTicks = options.minSpreadTicks,
             improveTicks = options.improveTicks,
             entryOffsetCents = options.entryOffsetCents,
+            ladderOffsetsCents = options.ladderOffsetsCents,
             exitSpreadCents = options.exitSpreadCents,
             exitImproveTicks = options.exitImproveTicks,
             takerEntry = options.takerEntry,
@@ -635,15 +648,31 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             activeOrderStaleBookSeconds = options.activeOrderStaleBookSeconds
         )
         selectedMarkets = allMarkets
-        val states = allMarkets.map { market ->
-            EventMakerLiveState(market, config).apply {
-                ledgerByCondition[market.conditionId]?.let { persistedMarket ->
-                    restore(persistedMarket)
-                    // A Shadow order lives only in the previous JVM. The ledger
-                    // keeps fills/inventory, but the resting queue position is gone.
-                    if (activeOrder != null) {
-                        onOrderCanceled()
-                        abandonedRecoveredOrders++
+        val configuredOffsets = config.effectiveLadderOffsetsCents()
+        val states = allMarkets.flatMap { market ->
+            val saved = ledgerByCondition[market.conditionId.lowercase()].orEmpty()
+            if (configuredOffsets.size > 1 && saved.any { it.legOffsetCents == null }) {
+                throw IllegalStateException("shadow_ladder_offset_missing:${market.conditionId}")
+            }
+            val offsets = linkedSetOf<Double>()
+            saved.mapNotNull { it.legOffsetCents }.forEach { offsets += it }
+            configuredOffsets.forEach { offsets += it }
+            offsets.map { offset ->
+                val legConfig = config.copy(entryOffsetCents = offset, ladderOffsetsCents = emptyList())
+                EventMakerLiveState(market, legConfig).apply {
+                    val persistedMarket = if (saved.size == 1 && saved.single().legOffsetCents == null) {
+                        saved.single()
+                    } else {
+                        saved.firstOrNull { kotlin.math.abs(it.legOffsetCents!! - offset) <= 1e-9 }
+                    }
+                    persistedMarket?.let {
+                        restore(it)
+                        // A Shadow order lives only in the previous JVM. The ledger
+                        // keeps fills/inventory, but the resting queue position is gone.
+                        if (activeOrder != null) {
+                            onOrderCanceled()
+                            abandonedRecoveredOrders++
+                        }
                     }
                 }
             }
@@ -665,13 +694,15 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         shadowExecution.configureFillModel(options.fillVolumeFactor)
         shadowExecution.configureSettlementResolver { market ->
             dataClient.getMarketResolution(market.conditionId).map { resolution ->
-                val state = states.firstOrNull { it.market.conditionId == market.conditionId }
-                val position = state
-                    ?.takeIf { it.inventoryShares.signum() > 0 }
+                val inventory = states
+                    .filter { it.market.conditionId == market.conditionId }
+                    .fold(java.math.BigDecimal.ZERO) { sum, state -> sum + state.inventoryShares }
+                val position = inventory
+                    .takeIf { it.signum() > 0 }
                     ?.let {
                         EventMakerSettlementPosition(
                             tokenId = market.favoriteTokenId,
-                            shares = it.inventoryShares,
+                            shares = it,
                             redeemable = true,
                             outcomeIndex = market.favoriteIndex,
                             negativeRisk = market.negRisk
@@ -687,7 +718,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         engine.resetDailyPnlBaseline(states)
         val watchedMarkets = allMarkets.filter { market ->
             market.conditionId in discoveredConditionIds ||
-                states.first { it.market.conditionId == market.conditionId }.inventoryShares > java.math.BigDecimal.ZERO
+                states.filter { it.market.conditionId == market.conditionId }
+                    .any { it.inventoryShares > java.math.BigDecimal.ZERO }
         }
         if (options.flowGuardWindowSeconds > 0) {
             watchedMarkets.forEach { market -> dataClient.getRecentTrades(market).forEach(engine::onTrade) }
@@ -699,7 +731,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         }
         allMarkets.forEach { market ->
             books[market.favoriteTokenId]?.let { book ->
-                states.firstOrNull { it.market.conditionId == market.conditionId }?.onBook(book)
+                states.filter { it.market.conditionId == market.conditionId }.forEach { it.onBook(book) }
             }
         }
         val startedAt = System.currentTimeMillis()
@@ -1124,6 +1156,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             val snapshot = ShadowSnapshot(
                 timestamp = now,
                 marketId = state.market.conditionId,
+                legOffsetCents = state.legOffsetCents,
                 phase = state.phase.name,
                 bestBid = book?.bestBid,
                 bestAsk = book?.bestAsk,
@@ -1140,6 +1173,7 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
                 listOf(
                     snapshot.timestamp,
                     snapshot.marketId,
+                    snapshot.legOffsetCents,
                     snapshot.phase,
                     snapshot.bestBid ?: "",
                     snapshot.bestAsk ?: "",

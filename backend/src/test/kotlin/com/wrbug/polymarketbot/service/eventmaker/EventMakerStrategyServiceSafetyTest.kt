@@ -161,6 +161,62 @@ class EventMakerStrategyServiceSafetyTest {
     }
 
     @Test
+    fun `quote tick honors the discovered-market entry whitelist`() = runTest {
+        val service = service()
+        val config = EventMakerConfig(
+            minPrice = 0.90,
+            maxPrice = 0.99,
+            minSpreadTicks = 2,
+            improveTicks = 0
+        )
+        val liveMarket = com.wrbug.polymarketbot.research.livepaper.LivePaperMarket(
+            conditionId = "condition-1",
+            question = "q",
+            tag = "Geopolitics",
+            volume24hr = 100_000.0,
+            endTimestamp = Long.MAX_VALUE,
+            tickSize = 0.001,
+            outcomes = listOf("Yes", "No"),
+            tokenIds = listOf("token", "other"),
+            favoriteIndex = 0
+        )
+        val state = EventMakerLiveState(liveMarket, config)
+        val now = System.currentTimeMillis()
+        state.onBook(
+            com.wrbug.polymarketbot.research.livepaper.MarketBook(
+                tokenId = "token",
+                bids = listOf(com.wrbug.polymarketbot.research.livepaper.BookLevel(0.98, 100.0)),
+                asks = listOf(com.wrbug.polymarketbot.research.livepaper.BookLevel(0.985, 100.0)),
+                updatedAt = now
+            )
+        )
+        val engine = EventMakerLiveEngine(
+            config,
+            EventMakerQuotePlanner(),
+            EventMakerRiskPolicy(),
+            EventMakerShadowExecutionPort()
+        )
+
+        val blocked = service.runQuoteTick(
+            engine,
+            listOf(state),
+            mapOf("token" to state.lastBook!!),
+            1L,
+            emptySet()
+        )
+        assertTrue(blocked.placed.isEmpty())
+        assertTrue(state.activeOrder == null)
+
+        val allowed = service.runQuoteTick(
+            engine,
+            listOf(state),
+            mapOf("token" to state.lastBook!!),
+            1L,
+            setOf("condition-1")
+        )
+        assertEquals(1, allowed.placed.size)
+    }
+    @Test
     fun `pending redemption position is allowed before startup recovery`() = runTest {
         val settlement = EventMakerSettlementRecord(
             marketId = "condition-1",

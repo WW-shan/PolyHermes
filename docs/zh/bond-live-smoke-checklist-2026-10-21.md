@@ -6,7 +6,7 @@
 ## 1. 进入 Live 前必须满足
 
 - [ ] `node scripts/evaluate-bond-shadow-gate.cjs` 输出 **PASS**，不是 `WAIT`。
-- [ ] 主候选组 `distributed-2c-maker-ladder` 有足够的真实 Shadow 成交/结算样本。
+- [ ] 主候选 `atomic-4level-2c-maker-ladder`（`ladder4`）有足够的真实 Shadow 成交/结算样本。
 - [ ] 结算亏损率 Wilson 95% 上界低于盈亏平衡率。
 - [ ] 60s / 300s markout 不低于 gate 阈值。
 - [ ] 最近 24h 无重复成交、未知订单状态、未解释的 active order。

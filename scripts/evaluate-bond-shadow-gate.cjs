@@ -23,10 +23,7 @@ function parseCsv(text) {
 
 const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021',
@@ -35,10 +32,7 @@ const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-off10-size1k-shadow-7d-20261021',
 ];
 const candidateDirs = [
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021',
 ];
 const dirs = String(arg('dirs', defaultDirs.join(','))).split(',').map(s => s.trim()).filter(Boolean);
 const candidates = String(arg('candidates', candidateDirs.join(','))).split(',').map(s => s.trim()).filter(Boolean);
@@ -195,7 +189,7 @@ function readCandidateGroup(name, groupDirs) {
 
 const arms = dirs.map(readArm);
 const byDir = new Map(arms.map(a => [path.resolve(a.dir), a]));
-const candidateGroups = [readCandidateGroup('distributed-2c-maker-ladder', candidates)];
+const candidateGroups = [readCandidateGroup('atomic-4level-2c-maker-ladder', candidates)];
 const totals = {
   arms: arms.length,
   cycles: arms.reduce((s, a) => s + (a.cycles || 0), 0),

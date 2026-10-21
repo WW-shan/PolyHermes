@@ -25,10 +25,7 @@ function parseCsv(text) {
 
 const defaultDirs = [
   'backend/build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021',
   'backend/build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021',
@@ -44,10 +41,7 @@ let totalFills = 0, totalCycles = 0, totalSettlements = 0, totalSettleLosses = 0
 const stale = [];
 const armMetrics = new Map();
 const makerLadderDirs = [
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021',
-  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021',
 ].map(d => path.resolve(d));
 function readRunInfo(dir) {
   let pid = null;
@@ -96,7 +90,7 @@ for (const dir of dirs) {
     const idx = Object.fromEntries(head.map((h, i) => [h, i]));
     if (idx.unrealized_pnl != null) {
       const latest = new Map();
-      for (const r of rows.slice(1)) latest.set(r[idx.market_id], r);
+      for (const r of rows.slice(1)) latest.set(`${r[idx.market_id]}|${idx.leg_offset_cents != null ? r[idx.leg_offset_cents] : "0"}`, r);
       for (const r of latest.values()) unrealized += num(r[idx.unrealized_pnl]);
     }
   }
@@ -133,7 +127,7 @@ if (ladder.length && ladder.every(Boolean)) {
   const sum = key => ladder.reduce((s, m) => s + m[key], 0);
   const fmt = v => (Math.round(v * 100) / 100).toString();
   lines.push('');
-  lines.push('**Distributed +2c maker ladder (off00/05/10/20 aggregate):**');
+  lines.push('**Atomic 4-level +2c maker ladder:**');
   lines.push(`fills=${sum('fills')} cycles=${sum('cycles')} settlements=${sum('settlements')} settleLosses=${sum('settleLosses')} inventory=${fmt(sum('inventory'))} realized=${fmt(sum('realized'))} unrealized=${fmt(sum('unrealized'))} total=${fmt(sum('realized') + sum('unrealized'))}`);
 }
 if (stale.length) { lines.push(''); lines.push(`**NOT LIVE:** ${stale.join(', ')}`); }

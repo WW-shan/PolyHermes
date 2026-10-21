@@ -2224,3 +2224,49 @@
   - 链上 10 / API 缺失 -> index missing；
   - 赎回恢复链上 0 / API 仍为 10 -> ALREADY_ABSENT 路径。
 - 全量回归：**109 suites / 614 tests / 0 failures / 0 errors / 2 skipped**。
+### 20.33 2026-10-21 12:40 单引擎原子多档 ladder
+
+- 审计确认：历史回测每个市场同时挂 4 档，但旧 Live/Shadow 引擎每个市场只有一个 active order；4 个独立进程只能近似，无法原子共享库存和风险。
+- 已实现：
+  - `EventMakerConfig.ladderOffsetsCents`；
+  - 单进程内每市场多 leg，各自维护 active order、inventory、fills、cycles；
+  - `EventMakerPersistedMarket.legOffsetCents`，状态库允许同 condition 的不同 offset；
+  - 旧单档与多档混用、重复 offset 均拒绝；
+  - 仓位检查按 condition 汇总；
+  - 结算按 condition 汇总仓位，每 leg 单独记账；
+  - 赎回按 condition 聚合成一次调用；
+  - `maxMarkets` 按 distinct condition 计数；
+  - `runQuoteTick` / `runEngineTick` 现在真正传入 discovered-market 白名单，恢复市场卖空后不能重新开 BUY；
+  - Shadow CLI 新增 `--ladder-offsets-cents`，启动脚本新增 `-LadderOffsetsCents`；
+  - snapshot CSV 增加 `leg_offset_cents`，报告按 leg 统计 unrealized。
+- Shadow suite 收敛为 8 臂，主候选为 `ladder4`：0.97–0.99、3–7d、0/0.5/1/2c、每档 $100、总库存 $400。旧 off00/05/10/20 已停止并从 Gate/报告/监控默认路径移除。
+- 回归：
+  - 4 leg 同时挂出 0.980/0.975/0.970/0.960；
+  - 多 leg 重启恢复；
+  - 多 leg 仓位汇总；
+  - 多 leg 一次结算、一次聚合赎回；
+  - 旧 state 投影去重；
+  - Shadow CLI 选项解析；
+  - discovered whitelist 阻止恢复市场重新开仓。
+- 全量：**109 suites / 622 tests / 0 failures / 0 errors / 2 skipped**。
+- 当前 8 臂全部 WAITING，`0 fills / 0 settlements`，Gate `WAIT`。
+- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-124019.json`。
+### 20.34 2026-10-21 12:55 官方 Maker 费率与多档收口
+
+- 重新核对官方 `https://docs.polymarket.com/trading/fees.md`（2026-10-21）：
+  - 原文：**“Makers are never charged fees. Only takers pay fees.”**
+  - 表格中所有类别 `Maker Fee Rate = 0`；Geopolitics `Taker Fee Rate = 0`、`Maker Rebate = 0`。
+  - `fee = C × feeRate × p × (1 - p)` 只对 taker 生效；Gamma 的 `makerBaseFee=1000` 不是实际费率。
+  - 结论：当前 ladder 回测与 Shadow 把 maker 双边成交按 0 费处理是正确的，不需要给 maker 加手续费缓冲。
+- 修复多档收口缺口：
+  - requote 的 desired quote 改为使用每个 leg 自己的 `state.config`，避免同一引擎用顶层 offset 错误重挂其它档；
+  - persisted leg 的 offset 不在当前配置中时，禁止重新开 BUY，只允许继续退出；
+  - REST `EventMakerStartRequest` 暴露 `ladderOffsetsCents`，与 CLI 对齐。
+- 回归：
+  - 4 档同盘挂单与 requote 不再互相污染；
+  - 旧 offset leg 不能重新开仓；
+  - REST DTO 映射；
+  - 单档与多档 CLI 重启烟测均通过（多档恢复 2 leg / 15 shares / 2 fills）。
+- 全量：**109 suites / 624 tests / 0 failures / 0 errors / 2 skipped**。
+- 8 臂已于 2026-10-21 12:50:36 +08:00 用新代码重启，全部 `WAITING`，`0 fills / 0 settlements`，Gate `WAIT`。
+- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-125036.json`。

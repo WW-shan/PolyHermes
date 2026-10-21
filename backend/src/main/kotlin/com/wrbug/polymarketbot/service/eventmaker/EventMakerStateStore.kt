@@ -86,8 +86,19 @@ class EventMakerStateStore(
                 invalid("daily_pnl_baseline_invalid")
             }
             val markets = state.markets
-            val duplicateIds = markets.groupingBy { it.conditionId }.eachCount().filterValues { it > 1 }.keys
-            if (duplicateIds.isNotEmpty()) invalid("duplicate_condition:${duplicateIds.joinToString(",")}")
+            val duplicateLegs = markets
+                .groupingBy { it.conditionId.lowercase() to it.legOffsetCents }
+                .eachCount()
+                .filterValues { it > 1 }
+                .keys
+            if (duplicateLegs.isNotEmpty()) {
+                invalid("duplicate_condition_leg:${duplicateLegs.joinToString(",")}")
+            }
+            markets.groupBy { it.conditionId.lowercase() }
+                .filterValues { legs -> legs.size > 1 && legs.any { it.legOffsetCents == null } }
+                .keys
+                .takeIf { it.isNotEmpty() }
+                ?.let { invalid("legacy_and_ladder_mixed:${it.joinToString(",")}") }
             markets.forEach(::validateMarket)
         } catch (e: IllegalStateException) {
             throw e
@@ -98,6 +109,11 @@ class EventMakerStateStore(
 
     private fun validateMarket(market: EventMakerPersistedMarket) {
         if (market.conditionId.isBlank()) invalid("condition_id_blank")
+        if (market.legOffsetCents != null &&
+            (!market.legOffsetCents.isFinite() || market.legOffsetCents < 0.0)
+        ) {
+            invalid("leg_offset_invalid:${market.conditionId}:${market.legOffsetCents}")
+        }
         if (market.favoriteTokenId.isNullOrBlank()) invalid("favorite_token_missing:${market.conditionId}")
         if (market.phase !in PHASES) invalid("phase_invalid:${market.conditionId}:${market.phase}")
         val inventory = market.inventoryShares.toBigDecimalOrNull()

@@ -614,6 +614,166 @@ class EventMakerLiveEngineTest {
     }
 
     @Test
+    fun `atomic ladder places one order per offset in the same market`() = runTest {
+        val start = 1_800_000_000_000L
+        val ladderConfig = config.copy(
+            maxMarkets = 1,
+            orderNotional = 10.0,
+            maxTotalInventoryNotional = 40.0,
+            improveTicks = 0,
+            ladderOffsetsCents = listOf(0.0, 0.5, 1.0, 2.0)
+        )
+        val ladderMarket = market().copy(tickSize = 0.001)
+        val states = ladderConfig.effectiveLadderOffsetsCents().map { offset ->
+            EventMakerLiveState(
+                ladderMarket,
+                ladderConfig.copy(entryOffsetCents = offset, ladderOffsetsCents = emptyList())
+            )
+        }
+        val currentBook = book(0.98, 0.985, start)
+        states.forEach { it.onBook(currentBook) }
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(ladderConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        val result = engine.quote(states, mapOf("token" to currentBook), 7L, start)
+
+        assertEquals(4, result.placed.size, "errors=${result.errors}")
+        assertEquals(listOf(0.98, 0.975, 0.97, 0.96), result.placed.map { it.order.price.toDouble() })
+        assertTrue(result.errors.none { it.contains("max_open_markets") || it.contains("total_inventory_limit") })
+    }
+    @Test
+    fun `atomic ladder requotes each leg against its own offset`() = runTest {
+        val start = System.currentTimeMillis()
+        val ladderConfig = config.copy(
+            maxMarkets = 1,
+            orderNotional = 10.0,
+            maxTotalInventoryNotional = 40.0,
+            improveTicks = 0,
+            requoteSeconds = 1,
+            ladderOffsetsCents = listOf(0.0, 0.5, 1.0, 2.0)
+        )
+        val ladderMarket = market().copy(tickSize = 0.001)
+        val states = ladderConfig.effectiveLadderOffsetsCents().map { offset ->
+            EventMakerLiveState(
+                ladderMarket,
+                ladderConfig.copy(entryOffsetCents = offset, ladderOffsetsCents = emptyList())
+            )
+        }
+        val currentBook = book(0.98, 0.985, start)
+        states.forEach { it.onBook(currentBook) }
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(ladderConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        assertEquals(4, engine.quote(states, mapOf("token" to currentBook), 7L, start).placed.size)
+
+        val later = start + 2_000L
+        val laterBook = book(0.98, 0.985, later)
+        states.forEach { it.onBook(laterBook) }
+        val result = engine.quote(states, mapOf("token" to laterBook), 7L, later)
+
+        assertTrue(result.canceled.isEmpty(), "unexpected requotes=${result.canceled}")
+        assertTrue(result.placed.isEmpty(), "unexpected replacements=${result.placed}")
+        assertEquals(
+            listOf(0.98, 0.975, 0.97, 0.96),
+            states.map { it.activeOrder!!.price.toDouble() }
+        )
+    }
+
+    @Test
+    fun `persisted leg outside configured ladder cannot reopen a position`() = runTest {
+        val start = 1_800_000_000_000L
+        val ladderConfig = config.copy(
+            maxMarkets = 1,
+            orderNotional = 10.0,
+            maxTotalInventoryNotional = 40.0,
+            improveTicks = 0,
+            ladderOffsetsCents = listOf(0.0, 0.5)
+        )
+        val ladderMarket = market().copy(tickSize = 0.001)
+        val states = listOf(0.0, 0.5, 1.0).map { offset ->
+            EventMakerLiveState(
+                ladderMarket,
+                ladderConfig.copy(entryOffsetCents = offset, ladderOffsetsCents = emptyList())
+            )
+        }
+        val currentBook = book(0.98, 0.985, start)
+        states.forEach { it.onBook(currentBook) }
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(ladderConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        val result = engine.quote(
+            states,
+            mapOf("token" to currentBook),
+            7L,
+            start,
+            setOf("condition")
+        )
+
+        assertEquals(2, result.placed.size, "errors=${result.errors}")
+        assertNull(states.last().activeOrder)
+        assertEquals(listOf(0.0, 0.5), states.take(2).map { it.legOffsetCents })
+    }
+    @Test
+    fun `multi leg settlement and redemption aggregate by market`() = runTest {
+        val start = 1_800_000_000_000L
+        val ladderConfig = config.copy(
+            maxMarkets = 1,
+            orderNotional = 10.0,
+            maxTotalInventoryNotional = 40.0,
+            improveTicks = 0,
+            ladderOffsetsCents = listOf(0.0, 1.0)
+        )
+        val ladderMarket = market().copy(tickSize = 0.001)
+        val states = listOf(0.0, 1.0).map { offset ->
+            EventMakerLiveState(
+                ladderMarket,
+                ladderConfig.copy(entryOffsetCents = offset, ladderOffsetsCents = emptyList())
+            )
+        }
+        val currentBook = book(0.98, 0.985, start)
+        states.forEach { it.onBook(currentBook) }
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(ladderConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        val placed = engine.quote(states, mapOf("token" to currentBook), 7L, start).placed
+        assertEquals(2, placed.size)
+        placed.forEach { placement -> port.fill(placement.order.orderId, placement.order.originalShares) }
+        engine.reconcile(states, 7L, start + 1)
+        val totalInventory = states.fold(BigDecimal.ZERO) { sum, state -> sum + state.inventoryShares }
+
+        port.settlementSnapshot = EventMakerSettlementSnapshot(
+            resolutionOutcomeIndex = 0,
+            position = EventMakerSettlementPosition(
+                tokenId = "token",
+                shares = totalInventory,
+                redeemable = true,
+                outcomeIndex = 0,
+                negativeRisk = false
+            )
+        )
+        val settled = engine.settleResolved(states, 7L, start + 2_000L)
+
+        assertEquals(2, settled.settlements.size)
+        assertEquals(2, settled.settlements.map { it.cycleExitOrderId }.distinct().size)
+        assertEquals(2, states.count { it.pendingRedemption() != null })
+
+        port.settlementPosition = EventMakerSettlementPosition(
+            tokenId = "token",
+            shares = totalInventory,
+            redeemable = true,
+            outcomeIndex = 0,
+            negativeRisk = false
+        )
+        val redeemed = engine.redeemPendingRedemptions(states, 7L, start + 3_000L)
+
+        assertEquals(1, port.redeemSettlementCount)
+        assertEquals(1, redeemed.redemptions.size)
+        assertEquals(
+            listOf(EventMakerRedemptionStatus.REDEEMED, EventMakerRedemptionStatus.REDEEMED),
+            states.map { it.settlements.single().redemptionStatus }
+        )
+    }
+    @Test
     fun `resolved market books settlement then confirms redemption`() = runTest {
         val start = 1_800_000_000_000L
         val liveMarket = market()

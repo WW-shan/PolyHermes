@@ -11,6 +11,8 @@ class EventMakerLiveState(
     val market: LivePaperMarket,
     val config: EventMakerConfig
 ) {
+    val legOffsetCents: Double get() = config.entryOffsetCents
+
     var phase: EventMakerPhase = EventMakerPhase.FLAT
         private set
     var inventoryShares: BigDecimal = BigDecimal.ZERO
@@ -211,7 +213,7 @@ class EventMakerLiveState(
         }
         val settlementPnl = exitPrice.subtract(entryPrice).multiply(settledShares).toDouble()
         val cyclePnl = currentCycleRealizedPnl + settlementPnl
-        val cycleExitOrderId = "settlement:${market.conditionId}:$now"
+        val cycleExitOrderId = "settlement:${market.conditionId}:${entryOrderId}:$now"
         val settlement = EventMakerSettlementRecord(
             marketId = market.conditionId,
             favoriteTokenId = market.favoriteTokenId,
@@ -300,7 +302,8 @@ class EventMakerLiveState(
         favoriteIndex = market.favoriteIndex,
         negativeRisk = market.negRisk,
         endTimestamp = market.endTimestamp,
-        tickSize = market.tickSize
+        tickSize = market.tickSize,
+        legOffsetCents = legOffsetCents
     )
 
     fun restore(persisted: EventMakerPersistedMarket) {
@@ -311,6 +314,13 @@ class EventMakerLiveState(
             throw IllegalStateException(
                 "persisted_favorite_token_mismatch:${market.conditionId}:${persisted.favoriteTokenId}!=" +
                     market.favoriteTokenId
+            )
+        }
+        if (persisted.legOffsetCents != null &&
+            kotlin.math.abs(persisted.legOffsetCents - legOffsetCents) > 1e-9
+        ) {
+            throw IllegalStateException(
+                "persisted_ladder_offset_mismatch:${market.conditionId}:${persisted.legOffsetCents}!=$legOffsetCents"
             )
         }
         val persistedInventory = persisted.inventoryShares.toBigDecimalOrNull()

@@ -36,6 +36,11 @@ data class EventMakerConfig(
     val maxPrice: Double = 0.99,
     val improveTicks: Int = 1,
     val entryOffsetCents: Double = 0.0,
+    /**
+     * Optional atomic multi-level ladder. Empty keeps the single-leg behavior;
+     * a non-empty list creates one independent leg per offset inside one engine.
+     */
+    val ladderOffsetsCents: List<Double> = emptyList(),
     val exitSpreadCents: Double = 1.0,
     val exitImproveTicks: Int = 1,
     /** Shadow-only marketable entry at the best ask; Geopolitics taker fee is zero. */
@@ -86,6 +91,12 @@ data class EventMakerConfig(
         require(minPrice >= 0.0 && minPrice < maxPrice && maxPrice <= 1.0)
         require(improveTicks >= 0)
         require(entryOffsetCents >= 0.0)
+        require(ladderOffsetsCents.size <= 10)
+        require(ladderOffsetsCents.all { it >= 0.0 && it < 100.0 })
+        require(ladderOffsetsCents.distinct().size == ladderOffsetsCents.size)
+        require(ladderOffsetsCents.isEmpty() || !takerEntry) {
+            "ladderOffsetsCents is maker-only and cannot be combined with takerEntry"
+        }
         require(exitSpreadCents > 0.0)
         require(exitImproveTicks >= 0)
         require(takerEntrySlippageTicks >= 0)
@@ -110,6 +121,9 @@ data class EventMakerConfig(
         require(staleBookSeconds > 0)
         require(activeOrderStaleBookSeconds >= staleBookSeconds)
     }
+
+    fun effectiveLadderOffsetsCents(): List<Double> =
+        ladderOffsetsCents.ifEmpty { listOf(entryOffsetCents) }
 }
 
 data class EventMakerQuoteIntent(
@@ -124,7 +138,9 @@ data class EventMakerQuoteIntent(
 data class EventMakerRiskSnapshot(
     val totalInventoryNotional: Double,
     val openMarketCount: Int,
-    val dailyPnl: Double
+    val dailyPnl: Double,
+    /** Additional legs in an already-open market do not consume another market slot. */
+    val currentMarketAlreadyOpen: Boolean = false
 )
 
 data class EventMakerRiskDecision(
@@ -192,7 +208,9 @@ data class EventMakerPersistedMarket(
     val favoriteIndex: Int? = null,
     val negativeRisk: Boolean? = null,
     val endTimestamp: Long? = null,
-    val tickSize: Double? = null
+    val tickSize: Double? = null,
+    /** Ladder offset for this leg; null means a legacy single-leg state. */
+    val legOffsetCents: Double? = null
 )
 
 data class EventMakerStatus(

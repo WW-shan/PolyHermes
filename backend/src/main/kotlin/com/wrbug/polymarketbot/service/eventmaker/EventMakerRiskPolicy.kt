@@ -12,7 +12,7 @@ class EventMakerRiskPolicy {
         if (snapshot.totalInventoryNotional + config.orderNotional > config.maxTotalInventoryNotional) {
             return EventMakerRiskDecision.reject("total_inventory_limit")
         }
-        if (snapshot.openMarketCount >= config.maxMarkets) {
+        if (!snapshot.currentMarketAlreadyOpen && snapshot.openMarketCount >= config.maxMarkets) {
             return EventMakerRiskDecision.reject("max_open_markets")
         }
         return EventMakerRiskDecision.ALLOWED

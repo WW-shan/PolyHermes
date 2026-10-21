@@ -206,6 +206,51 @@ class EventMakerStartupRecoveryTest {
         assertNull(saved.activeOrderId)
     }
     @Test
+    fun `multi leg config creates one state per offset and round trips through persistence`() {
+        val service = service(RecoveryExecutionPort())
+        val config = EventMakerConfig(ladderOffsetsCents = listOf(0.0, 0.5, 1.0, 2.0))
+        val states = service.liveStatesForMarket(liveMarket(), config, emptyList())
+
+        assertEquals(listOf(0.0, 0.5, 1.0, 2.0), states.map { it.legOffsetCents })
+
+        val persisted = EventMakerPersistedState(
+            mode = EventMakerMode.SHADOW.name,
+            accountId = null,
+            startedAt = 1_000L,
+            dailyPnlDay = 20_000L,
+            dailyPnlBaseline = 0.0,
+            markets = states.map { it.toPersisted() }
+        )
+        val projected = service.projectPersistedState(persisted, states)!!
+
+        assertEquals(4, projected.markets.size)
+        states.forEach { state ->
+            val saved = projected.markets.first { it.legOffsetCents == state.legOffsetCents }
+            assertTrue(service.stateForPersisted(saved, states) === state)
+        }
+    }
+
+    @Test
+    fun `position check sums ladder legs per condition`() = runTest {
+        val port = RecoveryExecutionPort().apply {
+            positionSizes = mapOf("ladder" to BigDecimal("5.00"))
+        }
+        val service = service(port)
+        val persisted = EventMakerPersistedState(
+            mode = EventMakerMode.LIVE.name,
+            accountId = 7L,
+            startedAt = 1_000L,
+            dailyPnlDay = 20_000L,
+            dailyPnlBaseline = 0.0,
+            markets = listOf(
+                persistedLeg("ladder", 0.0, "2.00"),
+                persistedLeg("ladder", 1.0, "3.00")
+            )
+        )
+
+        service.ensureNoUnmanagedPositions(7L, persisted)
+    }
+    @Test
     fun `pending redemption with absent position is marked complete on startup`() = runTest {
         val port = RecoveryExecutionPort().apply {
             settlementPosition = EventMakerSettlementPosition(
@@ -226,6 +271,42 @@ class EventMakerStartupRecoveryTest {
         assertEquals(0, port.redeemSettlementCount)
     }
 
+    @Test
+    fun `pending redemption recovery aggregates ladder legs into one redeem call`() = runTest {
+        val port = RecoveryExecutionPort().apply {
+            settlementPosition = EventMakerSettlementPosition(
+                tokenId = "token",
+                shares = BigDecimal("10.00"),
+                redeemable = true,
+                outcomeIndex = 0,
+                negativeRisk = false
+            )
+        }
+        val service = service(port)
+        val persisted = EventMakerPersistedState(
+            mode = EventMakerMode.LIVE.name,
+            accountId = 7L,
+            startedAt = 1_000L,
+            dailyPnlDay = 20_000L,
+            dailyPnlBaseline = 0.0,
+            markets = listOf(
+                persistedLeg("ladder", 0.0, "0").copy(
+                    settlements = listOf(pendingSettlement("buy-0", "settlement:ladder:buy-0:2000", "5.00"))
+                ),
+                persistedLeg("ladder", 1.0, "0").copy(
+                    settlements = listOf(pendingSettlement("buy-1", "settlement:ladder:buy-1:2000", "5.00"))
+                )
+            )
+        )
+
+        val recovered = service.recoverPendingRedemptions(persisted, 7L)!!
+
+        assertEquals(1, port.redeemSettlementCount)
+        val records = recovered.markets.flatMap { it.settlements.orEmpty() }
+        assertEquals(2, records.size)
+        assertTrue(records.all { it.redemptionStatus == EventMakerRedemptionStatus.REDEEMED })
+        assertTrue(records.all { it.transactionHash == "0xtx" })
+    }
     @Test
     fun `pending redemption retries and persists transaction hash on startup`() = runTest {
         val port = RecoveryExecutionPort().apply {
@@ -424,6 +505,64 @@ class EventMakerStartupRecoveryTest {
         endTimestamp = 1_900_000_000L,
         tickSize = 0.001
     )
+    private fun pendingSettlement(
+        entryOrderId: String,
+        cycleExitOrderId: String,
+        shares: String
+    ) = EventMakerSettlementRecord(
+        marketId = "ladder",
+        favoriteTokenId = "token",
+        entryOrderId = entryOrderId,
+        cycleExitOrderId = cycleExitOrderId,
+        settledAt = 2_000L,
+        entryAt = 1_000L,
+        entryPrice = BigDecimal("0.96"),
+        exitPrice = BigDecimal.ONE,
+        shares = BigDecimal(shares),
+        pnl = 0.2,
+        outcomeIndex = 0,
+        negativeRisk = false,
+        redemptionStatus = EventMakerRedemptionStatus.PENDING
+    )
+    private fun liveMarket() = LivePaperMarket(
+        conditionId = "ladder",
+        question = "Ladder",
+        tag = "Geopolitics",
+        volume24hr = 100_000.0,
+        endTimestamp = 1_900_000_000L,
+        tickSize = 0.001,
+        outcomes = listOf("Yes", "No"),
+        tokenIds = listOf("token", "other"),
+        favoriteIndex = 0,
+        negRisk = false
+    )
+
+    private fun persistedLeg(conditionId: String, offsetCents: Double, inventory: String) =
+        EventMakerPersistedMarket(
+            conditionId = conditionId,
+            phase = "LONG",
+            inventoryShares = inventory,
+            entryPrice = "0.96",
+            entryAt = 1_000L,
+            realizedPnl = 0.0,
+            completedCycles = 0,
+            activeOrderId = null,
+            activeOrderSide = null,
+            activeOrderPrice = null,
+            activeOrderOriginalShares = null,
+            activeOrderMatchedShares = null,
+            activeOrderStatus = null,
+            currentEntryOrderId = "buy-$offsetCents",
+            currentEntryShares = inventory,
+            fills = emptyList(),
+            cycles = emptyList(),
+            favoriteTokenId = "token",
+            favoriteIndex = 0,
+            negativeRisk = false,
+            endTimestamp = 1_900_000_000L,
+            tickSize = 0.001,
+            legOffsetCents = offsetCents
+        )
     private class RecoveryExecutionPort : EventMakerExecutionPort {
         var cancelCount: Int = 0
             private set

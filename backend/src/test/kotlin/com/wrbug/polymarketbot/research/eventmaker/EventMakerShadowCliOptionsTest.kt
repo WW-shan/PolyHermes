@@ -43,6 +43,22 @@ class EventMakerShadowCliOptionsTest {
     }
 
     @Test
+    fun `parses atomic ladder offsets`() {
+        val options = parseOptions(
+            arrayOf("--ladder-offsets-cents", "0,0.5,1,2", "--minutes", "60")
+        )
+        assertEquals(listOf(0.0, 0.5, 1.0, 2.0), options.ladderOffsetsCents)
+    }
+
+    @Test
+    fun `rejects ladder offsets combined with taker entry`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            parseOptions(
+                arrayOf("--ladder-offsets-cents", "0,1", "--taker-entry", "--minutes", "60")
+            )
+        }
+    }
+    @Test
     fun `rejects inverted momentum range`() {
         assertThrows(IllegalArgumentException::class.java) {
             parseOptions(

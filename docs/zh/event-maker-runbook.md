@@ -21,7 +21,7 @@
 当前主策略：**0.97–0.99 Geopolitics、close 前 3–7 天、+2c maker ladder、四档 offset 0/0.5/1/2c、q2、$100 单档**。主 maker 臂不做 24h 动量过滤；`mom1` taker 臂单独做过滤。
 
 ```powershell
-# 启动/重启 11 个 Shadow + monitor
+# 启动/重启 8 个 Shadow + monitor
 .\scripts\start-bond-shadow-suite.ps1 -Restart
 
 # 查看状态
@@ -192,6 +192,7 @@ cd D:\Project\PolyHermes\backend
 | `shadowMinRemainingMinutes` | 距离结束至少剩余分钟数；正式候选默认 720（12h） |
 | `shadowMaxRemainingMinutes` | 距离结束最多剩余分钟数；正式候选默认 10080（7d），与回测窗口范围一致 |
 | `shadowAllowNegRisk` | 是否允许 negRisk 市场 |
+| `ladderOffsetsCents` / `--ladder-offsets-cents` | 单引擎原子多档，例如 `0,0.5,1,2`；为空时保持单档 `entryOffsetCents` |
 | `shadowMaxQueue` | 前方最大可接受队列股数；过小会导致一档价差市场完全不报价 |
 | `shadowSnapshotSeconds` | 快照间隔 |
 | `shadowMinSpreadTicks` | 报价时要求的最小买卖价差 tick 数 |
@@ -221,7 +222,7 @@ cd D:\Project\PolyHermes\backend
 - `market-watch-timeout.json`：等待超时证据，包含尝试次数和最新拒绝原因。
 - `events.jsonl`：报价、撤单、有效成交对账和 WS 状态。
 - `trades.csv`：去重后的公共成交。
-- `snapshots.csv`：每个市场每 10 秒的状态、库存、PnL 和回合数。
+- `snapshots.csv`：每条 leg 每 10 秒的状态、库存、PnL 和回合数；`leg_offset_cents` 区分同市场多档。
 - `state.json`：逐笔 fill、逐回合 cycle、SETTLE settlement、赎回状态、库存和活跃订单。
 - `markouts.csv`：每笔 Shadow 成交后 60/300/1800 秒的盘口 markout，同时记录盘口年龄。
 - `execution-diagnostics.json`：订单级队列、反向成交、穿越成交、已消耗队列、成交量和最终状态。

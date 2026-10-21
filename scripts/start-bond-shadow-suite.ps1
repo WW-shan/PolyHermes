@@ -34,6 +34,7 @@ $common = @{
   MaxTotalInventoryNotional = 400
   MaxDailyLoss = 1000
   EntryMomentumMaxCents = 1
+  LadderOffsetsCents = ""
 }
 function Merge-Hashtable([hashtable]$base, [hashtable]$overrides) {
   $result = @{}
@@ -43,10 +44,7 @@ function Merge-Hashtable([hashtable]$base, [hashtable]$overrides) {
 }
 $arms = @(
   @{ Name = "3c-geo-9597"; Args = (Merge-Hashtable $common @{ MinPrice = 0.95; MaxPrice = 0.97; Output = "build/research/event-maker-bond-scalp-3c-geo-9597-shadow-7d-20261021"; ExitSpreadCents = 3; MaxCyclesPerMarket = 3; EntryOffsetCents = 0; MaxTotalInventoryNotional = 1000; EntryMomentumMaxCents = 999 }) },
-  @{ Name = "off00"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021"; EntryOffsetCents = 0; EntryMomentumMaxCents = 999 }) },
-  @{ Name = "off05"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021"; EntryOffsetCents = 0.5; EntryMomentumMaxCents = 999 }) },
-  @{ Name = "off10"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021"; EntryOffsetCents = 1; EntryMomentumMaxCents = 999 }) },
-  @{ Name = "off20"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021"; EntryOffsetCents = 2; EntryMomentumMaxCents = 999 }) },
+  @{ Name = "ladder4"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-ladder4-shadow-7d-20261021"; LadderOffsetsCents = "0,0.5,1,2"; EntryOffsetCents = 0; EntryMomentumMaxCents = 999; MaxTotalInventoryNotional = 400 }) },
   @{ Name = "taker00c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-3c-geo-97099-taker00c-shadow-7d-20261021"; ExitSpreadCents = 3; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true; EntryMomentumMaxCents = 999 }) },
   @{ Name = "taker2c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021"; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true; EntryMomentumMaxCents = 999 }) },
   @{ Name = "mom1-taker2c"; Args = (Merge-Hashtable $common @{ MinPrice = 0.97; MaxPrice = 0.99; Output = "build/research/event-maker-bond-scalp-2c-geo-97099-mom1-taker-shadow-7d-20261021"; EntryOffsetCents = 0; ExitImproveTicks = 0; TakerEntry = $true }) },
@@ -56,7 +54,7 @@ $arms = @(
 )
 
 if ($DryRun) {
-  $arms | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Output = $_.Args.Output; OrderNotional = $_.Args.OrderNotional; EntryOffsetCents = $_.Args.EntryOffsetCents; ExitSpreadCents = $_.Args.ExitSpreadCents; ImproveTicks = $_.Args.ImproveTicks; ExitImproveTicks = $_.Args.ExitImproveTicks; FillFactor = $_.Args.FillVolumeFactor; MomentumMaxCents = $_.Args.EntryMomentumMaxCents; MaxCycles = $_.Args.MaxCyclesPerMarket; MinRemaining = $_.Args.MinRemainingMinutes; MaxRemaining = $_.Args.MaxRemainingMinutes; Taker = [bool]$_.Args.TakerEntry } } | Format-Table -AutoSize
+  $arms | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Output = $_.Args.Output; OrderNotional = $_.Args.OrderNotional; LadderOffsetsCents = $_.Args.LadderOffsetsCents; EntryOffsetCents = $_.Args.EntryOffsetCents; ExitSpreadCents = $_.Args.ExitSpreadCents; ImproveTicks = $_.Args.ImproveTicks; ExitImproveTicks = $_.Args.ExitImproveTicks; FillFactor = $_.Args.FillVolumeFactor; MomentumMaxCents = $_.Args.EntryMomentumMaxCents; MaxCycles = $_.Args.MaxCyclesPerMarket; MinRemaining = $_.Args.MinRemainingMinutes; MaxRemaining = $_.Args.MaxRemainingMinutes; Taker = [bool]$_.Args.TakerEntry } } | Format-Table -AutoSize
   return
 }
 

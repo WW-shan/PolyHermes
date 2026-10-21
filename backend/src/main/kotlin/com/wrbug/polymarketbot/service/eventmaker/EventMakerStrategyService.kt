@@ -249,7 +249,7 @@ class EventMakerStrategyService(
         val prepared = prepareMarkets(config, client)
         val discovered = prepared.markets
         val books = prepared.books
-        val states = discovered.map { EventMakerLiveState(it, config) }
+        val states = discovered.flatMap { liveStatesForMarket(it, config, emptyList()) }
         shadowExecutionPort.reset()
         shadowExecutionPort.configureFillModel(config.shadowFillVolumeFactor)
         val engine = EventMakerLiveEngine(config, quotePlanner, riskPolicy, shadowExecutionPort)
@@ -321,7 +321,7 @@ class EventMakerStrategyService(
                         is LiveFeedEvent.Unknown -> logger.debug("Event maker shadow unknown WS event: ${event.eventType}")
                     }
                     if (!duplicateTrade) {
-                        val result = runEngineTick(engine, states, books, 0L)
+                        val result = runEngineTick(engine, states, books, 0L, discovered.map { it.conditionId }.toSet())
                         shouldStop = applyEngineResult(result) || engine.haltedReason != null
                     }
                 }
@@ -379,14 +379,16 @@ class EventMakerStrategyService(
                     needsStartupStateReconciliation(saved)
             }
             .map(::recoveryMarket)
-        val states = (discovered + recoveryMarkets).map { EventMakerLiveState(it, config) }
+        val states = (discovered + recoveryMarkets).flatMap { market ->
+            liveStatesForMarket(market, config, persisted?.markets.orEmpty())
+        }
         cancelOrphanedOrders(
             persisted,
             discoveredIds + recoveryMarkets.map { it.conditionId }.toSet(),
             accountId
         )
         persisted?.markets?.forEach { saved ->
-            states.firstOrNull { it.market.conditionId == saved.conditionId }?.restore(saved)
+            stateForPersisted(saved, states)?.restore(saved)
         }
         realizedPnlBaseline = restoredRealizedBaseline(persisted, states.sumOf { it.realizedPnl })
         currentLiveStates = states
@@ -453,7 +455,7 @@ class EventMakerStrategyService(
                     // Roll the daily anchor before order reconciliation can apply
                     // the first fill of a new UTC day.
                     rollDailyPnlBaseline(engine, states)
-                    val result = runEngineTick(engine, states, books, accountId)
+                    val result = runEngineTick(engine, states, books, accountId, discoveredIds)
                     val engineStopped = applyEngineResult(result) || engine.haltedReason != null
                     updateStatus(states, books, trades, bookUpdates)
                     val dailyLoss = riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))
@@ -478,7 +480,7 @@ class EventMakerStrategyService(
         var initialHalt: Boolean
         stateMutex.withLock {
             rollDailyPnlBaseline(engine, states)
-            val initial = runEngineTick(engine, states, books, accountId)
+            val initial = runEngineTick(engine, states, books, accountId, discoveredIds)
             initialHalt = applyEngineResult(initial) || engine.haltedReason != null
             updateStatus(states, books, trades, bookUpdates)
             if (riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))) {
@@ -530,7 +532,7 @@ class EventMakerStrategyService(
                     // REST call per active order, so it stays on the dedicated
                     // reconcileJob cadence instead of firing on every WS event.
                     if (!duplicateTrade) {
-                        val result = runQuoteTick(engine, states, books, accountId)
+                        val result = runQuoteTick(engine, states, books, accountId, discoveredIds)
                         shouldStop = applyEngineResult(result) || engine.haltedReason != null
                         stateChanged = result.placed.isNotEmpty() ||
                             result.canceled.isNotEmpty() ||
@@ -615,11 +617,16 @@ class EventMakerStrategyService(
         states: List<EventMakerLiveState>
     ): EventMakerPersistedState? {
         if (persisted == null) return null
-        val byCondition = states.associateBy { it.market.conditionId }
-        val previousByCondition = persisted.markets.associateBy { it.conditionId }
-        val persistedIds = persisted.markets.map { it.conditionId }.toSet()
+        val byLeg = states.associateBy { legKey(it.market.conditionId, it.legOffsetCents) }
+        val previousByLeg = persisted.markets.associateBy { legKey(it.conditionId, it.legOffsetCents) }
+        val persistedKeys = persisted.markets.map { legKey(it.conditionId, it.legOffsetCents) }.toSet()
+        val matchedStates = mutableSetOf<EventMakerLiveState>()
         val realizedDelta = states.sumOf { state ->
-            state.realizedPnl - (previousByCondition[state.market.conditionId]?.realizedPnl ?: 0.0)
+            val previous = previousByLeg[legKey(state.market.conditionId, state.legOffsetCents)]
+                ?: persisted.markets
+                    .filter { it.conditionId == state.market.conditionId && it.legOffsetCents == null }
+                    .singleOrNull()
+            state.realizedPnl - (previous?.realizedPnl ?: 0.0)
         }
         val persistedMarketTotal = persisted.markets.sumOf { it.realizedPnl }
         val baseCumulative = if (kotlin.math.abs(persisted.cumulativeRealizedPnl) <= 1e-9 &&
@@ -630,16 +637,24 @@ class EventMakerStrategyService(
             persisted.cumulativeRealizedPnl
         }
         val updated = persisted.markets.map { saved ->
-            byCondition[saved.conditionId]?.toPersisted() ?: saved
+            val key = legKey(saved.conditionId, saved.legOffsetCents)
+            val matched = byLeg[key] ?: if (saved.legOffsetCents == null) {
+                states.filter { it.market.conditionId == saved.conditionId }.singleOrNull()
+            } else {
+                null
+            }
+            if (matched != null) matchedStates += matched
+            matched?.toPersisted() ?: saved
         } + states
-            .filter { it.market.conditionId !in persistedIds }
+            .filter { it !in matchedStates && legKey(it.market.conditionId, it.legOffsetCents) !in persistedKeys }
             .map { it.toPersisted() }
         return persisted.copy(
             cumulativeRealizedPnl = baseCumulative + realizedDelta,
             markets = updated
         )
     }
-
+    private fun legKey(conditionId: String, offsetCents: Double?): Pair<String, Double?> =
+        conditionId.lowercase() to offsetCents
     /**
      * Reconciles known persisted orders before any startup position check. A
      * resting order can fill while the JVM is down; applying that authoritative
@@ -653,10 +668,16 @@ class EventMakerStrategyService(
         now: Long = System.currentTimeMillis()
     ): EventMakerPersistedState? {
         if (persisted == null) return null
+        val configuredOffsets = config.effectiveLadderOffsetsCents()
         val states = persisted.markets
             .filter { !it.activeOrderId.isNullOrBlank() }
             .map { saved ->
-                EventMakerLiveState(recoveryMarket(saved), config).apply { restore(saved) }
+                val offset = saved.legOffsetCents ?: if (configuredOffsets.size == 1) {
+                    configuredOffsets.single()
+                } else {
+                    throw IllegalStateException("persisted_ladder_offset_missing:${saved.conditionId}")
+                }
+                EventMakerLiveState(recoveryMarket(saved), ladderLegConfig(config, offset)).apply { restore(saved) }
             }
         if (states.isEmpty()) return persisted
         val engine = EventMakerLiveEngine(config, quotePlanner, riskPolicy, executionPort)
@@ -665,6 +686,57 @@ class EventMakerStrategyService(
         val halted = result.haltedReason ?: engine.haltedReason
         if (halted != null) throw IllegalStateException(halted)
         return projectPersistedState(persisted, states)
+    }
+    /**
+     * Builds the leg config for one atomic ladder level. The top-level config
+     * describes the shared market/risk envelope; each leg owns one offset.
+     */
+    internal fun ladderLegConfig(config: EventMakerConfig, offsetCents: Double): EventMakerConfig =
+        config.copy(
+            entryOffsetCents = offsetCents,
+            ladderOffsetsCents = emptyList()
+        )
+
+    /**
+     * Creates one state per configured ladder offset, plus any leg offsets that
+     * already exist in persisted state. Mixing a legacy single-leg state with a
+     * multi-leg config is ambiguous and fails closed.
+     */
+    internal fun liveStatesForMarket(
+        market: LivePaperMarket,
+        config: EventMakerConfig,
+        persistedMarkets: List<EventMakerPersistedMarket>
+    ): List<EventMakerLiveState> {
+        val saved = persistedMarkets.filter { it.conditionId == market.conditionId }
+        val configured = config.effectiveLadderOffsetsCents()
+        if (configured.size > 1 && saved.any { it.legOffsetCents == null }) {
+            throw IllegalStateException("persisted_ladder_offset_missing:${market.conditionId}")
+        }
+        val offsets = linkedSetOf<Double>()
+        saved.mapNotNull { it.legOffsetCents }.forEach { offsets += it }
+        configured.forEach { offsets += it }
+        return offsets.map { offset ->
+            EventMakerLiveState(market, ladderLegConfig(config, offset))
+        }
+    }
+
+    internal fun stateForPersisted(
+        saved: EventMakerPersistedMarket,
+        states: List<EventMakerLiveState>
+    ): EventMakerLiveState? {
+        val candidates = states.filter { it.market.conditionId == saved.conditionId }
+        if (candidates.isEmpty()) return null
+        val offset = saved.legOffsetCents
+        if (offset == null) {
+            if (candidates.size != 1) {
+                throw IllegalStateException("persisted_ladder_offset_missing:${saved.conditionId}")
+            }
+            return candidates.single()
+        }
+        return candidates.firstOrNull { kotlin.math.abs(it.legOffsetCents - offset) <= 1e-9 }
+            ?: throw IllegalStateException(
+                "persisted_ladder_leg_missing:${saved.conditionId}:$offset"
+            )
     }
     /**
      * Rebuilds only the metadata needed to settle an inventory position whose
@@ -796,18 +868,28 @@ class EventMakerStrategyService(
             throw IllegalStateException("positions_unavailable:${it.message}", it)
         }.mapKeys { it.key.lowercase() }
         val managedPositions = persisted?.markets
-            ?.mapNotNull { market ->
-                val inventory = market.inventoryShares.toBigDecimalOrNull()
-                    ?: throw IllegalStateException("persisted_inventory_invalid:${market.conditionId}")
-                if (inventory > BigDecimal.ZERO) market.conditionId.lowercase() to inventory else null
+            .orEmpty()
+            .groupBy { it.conditionId.lowercase() }
+            .mapValues { (_, legs) ->
+                legs.fold(BigDecimal.ZERO) { sum, market ->
+                    val inventory = market.inventoryShares.toBigDecimalOrNull()
+                        ?: throw IllegalStateException("persisted_inventory_invalid:${market.conditionId}")
+                    sum + inventory
+                }
             }
-            ?.toMap()
-            .orEmpty()
+            .filterValues { it > BigDecimal.ZERO }
         val recoverablePositions = persisted?.markets
-            ?.flatMap { market -> market.settlements.orEmpty() }
-            ?.filter { it.redemptionStatus != EventMakerRedemptionStatus.ALREADY_ABSENT }
-            ?.associate { it.marketId.lowercase() to it.shares }
             .orEmpty()
+            .flatMap { market -> market.settlements.orEmpty() }
+            .filter { it.redemptionStatus != EventMakerRedemptionStatus.ALREADY_ABSENT }
+            .groupBy { it.marketId.lowercase() }
+            .mapValues { (_, records) -> records.fold(BigDecimal.ZERO) { sum, record -> sum + record.shares } }
+        val conflicts = managedPositions.keys intersect recoverablePositions.keys
+        if (conflicts.isNotEmpty()) {
+            throw IllegalStateException(
+                "open_position_claim_conflict:${conflicts.sorted().joinToString(",")}"
+            )
+        }
         val allowedPositions = managedPositions + recoverablePositions
         val unmanaged = activePositions.keys - allowedPositions.keys
         val missing = managedPositions.keys - activePositions.keys
@@ -824,7 +906,6 @@ class EventMakerStrategyService(
             )
         }
     }
-
     /**
      * Finishes redemption attempts that were already booked before a process
      * stopped. A pending settlement is committed to disk before this call, so
@@ -835,28 +916,44 @@ class EventMakerStrategyService(
         accountId: Long
     ): EventMakerPersistedState? {
         if (persisted == null) return null
-        var changed = false
+        val pendingGroups = persisted.markets
+            .flatMap { it.settlements.orEmpty() }
+            .filter { it.redemptionStatus == EventMakerRedemptionStatus.PENDING }
+            .groupBy { it.marketId.lowercase() }
+        if (pendingGroups.isEmpty()) return persisted
+
+        val resolutions = mutableMapOf<String, EventMakerSettlementRecord>()
+        for ((marketId, records) in pendingGroups) {
+            val signatures = records.map { it.favoriteTokenId to (it.outcomeIndex to it.negativeRisk) }.distinct()
+            if (signatures.size != 1) {
+                throw IllegalStateException("pending_redemption_mismatch:$marketId")
+            }
+            val totalShares = records.fold(BigDecimal.ZERO) { sum, record -> sum + record.shares }
+            val aggregate = records.first().copy(
+                cycleExitOrderId = "recovery-redemption:$marketId",
+                shares = totalShares
+            )
+            val recovered = recoverSettlementRecord(accountId, aggregate)
+            records.forEach { original ->
+                resolutions[original.cycleExitOrderId] = original.copy(
+                    redemptionStatus = recovered.redemptionStatus,
+                    transactionHash = recovered.transactionHash,
+                    redemptionUpdatedAt = recovered.redemptionUpdatedAt
+                )
+            }
+        }
         val updatedMarkets = persisted.markets.map { market ->
             val records = market.settlements.orEmpty()
-            if (records.none { it.redemptionStatus == EventMakerRedemptionStatus.PENDING }) {
-                return@map market
+            if (records.none { resolutions.containsKey(it.cycleExitOrderId) }) {
+                market
+            } else {
+                market.copy(settlements = records.map { resolutions[it.cycleExitOrderId] ?: it })
             }
-            val updatedRecords = records.map { record ->
-                if (record.redemptionStatus != EventMakerRedemptionStatus.PENDING) {
-                    record
-                } else {
-                    changed = true
-                    recoverSettlementRecord(accountId, record)
-                }
-            }
-            market.copy(settlements = updatedRecords)
         }
-        if (!changed) return persisted
         val updated = persisted.copy(markets = updatedMarkets)
         stateStore.save(updated)
         return updated
     }
-
     private suspend fun recoverSettlementRecord(
         accountId: Long,
         settlement: EventMakerSettlementRecord
@@ -987,29 +1084,31 @@ class EventMakerStrategyService(
      * not reconcile orders: that issues one REST lookup per active order and must
      * stay on the [EventMakerConfig.reconcileSeconds] cadence.
      */
-    private suspend fun runQuoteTick(
+    internal suspend fun runQuoteTick(
         engine: EventMakerLiveEngine,
         states: List<EventMakerLiveState>,
         books: Map<String, MarketBook>,
-        accountId: Long
+        accountId: Long,
+        eligibleMarketIds: Set<String>
     ): EventMakerEngineResult {
         if (stopping) return EventMakerEngineResult()
         engine.haltedReason?.let { return EventMakerEngineResult.halted(it) }
-        return engine.quote(states, books, accountId, System.currentTimeMillis())
+        return engine.quote(states, books, accountId, System.currentTimeMillis(), eligibleMarketIds)
     }
 
     private suspend fun runEngineTick(
         engine: EventMakerLiveEngine,
         states: List<EventMakerLiveState>,
         books: Map<String, MarketBook>,
-        accountId: Long
+        accountId: Long,
+        eligibleMarketIds: Set<String>
     ): EventMakerEngineResult {
         if (stopping) return EventMakerEngineResult()
         val now = System.currentTimeMillis()
         var result = engine.reconcile(states, accountId, now)
         if (engine.haltedReason != null) return result
         if (stopping) return result
-        result = result.merge(engine.quote(states, books, accountId, now))
+        result = result.merge(engine.quote(states, books, accountId, now, eligibleMarketIds))
         if (engine.haltedReason != null) return result
 
         val settled = engine.settleResolved(states, accountId, now)
