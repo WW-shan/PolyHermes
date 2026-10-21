@@ -1,6 +1,6 @@
 # Event Maker 运行手册与故障处理
 
-> 更新时间：2026-10-20 00:00 +08:00<br>
+> 更新时间：2026-10-21 11:30 +08:00<br>
 > 适用代码：`backend/src/main/kotlin/com/wrbug/polymarketbot/service/eventmaker/`  
 > 计划与验收：[event-maker-delivery-plan.md](event-maker-delivery-plan.md)  
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)
@@ -13,6 +13,44 @@
 - `LIVE`：使用真实账户、真实 CLOB 订单，强制 `post-only + GTC`，没有 taker fallback。
 - `LIVE` 默认关闭；必须显式设置 `liveTradingEnabled=true` 且提供 `accountId`。
 - 历史回测不能证明当前配置有稳定 edge。不要把测试通过等同于可以盈利上线。
+
+## 1.1 当前正式运行方式（2026-10-21）
+
+> 第 4 节的旧示例（q20 / fill factor 20 / allowNegRisk=true）是历史实验，不要用于当前主策略。
+
+当前主策略：**0.97–0.99 Geopolitics、close 前 3–7 天、+2c maker ladder、四档 offset 0/0.5/1/2c、q2、$100 单档**。主 maker 臂不做 24h 动量过滤；`mom1` taker 臂单独做过滤。
+
+```powershell
+# 启动/重启 11 个 Shadow + monitor
+.\scripts\start-bond-shadow-suite.ps1 -Restart
+
+# 查看状态
+node scripts\report-bond-shadow-status.cjs
+
+# 查看候选/等待 ETA
+.\scripts\report-bond-candidate-eta.ps1 -Output backend\build\research\bond-candidate-eta-latest.json
+
+# 查看 pre-live gate（必须 PASS 才能进入真实资金）
+node scripts\evaluate-bond-shadow-gate.cjs --output backend\build\research\bond-shadow-gate-latest.json
+
+# gate 自身的确定性回归
+node scripts\test-bond-shadow-gate.cjs
+```
+
+当前参数口径：
+
+| 项目 | 当前值 |
+|---|---|
+| 价格带 | 0.97–0.99 |
+| 时间窗口 | 4320–10080 分钟（3–7 天） |
+| Maker 入场 | offset 0/0.5/1/2c；improveTicks=0 |
+| Maker 出场 | entry+2c；exitImproveTicks=0 |
+| Fill factor | 2 |
+| 单档 | $100；另有 $1,000 容量对照臂 |
+| NegRisk | 排除 |
+| Momentum | 主 maker 臂不筛；mom1 taker 臂 ≤+1c |
+| 状态恢复 | `state.json` + `recovery.json`，重启不清空 |
+| 真实资金 | 未授权、未执行 |
 
 ## 2. 环境要求
 
