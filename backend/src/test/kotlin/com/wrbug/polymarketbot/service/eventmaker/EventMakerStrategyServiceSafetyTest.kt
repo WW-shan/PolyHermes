@@ -285,15 +285,151 @@ class EventMakerStrategyServiceSafetyTest {
         assertEquals(0.50, baseline, 1e-9)
     }
 
-    private fun service(stateFile: Path = tempDir.resolve("unused-state.json")) = EventMakerStrategyService(
+    @Test
+    fun `shadow engine tick does not persist a fake live state on settlement`() = runTest {
+        val stateFile = tempDir.resolve("shadow-state.json")
+        val port = SettlementExecutionPort()
+        val service = service(stateFile, port)
+        val now = System.currentTimeMillis()
+        val market = LivePaperMarket(
+            conditionId = "shadow-settlement",
+            question = "shadow settlement",
+            tag = "Geopolitics",
+            volume24hr = 100_000.0,
+            endTimestamp = now / 1_000L - 1L,
+            tickSize = 0.001,
+            outcomes = listOf("Yes", "No"),
+            tokenIds = listOf("token", "other"),
+            favoriteIndex = 0
+        )
+        val config = EventMakerConfig(
+            mode = EventMakerMode.SHADOW,
+            minPrice = 0.90,
+            maxPrice = 0.99,
+            minSpreadTicks = 1,
+            improveTicks = 0,
+            flowGuardWindowSeconds = 0,
+            orderNotional = 10.0,
+            maxTotalInventoryNotional = 100.0,
+            maxDailyLoss = 100.0
+        )
+        val saved = EventMakerPersistedMarket(
+            conditionId = market.conditionId,
+            legOffsetCents = 0.0,
+            phase = "LONG",
+            inventoryShares = "10.00",
+            entryPrice = "0.90",
+            entryAt = now - 1_000L,
+            realizedPnl = 0.0,
+            completedCycles = 0,
+            activeOrderId = null,
+            activeOrderSide = null,
+            activeOrderPrice = null,
+            activeOrderOriginalShares = null,
+            activeOrderMatchedShares = null,
+            activeOrderStatus = null,
+            totalBuyNotional = 9.0,
+            currentEntryOrderId = "buy-1",
+            currentEntryShares = "10.00",
+            fills = listOf(
+                EventMakerFillRecord(
+                    marketId = market.conditionId,
+                    orderId = "buy-1",
+                    side = EventMakerSide.BUY,
+                    price = BigDecimal("0.90"),
+                    shares = BigDecimal("10.00"),
+                    timestamp = now - 1_000L
+                )
+            ),
+            cycles = emptyList(),
+            favoriteTokenId = market.favoriteTokenId,
+            settlements = emptyList(),
+            favoriteIndex = 0,
+            negativeRisk = false,
+            endTimestamp = market.endTimestamp,
+            tickSize = market.tickSize
+        )
+        val state = EventMakerLiveState(market, config).apply { restore(saved) }
+        port.snapshot = EventMakerSettlementSnapshot(
+            resolutionOutcomeIndex = 0,
+            position = EventMakerSettlementPosition(
+                tokenId = market.favoriteTokenId,
+                shares = BigDecimal("10.00"),
+                redeemable = true,
+                outcomeIndex = 0,
+                negativeRisk = false
+            )
+        )
+        val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+
+        val result = service.runEngineTick(
+            engine = engine,
+            states = listOf(state),
+            books = emptyMap(),
+            accountId = 0L,
+            eligibleMarketIds = emptySet(),
+            persistState = false
+        )
+
+        assertEquals(1, result.settlements.size)
+        assertEquals(1, state.settlements.size)
+        assertTrue(Files.notExists(stateFile))
+    }
+    private fun service(
+        stateFile: Path = tempDir.resolve("unused-state.json"),
+        port: EventMakerExecutionPort = executionPort
+    ) = EventMakerStrategyService(
         proxyUrl = "",
         riskPolicy = EventMakerRiskPolicy(),
         quotePlanner = EventMakerQuotePlanner(),
-        executionPort = executionPort,
+        executionPort = port,
         shadowExecutionPort = EventMakerShadowExecutionPort(),
         stateStore = EventMakerStateStore(stateFile.toString())
     )
 
+    private class SettlementExecutionPort : EventMakerExecutionPort {
+        var snapshot: EventMakerSettlementSnapshot? = null
+
+        override suspend fun getSettlementSnapshot(
+            accountId: Long,
+            market: LivePaperMarket
+        ): Result<EventMakerSettlementSnapshot> =
+            snapshot?.let { Result.success(it) }
+                ?: Result.failure(IllegalStateException("settlement_snapshot_missing"))
+
+        override suspend fun getSettlementPosition(
+            accountId: Long,
+            settlement: EventMakerSettlementRecord
+        ): Result<EventMakerSettlementPosition> = Result.success(
+            EventMakerSettlementPosition(
+                tokenId = settlement.favoriteTokenId,
+                shares = BigDecimal.ZERO,
+                redeemable = false,
+                outcomeIndex = settlement.outcomeIndex,
+                negativeRisk = settlement.negativeRisk
+            )
+        )
+
+        override suspend fun validateAccount(accountId: Long): Result<Unit> = Result.success(Unit)
+
+        override suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>> =
+            Result.success(emptySet())
+
+        override suspend fun listOpenPositions(accountId: Long): Result<Map<String, BigDecimal>> =
+            Result.success(emptyMap())
+
+        override suspend fun place(
+            accountId: Long,
+            market: LivePaperMarket,
+            intent: EventMakerQuoteIntent
+        ): Result<EventMakerLiveOrder> = Result.failure(UnsupportedOperationException())
+
+        override suspend fun getOrder(accountId: Long, orderId: String): Result<EventMakerLiveOrder> =
+            Result.failure(UnsupportedOperationException())
+
+        override suspend fun cancel(accountId: Long, orderId: String): Result<Unit> =
+            Result.failure(UnsupportedOperationException())
+    }
     private class NoopExecutionPort : EventMakerExecutionPort {
         var validationCount: Int = 0
             private set

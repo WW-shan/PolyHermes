@@ -2293,13 +2293,20 @@
   - `fillVolumeFactor=2` 时同一 print 的成交量不会被每档重复使用；
   - 同价挂单按真实放置顺序 FIFO，而不是按订单 ID 字符串排序；
   - 多档中一档部分成交只撤该档，另一档保持活动。
-- 全量回归：**109 suites / 631 tests / 0 failures / 0 errors / 2 skipped**。
+- 全量回归：**109 suites / 632 tests / 0 failures / 0 errors / 2 skipped**。
 - 单档与多档 CLI 重启烟测复跑通过：单档 10 shares / 1 fill；多档 2 legs / 15 shares / 2 fills。
-- 8 个 Shadow 臂已于 2026-10-21 13:41:08 +08:00 重启加载新撮合代码；全部 `WAITING`，0 fills / 0 settlements，Gate `WAIT`。
-- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-134108.json`。
+- 8 个 Shadow 臂已于 2026-10-21 13:45:58 +08:00 重启加载新撮合代码；全部 `WAITING`，0 fills / 0 settlements，Gate `WAIT`。
+- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-134558.json`。
 ### 20.37 2026-10-21 13:40 REST 参数对齐与错误码
 
 - `EventMakerStartRequest` 补齐 `takerEntry` 和 `takerEntrySlippageTicks`，REST 与 CLI 配置字段对齐。
 - 参数校验异常（如 ladder 与 taker 同时开启）现在映射为 `PARAM_ERROR`，不再误报 `SERVER_ERROR`。
 - 新增两条控制器回归：taker 参数映射、ladder+taker 非法组合返回参数错误。
-- 全量回归：**109 suites / 631 tests / 0 failures / 0 errors / 2 skipped**。
+- 全量回归：**109 suites / 632 tests / 0 failures / 0 errors / 2 skipped**。
+### 20.38 2026-10-21 13:48 REST Shadow 结算持久化修复
+
+- REST `SHADOW` 路径在结算/赎回后仍调用 `persistLive`，会以 `accountId=0` 尝试写 `mode=LIVE` 状态，触发 `live_account_missing`，导致 Shadow 结算 tick 失败。
+- `runEngineTick` 新增 `persistState` 参数：REST Shadow 传 `false`，Live 传 `true`；只有 Live 才写状态文件。
+- 新增回归：Shadow 结算 tick 生成 settlement，但不会创建 LIVE 状态文件，也不抛异常。
+- 全量回归：**109 suites / 632 tests / 0 failures / 0 errors / 2 skipped**。
+- 8 臂已用新代码重启，全部 WAITING；启动证据 `backend/build/research/bond-shadow-suite-start-20261021-134558.json`。

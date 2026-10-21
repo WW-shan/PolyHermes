@@ -321,7 +321,7 @@ class EventMakerStrategyService(
                         is LiveFeedEvent.Unknown -> logger.debug("Event maker shadow unknown WS event: ${event.eventType}")
                     }
                     if (!duplicateTrade) {
-                        val result = runEngineTick(engine, states, books, 0L, discovered.map { it.conditionId }.toSet())
+                        val result = runEngineTick(engine, states, books, 0L, discovered.map { it.conditionId }.toSet(), persistState = false)
                         shouldStop = applyEngineResult(result) || engine.haltedReason != null
                     }
                 }
@@ -455,7 +455,7 @@ class EventMakerStrategyService(
                     // Roll the daily anchor before order reconciliation can apply
                     // the first fill of a new UTC day.
                     rollDailyPnlBaseline(engine, states)
-                    val result = runEngineTick(engine, states, books, accountId, discoveredIds)
+                    val result = runEngineTick(engine, states, books, accountId, discoveredIds, persistState = true)
                     val engineStopped = applyEngineResult(result) || engine.haltedReason != null
                     updateStatus(states, books, trades, bookUpdates)
                     val dailyLoss = riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))
@@ -480,7 +480,7 @@ class EventMakerStrategyService(
         var initialHalt: Boolean
         stateMutex.withLock {
             rollDailyPnlBaseline(engine, states)
-            val initial = runEngineTick(engine, states, books, accountId, discoveredIds)
+            val initial = runEngineTick(engine, states, books, accountId, discoveredIds, persistState = true)
             initialHalt = applyEngineResult(initial) || engine.haltedReason != null
             updateStatus(states, books, trades, bookUpdates)
             if (riskPolicy.shouldHalt(config, dailyPnlSinceBaseline(engine, states))) {
@@ -1096,12 +1096,13 @@ class EventMakerStrategyService(
         return engine.quote(states, books, accountId, System.currentTimeMillis(), eligibleMarketIds)
     }
 
-    private suspend fun runEngineTick(
+    internal suspend fun runEngineTick(
         engine: EventMakerLiveEngine,
         states: List<EventMakerLiveState>,
         books: Map<String, MarketBook>,
         accountId: Long,
-        eligibleMarketIds: Set<String>
+        eligibleMarketIds: Set<String>,
+        persistState: Boolean
     ): EventMakerEngineResult {
         if (stopping) return EventMakerEngineResult()
         val now = System.currentTimeMillis()
@@ -1113,7 +1114,7 @@ class EventMakerStrategyService(
 
         val settled = engine.settleResolved(states, accountId, now)
         result = result.merge(settled)
-        if (settled.settlements.isNotEmpty()) {
+        if (persistState && settled.settlements.isNotEmpty()) {
             // Persist the payout before any on-chain redemption can make the
             // position disappear. This is the settlement crash-safety boundary.
             persistLive(status.startedAt, accountId, states, engine)
@@ -1122,7 +1123,7 @@ class EventMakerStrategyService(
 
         val redeemed = engine.redeemPendingRedemptions(states, accountId, now)
         result = result.merge(redeemed)
-        if (redeemed.redemptions.isNotEmpty()) {
+        if (persistState && redeemed.redemptions.isNotEmpty()) {
             persistLive(status.startedAt, accountId, states, engine)
         }
         return result

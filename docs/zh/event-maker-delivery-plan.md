@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量 109 suites / 631 tests 通过。2026-10-21 用当前代码复跑 4,189 市场数据集：0.97–0.99 Geopolitics、3–7 天、+2c、4 档 maker ladder 在 q2/q3/q4 分别为 +1.87% / +1.88% / +1.88%，2024–2026 全为正，0 结算亏损；q2 的 Wilson 95% 亏损率上界 1.569% < 盈亏平衡 1.835%，统计余量 +0.266%。8 个 Shadow 臂已切到 3–7 天窗口并全部 WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 13:41 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量 109 suites / 632 tests 通过。2026-10-21 用当前代码复跑 4,189 市场数据集：0.97–0.99 Geopolitics、3–7 天、+2c、4 档 maker ladder 在 q2/q3/q4 分别为 +1.87% / +1.88% / +1.88%，2024–2026 全为正，0 结算亏损；q2 的 Wilson 95% 亏损率上界 1.569% < 盈亏平衡 1.835%，统计余量 +0.266%。8 个 Shadow 臂已切到 3–7 天窗口并全部 WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
+> 最后更新：2026-10-21 13:49 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读本文件末尾最新 checkpoint 和工作日志末尾，最后核对运行中的 Shadow PID、`git status` 与 Gate 输出。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -107,7 +107,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [x] 实现启动/停止/状态查询。
 - [x] 运行至少 2 小时真实 shadow 测试（运行稳定，但统一引擎 0 成交）。
 - [x] 验证跨源成交去重和订单状态无重复（2h 重复成交键 0，订单事件无重复）。
-- [x] Shadow 多档同一 print 的成交量在 leg 间共享，避免重复 fill（价格/时间优先；631 tests 通过）。
+- [x] Shadow 多档同一 print 的成交量在 leg 间共享，避免重复 fill（价格/时间优先；632 tests 通过）。
 
 ### P2：Live 执行适配器
 
@@ -166,7 +166,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
 | Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；v5 主臂/一档实验臂已用 69649e5 重启；实验臂已选中真实市场并挂单 |
 | 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；候选 q15–q50 零归零，50bps +0.069%、100bps -0.914% |
-| 全量回归 | 109 suites / 631 tests / 0 failures / 0 errors / 2 skipped | 已完成（2026-10-21 13:41） |
+| 全量回归 | 109 suites / 632 tests / 0 failures / 0 errors / 2 skipped | 已完成（2026-10-21 13:45） |
 | 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
@@ -1507,10 +1507,15 @@ cd D:\Project\PolyHermes\backend
 - 修复 `EventMakerShadowExecutionPort.onTrade` 每档重复使用整笔 taker 成交量的问题。
 - 同一 print 现在按价格/时间优先在多个 leg 间共享成交量；队列消耗和 `fillVolumeFactor` 阈值共用同一份剩余 volume。
 - 这与 ladder 回测的 `remaining` 递减口径一致，避免 Shadow 虚增多档 fill。
-- 新增 5 条回归；全量 **109 suites / 631 tests / 0 failures / 0 errors / 2 skipped**。
-- 8 臂于 13:41:08 +08:00 重启，全部 WAITING，Gate WAIT。
+- 新增 5 条回归；全量 **109 suites / 632 tests / 0 failures / 0 errors / 2 skipped**。
+- 8 臂于 13:45:58 +08:00 重启，全部 WAITING，Gate WAIT。
 ### 20.36 2026-10-21 13:40 REST 参数对齐
 
 - `EventMakerStartRequest` 补齐 `takerEntry` / `takerEntrySlippageTicks`。
 - 配置校验异常映射为 `PARAM_ERROR`，避免把非法参数误报成 `SERVER_ERROR`。
-- 新增两条控制器回归；全量 **109 suites / 631 tests / 0 failures / 0 errors / 2 skipped**。
+- 新增两条控制器回归；全量 **109 suites / 632 tests / 0 failures / 0 errors / 2 skipped**。
+### 20.37 2026-10-21 13:48 REST Shadow 结算持久化
+
+- 修复 REST SHADOW 结算后误写 LIVE 状态文件（`accountId=0`）的问题。
+- `runEngineTick` 现在显式区分 `persistState`：REST Shadow=false，Live=true。
+- 新增 Shadow 结算不写 LIVE 状态的回归测试；全量 **109 suites / 632 tests**。

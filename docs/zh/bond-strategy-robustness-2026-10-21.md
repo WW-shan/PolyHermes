@@ -720,4 +720,4 @@ node scripts/analyze-bond-ladder.cjs `
 - 后果：多档 Shadow 会过度成交，fill、markout 和 PnL 都不可信。
 - 修复：一笔 print 的成交量按价格优先/时间优先在多个 leg 间只分配一次；队列消耗、`fillVolumeFactor` 阈值和部分成交共享同一份剩余 volume。
 - 这与 `analyze-bond-ladder.cjs` 的 `remaining` 递减模型一致。
-- 新增 BUY/SELL 两侧分配测试和 `fillVolumeFactor=2` 共享测试；全量 **109 suites / 631 tests** 通过。
+- 新增 BUY/SELL 两侧分配测试和 `fillVolumeFactor=2` 共享测试；全量 **109 suites / 632 tests** 通过。
