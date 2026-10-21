@@ -192,50 +192,96 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
 
     fun onTrade(trade: LiveTradePrint): List<EventMakerShadowFill> = synchronized(lock) {
         val filled = mutableListOf<EventMakerShadowFill>()
-        orders.values.forEach { order ->
-            if (order.status != "LIVE" || trade.tokenId != order.market.favoriteTokenId) return@forEach
-            if (trade.timestamp < order.createdAt - 1_000L) return@forEach
-
-            val oppositeSide = when (order.side) {
-                EventMakerSide.BUY -> trade.side.equals("SELL", true)
-                EventMakerSide.SELL -> trade.side.equals("BUY", true)
+        val tradeVolume = BigDecimal.valueOf(trade.size)
+        val liveOrders = orders.values.filter { order ->
+            order.status == "LIVE" &&
+                trade.tokenId == order.market.favoriteTokenId &&
+                trade.timestamp >= order.createdAt - 1_000L &&
+                when (order.side) {
+                    EventMakerSide.BUY -> trade.side.equals("SELL", true)
+                    EventMakerSide.SELL -> trade.side.equals("BUY", true)
+                }
+        }
+        liveOrders.forEach { it.opposingTradeCount++ }
+        val candidates = liveOrders
+            .filter { order ->
+                when (order.side) {
+                    EventMakerSide.BUY -> trade.price <= order.price.toDouble() + 1e-9
+                    EventMakerSide.SELL -> trade.price >= order.price.toDouble() - 1e-9
+                }
             }
-            if (!oppositeSide) return@forEach
-            order.opposingTradeCount++
+            .sortedWith(
+                if (trade.side.equals("SELL", true)) {
+                    compareByDescending<SimulatedOrder> { it.price }
+                        .thenBy { it.createdAt }
+                        .thenBy { it.id }
+                } else {
+                    compareBy<SimulatedOrder> { it.price }
+                        .thenBy { it.createdAt }
+                        .thenBy { it.id }
+                }
+            )
 
-            val crosses = when (order.side) {
-                EventMakerSide.BUY -> trade.price <= order.price.toDouble() + 1e-9
-                EventMakerSide.SELL -> trade.price >= order.price.toDouble() - 1e-9
-            }
-            if (!crosses) return@forEach
-
-            var available = BigDecimal.valueOf(trade.size)
+        // A public print is one finite taker volume. Allocate it across crossed
+        // ladder legs in price-time priority instead of giving every leg the
+        // full print, which would multiply shadow fills.
+        var remainingVolume = tradeVolume
+        for (order in candidates) {
             order.crossingTradeCount++
-            order.crossingTradeShares += available
+            order.crossingTradeShares += tradeVolume
+            if (remainingVolume <= BigDecimal.ZERO) continue
+
+            var available = remainingVolume
             if (order.queueAheadRemaining > BigDecimal.ZERO) {
                 val consumed = order.queueAheadRemaining.min(available)
                 order.queueAheadRemaining -= consumed
                 order.queueConsumedShares += consumed
                 available -= consumed
+                remainingVolume -= consumed
             }
-            if (available <= BigDecimal.ZERO) return@forEach
+            if (available <= BigDecimal.ZERO) continue
 
-            order.eligibleCrossingShares += available
-            val requiredCrossingShares = order.originalShares.multiply(BigDecimal.valueOf(fillVolumeFactor))
-            if (order.eligibleCrossingShares + SHARE_EPSILON < requiredCrossingShares) return@forEach
-
-            val quantity = if (fillVolumeFactor <= 0.0) {
-                order.remainingShares.min(available)
-            } else {
-                order.remainingShares
-            }
-            if (quantity > BigDecimal.ZERO) {
-                order.remainingShares -= quantity
-                if (order.remainingShares <= SHARE_EPSILON) {
-                    order.remainingShares = BigDecimal.ZERO
-                    order.status = "FILLED"
+            if (fillVolumeFactor <= 0.0) {
+                val quantity = order.remainingShares.min(available)
+                if (quantity > BigDecimal.ZERO) {
+                    order.eligibleCrossingShares += quantity
+                    remainingVolume -= quantity
+                    order.remainingShares -= quantity
+                    if (order.remainingShares <= SHARE_EPSILON) {
+                        order.remainingShares = BigDecimal.ZERO
+                        order.status = "FILLED"
+                    }
+                    filled += EventMakerShadowFill(
+                        order.id,
+                        order.market.conditionId,
+                        order.side,
+                        order.price,
+                        quantity,
+                        trade.timestamp
+                    )
                 }
-                filled += EventMakerShadowFill(order.id, order.market.conditionId, order.side, order.price, quantity, trade.timestamp)
+                continue
+            }
+
+            val requiredCrossingShares = order.originalShares.multiply(BigDecimal.valueOf(fillVolumeFactor))
+            val needed = (requiredCrossingShares - order.eligibleCrossingShares).max(BigDecimal.ZERO)
+            val take = needed.min(available)
+            order.eligibleCrossingShares += take
+            remainingVolume -= take
+            if (order.eligibleCrossingShares + SHARE_EPSILON < requiredCrossingShares) continue
+
+            val quantity = order.remainingShares
+            if (quantity > BigDecimal.ZERO) {
+                order.remainingShares = BigDecimal.ZERO
+                order.status = "FILLED"
+                filled += EventMakerShadowFill(
+                    order.id,
+                    order.market.conditionId,
+                    order.side,
+                    order.price,
+                    quantity,
+                    trade.timestamp
+                )
             }
         }
         filled

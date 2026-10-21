@@ -2279,3 +2279,18 @@
 - q2 分年：2024 +1.455%、2025 +1.917%、2026 +1.904%，全部为正。
 - 证据：`backend/build/research/bond-ladder-current-q2-20261021.json`、`-q3-`、`-q4-`、`bond-tail-risk-current-q2-20261021.json`。
 - 结论不变：回测通过统计边界，但仍是 trade-print 近似；真实 Shadow 仍 0 fill，Gate WAIT，不能据此上真钱。
+### 20.36 2026-10-21 13:12 Shadow 多档成交量共享修复
+
+- 审计发现 `EventMakerShadowExecutionPort.onTrade` 对每个可成交挂单都重新使用整笔 `trade.size`，多档时会重复计算同一笔 taker 成交量，虚增 fill。
+- 已改为：同一笔 print 的成交量按价格优先、时间优先在多个 leg 之间共享；
+  - BUY 挂单按价格从高到低；
+  - SELL 挂单按价格从低到高；
+  - 队列消耗、`fillVolumeFactor` 累计阈值和剩余成交量使用同一份 volume。
+- 这与 `scripts/analyze-bond-ladder.cjs` 的回测口径一致；此前回测会递减 `remaining`，Shadow 不会。
+- 新增 3 条回归：
+  - 单笔 SELL print 在两条 BUY leg 间按 10/5 分配；
+  - 单笔 BUY print 在两条 SELL leg 间按最优价分配；
+  - `fillVolumeFactor=2` 时同一 print 的成交量不会被每档重复使用。
+- 全量回归：**109 suites / 627 tests / 0 failures / 0 errors / 2 skipped**。
+- 8 个 Shadow 臂已于 2026-10-21 13:15:02 +08:00 重启加载新撮合代码；全部 `WAITING`，0 fills / 0 settlements，Gate `WAIT`。
+- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-131502.json`。

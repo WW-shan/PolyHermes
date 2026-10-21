@@ -126,6 +126,53 @@ class EventMakerShadowExecutionPortTest {
     }
 
     @Test
+    fun `single taker print volume is shared across crossed ladder orders`() = runTest {
+        val top = port.place(0L, market, intent(EventMakerSide.BUY, "0.98", "10.00", 0.0)).getOrThrow()
+        val deep = port.place(0L, market, intent(EventMakerSide.BUY, "0.97", "10.00", 0.0)).getOrThrow()
+
+        val fills = port.onTrade(trade("SELL", 0.96, 15.0, top.createdAt + 10L))
+
+        assertEquals(2, fills.size)
+        assertEquals(0, BigDecimal("10.00").compareTo(fills.first { it.orderId == top.orderId }.shares))
+        assertEquals(0, BigDecimal("5.00").compareTo(fills.first { it.orderId == deep.orderId }.shares))
+        assertEquals("FILLED", port.getOrder(0L, top.orderId).getOrThrow().status)
+        assertEquals("LIVE", port.getOrder(0L, deep.orderId).getOrThrow().status)
+        assertEquals(0, BigDecimal("5.00").compareTo(port.getOrder(0L, deep.orderId).getOrThrow().matchedShares))
+    }
+
+    @Test
+    fun `buy print is shared across crossed sell orders by best price`() = runTest {
+        val low = port.place(0L, market, intent(EventMakerSide.SELL, "0.97", "10.00", 0.0)).getOrThrow()
+        val high = port.place(0L, market, intent(EventMakerSide.SELL, "0.98", "10.00", 0.0)).getOrThrow()
+
+        val fills = port.onTrade(trade("BUY", 0.99, 15.0, low.createdAt + 10L))
+
+        assertEquals(2, fills.size)
+        assertEquals(0, BigDecimal("10.00").compareTo(fills.first { it.orderId == low.orderId }.shares))
+        assertEquals(0, BigDecimal("5.00").compareTo(fills.first { it.orderId == high.orderId }.shares))
+        assertEquals("FILLED", port.getOrder(0L, low.orderId).getOrThrow().status)
+        assertEquals("LIVE", port.getOrder(0L, high.orderId).getOrThrow().status)
+    }
+
+    @Test
+    fun `fill volume factor shares one print across ladder orders`() = runTest {
+        port.configureFillModel(2.0)
+        val top = port.place(0L, market, intent(EventMakerSide.BUY, "0.98", "10.00", 0.0)).getOrThrow()
+        val deep = port.place(0L, market, intent(EventMakerSide.BUY, "0.97", "10.00", 0.0)).getOrThrow()
+
+        val firstPrint = port.onTrade(trade("SELL", 0.96, 25.0, top.createdAt + 10L))
+        assertEquals(1, firstPrint.size)
+        assertEquals(top.orderId, firstPrint.single().orderId)
+        assertEquals("LIVE", port.getOrder(0L, deep.orderId).getOrThrow().status)
+        assertEquals(0, BigDecimal.ZERO.compareTo(port.getOrder(0L, deep.orderId).getOrThrow().matchedShares))
+
+        val secondPrint = port.onTrade(trade("SELL", 0.96, 15.0, top.createdAt + 20L))
+        assertEquals(1, secondPrint.size)
+        assertEquals(deep.orderId, secondPrint.single().orderId)
+        assertEquals("FILLED", port.getOrder(0L, deep.orderId).getOrThrow().status)
+    }
+
+    @Test
     fun `shadow settlement books a winning SETTLE cycle and virtual redemption`() = runTest {
         val state = openShadowLong(resolvedOutcomeIndex = 0)
         val settlement = state.settlements.single()

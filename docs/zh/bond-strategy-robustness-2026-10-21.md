@@ -714,3 +714,10 @@ node scripts/analyze-bond-ladder.cjs `
 - 官方费率复核：**maker 永远为 0**，Geopolitics taker 也为 0；本回测无手续费项是正确的。
 - 限制：这是 trade-print + queue factor 的近似回放，不是完整订单簿撮合；0 结算亏损只代表该历史样本，不能消除未来尾部风险。
 - 当前 8 个 Shadow 臂仍为 `WAITING`、0 fills / 0 settlements；Gate 必须继续等待真实样本，不能用回测结果替代。
+### 14.13 Shadow 与回测的成交量口径对齐（2026-10-21）
+
+- 发现问题：`EventMakerShadowExecutionPort` 对每个被跨越的挂单都从整笔 `trade.size` 重新开始计算，同一笔 taker print 会在多条 ladder leg 上重复计入成交量。
+- 后果：多档 Shadow 会过度成交，fill、markout 和 PnL 都不可信。
+- 修复：一笔 print 的成交量按价格优先/时间优先在多个 leg 间只分配一次；队列消耗、`fillVolumeFactor` 阈值和部分成交共享同一份剩余 volume。
+- 这与 `analyze-bond-ladder.cjs` 的 `remaining` 递减模型一致。
+- 新增 BUY/SELL 两侧分配测试和 `fillVolumeFactor=2` 共享测试；全量 **109 suites / 627 tests** 通过。
