@@ -144,6 +144,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [x] 逆势流 Guard 在回测、Shadow、Live 共用引擎中实现并通过边界/撤单测试。
 - [x] 完成 4,189 市场 Guard A/B、三笔历史归零因果审计和 Shadow 冒烟。
 - [ ] 完全消除不可预测的第一笔大额卖单尾部风险。（市场聚类后 q2 只有 9 个结算市场，Wilson 上界 29.915% > 盈亏平衡 2.075%，未通过；不能宣称完全消除）
+- [ ] close 前 24h 强制平仓变体（taker SELL）完成 Live/Shadow 执行路径和独立样本验证。
 - [ ] 实际小资金 live smoke 通过（需要用户账户和显式授权）。**执行清单：[bond-live-smoke-checklist-2026-10-21.md](bond-live-smoke-checklist-2026-10-21.md)**
 - [x] 更新策略文档、运行手册和故障处理手册。
 - [x] 全量测试通过。
@@ -1530,3 +1531,9 @@ cd D:\Project\PolyHermes\backend
 - `analyze-bond-ladder.cjs` 新增 `settleMarkets` / `settleLossMarkets` / `marketLossCi95` / `marketBreakEvenLossRate`；`audit-bond-tail-risk.cjs` 增加 market-cluster verdict。
 - `evaluate-bond-shadow-gate.cjs` 改为按 `marketId` 聚类 settlement，`min-settlement-markets=50` 现在表示 **50 个独立结算市场**；同时要求 `min-cycles=50` 且 `realizedRoi >= 0`。`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
 - Gate 回归仍为 4/4 PASS；当前 gate 仍 `WAIT`（0 settlement markets）。
+### 20.40 2026-10-21 14:00 close 前强制平仓候选
+
+- 回测新增 `flatten-hours-before-close` / `flatten-slippage-ticks`。
+- q2 close 前 24h 平仓、2 tick 滑点：+1.726%，62 个平仓市场，0 平仓亏损，最差 lot +0.101%。
+- 不强制平仓基准：+1.870%，9 个结算市场，最差 lot +1.011%。
+- 该变体收益略低但可能显著降低结算尾部风险；尚未实现 Live taker SELL，也尚未新增 Shadow 臂，不能作为已实盘验证。

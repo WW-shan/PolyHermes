@@ -739,3 +739,20 @@ node scripts/analyze-bond-ladder.cjs `
 - 这说明当前历史回测只能提供正的点估计，**不能证明策略已经达到可实盘所需的统计置信度**。
 - 后续 gate 必须以 `settlementMarkets >= 50` 为最低样本，而不是 `settlement records >= 50`。
 - 证据：`bond-ladder-cluster-q2/q3/q4-20261021.json`、`bond-tail-risk-cluster-q2/q3/q4-20261021.json`。
+### 14.15 close 前 24h 强制平仓实验（2026-10-21）
+
+为避免“持有到 0/1 结算”的尾部风险，给 ladder 回测增加 `flatten-hours-before-close`：在 close 前指定小时按 taker SELL 近似价清掉所有剩余库存，并停止回补。Geopolitics taker fee = 0。
+
+q2、0.97–0.99 Geopolitics、+2c、每档 $100、max 4 tranches：
+
+| 方案 | mean ROI | 总结算/平仓 | 平仓市场 | 平仓亏损 | 最差 lot ROI | 总 PnL |
+|---|---:|---:|---:|---:|---:|---:|
+| 不强制平仓 | +1.870% | 10 SETTLE | 9 | 0 | +1.011% | $450.55 |
+| 24h 平仓，0 tick | +1.790% | 75 FLATTEN | 62 | 0 | +0.304% | $431.29 |
+| 24h 平仓，1 tick | +1.758% | 75 FLATTEN | 62 | 0 | +0.203% | $423.65 |
+| 24h 平仓，2 tick | +1.726% | 75 FLATTEN | 62 | 0 | +0.101% | $416.00 |
+
+- 分年 ROI（2 tick 滑点）：2024 +1.088%、2025 +1.782%、2026 +1.791%，全部为正。
+- 该变体收益略低，但把最大风险从“整笔 $100 归零”压缩为小幅 taker 平仓滑点；在 62 个平仓市场中样本内 0 亏损。
+- **仍未上实盘**：当前 Live 引擎没有 taker 强制平仓执行路径；需要新增 marketable SELL、post-only=false、失败重试和新 Shadow 臂验证，不能直接把回测结果当成可实盘。
+- 证据：`bond-flatten24-q2-20261021.json`、`bond-flatten24-s1-q2-20261021.json`、`bond-flatten24-s2-q2-20261021.json`。

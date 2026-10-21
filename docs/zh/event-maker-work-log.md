@@ -2325,3 +2325,11 @@
 - `evaluate-bond-shadow-gate.cjs` 改为按 marketId 聚类 settlement，50 个门槛现在指 50 个独立结算市场；同时要求 `min-cycles=50` 且 `realizedRoi >= 0`。`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
 - Gate 回归 4/4 PASS；当前 Gate WAIT（0 settlement markets）。
 - 证据：`bond-ladder-cluster-q2/q3/q4-20261021.json`、`bond-tail-risk-cluster-q2/q3/q4-20261021.json`。
+### 20.40 2026-10-21 14:00 close 前 24h 强制平仓实验
+
+- 在 `analyze-bond-ladder.cjs` 增加 `--flatten-hours-before-close` 和 `--flatten-slippage-ticks`，仅做回测实验，不改变运行中的 Shadow。
+- q2 不强制平仓：+1.870%、9 个结算市场、最差 lot +1.011%。
+- close 前 24h 强制平仓、2 tick 滑点：+1.726%、75 个 FLATTEN lot / 62 个市场、0 平仓亏损、最差 lot +0.101%。
+- 分年：2024 +1.088%、2025 +1.782%、2026 +1.791%，均为正。
+- 结论：强制平仓变体可能显著降低结算尾部风险，但需要新增 Live taker SELL 执行路径和新 Shadow 臂验证；当前不能把它当作已实盘验证。
+- 证据：`bond-flatten24-q2-20261021.json`、`bond-flatten24-s1-q2-20261021.json`、`bond-flatten24-s2-q2-20261021.json`。

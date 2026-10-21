@@ -29,7 +29,10 @@ const queueFactor = numArg('queue-factor', 2);
 const maxTranches = numArg('max-tranches', 8);
 const maxHoldingDays = numArg('max-holding-days', 0);
 const minHoursToClose = numArg('min-hours-to-close', 0);
+const flattenHoursBeforeClose = numArg('flatten-hours-before-close', 0);
+const flattenSlippageTicks = numArg('flatten-slippage-ticks', 0);
 const maxHoursToClose = numArg('max-hours-to-close', horizonDays * 24);
+if (flattenHoursBeforeClose < 0 || flattenHoursBeforeClose > horizonDays * 24) throw new Error('invalid --flatten-hours-before-close');
 const momentumMinCents = arg('entry-momentum-min-cents') == null ? null : numArg('entry-momentum-min-cents', -999);
 const momentumMaxCents = arg('entry-momentum-max-cents') == null ? null : numArg('entry-momentum-max-cents', 999);
 const momentumLookbackSeconds = numArg('entry-momentum-lookback-seconds', 86400);
@@ -115,8 +118,37 @@ function simulateMarket(market, ref, targetCents) {
   const closedLots = [];
   let buys = 0, sells = 0, inventoryShares = 0, inventorySum = 0, inventoryN = 0;
   let maxInventory = 0;
+  const flattenTs = flattenHoursBeforeClose > 0
+    ? market.closedTimestamp - flattenHoursBeforeClose * 3600
+    : null;
+  const flattenRef = flattenTs == null ? null : referenceAt(market, flattenTs);
+  const flattenPrice = flattenRef && flattenRef.favorite === fav
+    ? Math.max(tick, flattenRef.price - flattenSlippageTicks * tick)
+    : null;
+  let flattened = false;
 
   for (const trade of trades) {
+    if (flattenTs != null && !flattened && trade.timestamp >= flattenTs) {
+      if (flattenPrice != null) {
+        for (const lot of openLots) {
+          const pnl = (flattenPrice - lot.entryPrice) * lot.shares;
+          closedLots.push({
+            entryTs: lot.entryTs,
+            entryPrice: lot.entryPrice,
+            exitTs: flattenTs,
+            exitPrice: flattenPrice,
+            shares: lot.shares,
+            pnl,
+            exitType: 'FLATTEN',
+            offsetCents: lot.offsetCents
+          });
+        }
+        openLots.length = 0;
+        inventoryShares = 0;
+        uniqueLevels.forEach(level => { level.filled = true; level.queueVol = 0; });
+      }
+      flattened = true;
+    }
     const hoursToClose = (market.closedTimestamp - trade.timestamp) / 3600;
     const entryAllowed = hoursToClose >= minHoursToClose && hoursToClose <= maxHoursToClose;
     if (openLots.length >= maxTranches && trade.side?.toUpperCase() === 'SELL') {
@@ -186,6 +218,8 @@ function simulateMarket(market, ref, targetCents) {
     filled: closedLots.length > 0,
     lots: closedLots,
     buys, sells,
+    flattenCount: closedLots.filter(l => l.exitType === 'FLATTEN').length,
+    flattenLossCount: closedLots.filter(l => l.exitType === 'FLATTEN' && l.pnl < 0).length,
     maxInventory,
     maxInventoryNotional: maxInvNotional,
     avgInventory: inventoryN ? inventorySum/inventoryN : 0,
@@ -257,6 +291,10 @@ for(let bi=0;bi<bands.length-1;bi++){
         settleLossCount:allLots.filter(l=>l.exitType==='SETTLE'&&l.pnl<0).length,
         settleMarkets:settlePnlByMarket.size,
         settleLossMarkets:marketSettleLosses,
+        flattenCount:allLots.filter(l=>l.exitType==='FLATTEN').length,
+        flattenMarkets:new Set(allLots.filter(l=>l.exitType==='FLATTEN').map(l=>l.conditionId)).size,
+        flattenLossCount:allLots.filter(l=>l.exitType==='FLATTEN'&&l.pnl<0).length,
+        flattenLossMarkets:new Set(allLots.filter(l=>l.exitType==='FLATTEN'&&l.pnl<0).map(l=>l.conditionId)).size,
         marketLossRate,
         marketLossCi95:settlePnlByMarket.size ? wilson(marketLossRate, settlePnlByMarket.size) : [0,1],
         marketBreakEvenLossRate,
@@ -267,7 +305,7 @@ for(let bi=0;bi<bands.length-1;bi++){
     }
   }
 }
-fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,levelsCents,targetsCents,momentumMinCents,momentumMaxCents,momentumLookbackSeconds,results},null,2));
+fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,flattenHoursBeforeClose,flattenSlippageTicks,levelsCents,targetsCents,momentumMinCents,momentumMaxCents,momentumLookbackSeconds,results},null,2));
 console.log('band tag tgt levels elig filled fill% lots buys sells win% meanRoi roiCI worst settleLoss settleMkts lossMkts mktLossCI maxInv$');
 for(const r of results){
   console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.settleLossCount).padStart(3),String(r.settleMarkets).padStart(5),String(r.settleLossMarkets).padStart(3),`[${(100*r.marketLossCi95[0]).toFixed(2)},${(100*r.marketLossCi95[1]).toFixed(2)}]`.padStart(15),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
