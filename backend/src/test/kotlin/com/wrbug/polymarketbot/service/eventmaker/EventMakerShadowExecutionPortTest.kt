@@ -141,6 +141,25 @@ class EventMakerShadowExecutionPortTest {
     }
 
     @Test
+    fun `same-price ladder orders fill in placement order`() = runTest {
+        repeat(8) {
+            port.place(
+                0L,
+                market,
+                intent(EventMakerSide.BUY, "0.98", "1.00", 0.0).copy(takerEntry = true)
+            ).getOrThrow()
+        }
+        port.drainImmediateFills()
+        val first = port.place(0L, market, intent(EventMakerSide.BUY, "0.98", "10.00", 0.0)).getOrThrow()
+        val second = port.place(0L, market, intent(EventMakerSide.BUY, "0.98", "10.00", 0.0)).getOrThrow()
+
+        val fills = port.onTrade(trade("SELL", 0.96, 15.0, first.createdAt + 10L))
+
+        assertEquals(2, fills.size)
+        assertEquals(0, BigDecimal("10.00").compareTo(fills.first { it.orderId == first.orderId }.shares))
+        assertEquals(0, BigDecimal("5.00").compareTo(fills.first { it.orderId == second.orderId }.shares))
+    }
+    @Test
     fun `buy print is shared across crossed sell orders by best price`() = runTest {
         val low = port.place(0L, market, intent(EventMakerSide.SELL, "0.97", "10.00", 0.0)).getOrThrow()
         val high = port.place(0L, market, intent(EventMakerSide.SELL, "0.98", "10.00", 0.0)).getOrThrow()

@@ -109,7 +109,8 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         market: LivePaperMarket,
         intent: EventMakerQuoteIntent
     ): Result<EventMakerLiveOrder> = synchronized(lock) {
-        val orderId = "$orderIdPrefix-${nextId.incrementAndGet()}"
+        val sequence = nextId.incrementAndGet()
+        val orderId = "$orderIdPrefix-$sequence"
         val now = System.currentTimeMillis()
         val queueAhead = if (intent.takerEntry) BigDecimal.ZERO else BigDecimal.valueOf(intent.queueAheadShares)
         val order = SimulatedOrder(
@@ -122,6 +123,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
             queueAheadAtPlacement = queueAhead,
             queueAheadRemaining = queueAhead,
             createdAt = now,
+            sequence = sequence,
             status = if (intent.takerEntry) "FILLED" else "LIVE",
             takerEntry = intent.takerEntry
         )
@@ -213,12 +215,10 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
             .sortedWith(
                 if (trade.side.equals("SELL", true)) {
                     compareByDescending<SimulatedOrder> { it.price }
-                        .thenBy { it.createdAt }
-                        .thenBy { it.id }
+                        .thenBy { it.sequence }
                 } else {
                     compareBy<SimulatedOrder> { it.price }
-                        .thenBy { it.createdAt }
-                        .thenBy { it.id }
+                        .thenBy { it.sequence }
                 }
             )
 
@@ -342,6 +342,7 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         val queueAheadAtPlacement: BigDecimal,
         var queueAheadRemaining: BigDecimal,
         val createdAt: Long,
+        val sequence: Long,
         var status: String = "LIVE",
         val takerEntry: Boolean = false,
         var canceledAt: Long? = null,
