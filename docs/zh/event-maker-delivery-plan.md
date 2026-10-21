@@ -5,7 +5,7 @@
 > 当前状态：**回测与执行链路审计完成；全量 109 suites / 628 tests 通过。2026-10-21 用当前代码复跑 4,189 市场数据集：0.97–0.99 Geopolitics、3–7 天、+2c、4 档 maker ladder 在 q2/q3/q4 分别为 +1.87% / +1.88% / +1.88%，2024–2026 全为正，0 结算亏损；q2 的 Wilson 95% 亏损率上界 1.569% < 盈亏平衡 1.835%，统计余量 +0.266%。8 个 Shadow 臂已切到 3–7 天窗口并全部 WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
 > 最后更新：2026-10-21 13:27 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
-> 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
+> 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读本文件末尾最新 checkpoint 和工作日志末尾，最后核对运行中的 Shadow PID、`git status` 与 Gate 输出。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
 > 正式回测：[完整池回测与策略审计](event-maker-robust-backtest-2026-10-19.md)<br>
 > 稳健性核验：[交叉分段与 cluster bootstrap](event-maker-robustness-crosscheck-2026-10-19.md)<br>
@@ -107,6 +107,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [x] 实现启动/停止/状态查询。
 - [x] 运行至少 2 小时真实 shadow 测试（运行稳定，但统一引擎 0 成交）。
 - [x] 验证跨源成交去重和订单状态无重复（2h 重复成交键 0，订单事件无重复）。
+- [x] Shadow 多档同一 print 的成交量在 leg 间共享，避免重复 fill（价格/时间优先；628 tests 通过）。
 
 ### P2：Live 执行适配器
 
