@@ -2035,3 +2035,12 @@
 - 当前判定：`WAIT`；blockers 为 `TOTAL_SETTLEMENTS_BELOW_50`、`RUN_TIME_BELOW_MIN`、`FILLS_BELOW_MIN`、`NO_SETTLEMENTS`。
 - 当前 60s markout ROI：taker 约 -0.36%，mom1 约 -0.31%，dip24h 约 -1.05%；佐证当前 taker 入场仍有逆向选择，不能上真钱。
 - 证据：`backend/build/research/bond-shadow-gate-20261021.json`。
+### 10:00 3–7 天窗口复核与 Shadow 切换
+
+- 目标账户 0.97–0.99 分桶：3–7d mean ROI +1.14%、7–14d +0.56%、14–30d +0.50%、>30d +0.06%；最后 3d 不是利润来源。
+- 数据集 maker ladder 3–7d / Geopolitics / +2c：
+  - q2 241 lots +1.87%，q3 221 lots +1.88%，q4 216 lots +1.88%，均 0 结算亏损；
+  - 年度 q2：2024 +1.455%、2025 +1.917%、2026 +1.904%，全部 100% 胜率。
+- 最后 3 天 q2：0.97–0.99 +2c 为 -0.24%（12 结算亏损）；0.95–0.97 +2c 为 -7.46%（44 结算亏损）。
+- 因此所有 Shadow 臂切换到 `minRemainingMinutes=4320`、`maxRemainingMinutes=10080`、`WaitForMarketMinutes=10080`；当前 Gamma 最近窗口约 170h，10/10 进程 LIVE/WAITING。
+- 证据：`backend/build/research/bond-ladder-3to7d-20261021.json`、`bond-ladder-3to7d-q3-20261021.json`、`bond-ladder-3to7d-q4-20261021.json`、`leader-time-to-close-20261021.json`。

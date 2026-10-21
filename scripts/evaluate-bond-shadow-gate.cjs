@@ -47,7 +47,18 @@ const minMarkout60Roi = argNum('min-markout60-roi', -0.01);
 
 function readArm(dir) {
   const statePath = path.join(dir, 'state.json');
-  if (!fs.existsSync(statePath)) return { dir, name: path.basename(dir), missing: true, reasons: ['MISSING_STATE'] };
+  if (!fs.existsSync(statePath)) {
+    let alive = false;
+    const runPath = path.join(dir, 'run.json');
+    if (fs.existsSync(runPath)) {
+      try {
+        const run = JSON.parse(fs.readFileSync(runPath, 'utf8').replace(/^\uFEFF/, ''));
+        const pid = Number(run.pid);
+        if (pid) { try { process.kill(pid, 0); alive = true; } catch (e) { alive = false; } }
+      } catch (e) { /* ignore */ }
+    }
+    return { dir, name: path.basename(dir), missing: true, waitingForMarket: alive, reasons: [alive ? 'WAITING_FOR_MARKET' : 'MISSING_STATE'] };
+  }
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   const markets = Array.isArray(state.markets) ? state.markets : [];
   const fills = markets.flatMap(m => Array.isArray(m.fills) ? m.fills : []);
@@ -103,7 +114,8 @@ const totals = {
 const blockers = new Set();
 if (totals.settlements < minSettlements) blockers.add(`TOTAL_SETTLEMENTS_BELOW_${minSettlements}`);
 for (const a of candidateArms) (a.reasons || []).forEach(r => blockers.add(r));
-const status = blockers.size === 0 ? 'PASS' : ((arms.some(a => a.missing) || candidateArms.some(a => a.missing)) ? 'FAIL' : 'WAIT');
+const unavailable = arms.some(a => a.missing && !a.waitingForMarket) || candidateArms.some(a => a.missing && !a.waitingForMarket);
+const status = blockers.size === 0 ? 'PASS' : (unavailable ? 'FAIL' : 'WAIT');
 const report = { generatedAt: new Date().toISOString(), status, thresholds: { minRunHours, minCandidateFills, minSettlements, maxSettlementLossUpper, minMarkout60Roi }, totals, blockers: [...blockers], candidates: candidateArms, arms };
 const output = arg('output');
 if (output) fs.writeFileSync(output, JSON.stringify(report, null, 2) + '\n');

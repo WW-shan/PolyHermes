@@ -41,16 +41,7 @@ lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycl
 lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
 let totalFills = 0, totalCycles = 0, totalSettlements = 0, totalSettleLosses = 0, totalRealized = 0, totalUnrealized = 0, totalCrossTrades = 0, totalQueueConsumed = 0;
 const stale = [];
-for (const dir of dirs) {
-  const statePath = path.join(dir, 'state.json');
-  const arm = path.basename(dir);
-  if (!fs.existsSync(statePath)) {
-    lines.push(`| ${arm} | MISSING | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
-    stale.push(arm + ' (missing)');
-    continue;
-  }
-  const stateMtime = fs.statSync(statePath).mtimeMs;
-  const stateAgeMin = (Date.now() - stateMtime) / 60000;
+function readRunInfo(dir) {
   let pid = null;
   let procAlive = null;
   const runPath = path.join(dir, 'run.json');
@@ -61,6 +52,21 @@ for (const dir of dirs) {
       if (pid) { try { process.kill(pid, 0); procAlive = true; } catch (e) { procAlive = false; } }
     } catch (e) { /* ignore malformed run.json */ }
   }
+  return { pid, procAlive };
+}
+for (const dir of dirs) {
+  const statePath = path.join(dir, 'state.json');
+  const arm = path.basename(dir);
+  const runInfo = readRunInfo(dir);
+  if (!fs.existsSync(statePath)) {
+    const status = runInfo.procAlive ? 'WAITING' : (runInfo.pid ? 'DEAD' : 'MISSING');
+    lines.push(`| ${arm} | ${status} | ${runInfo.pid ?? '-'} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
+    if (status !== 'WAITING') stale.push(arm + ` (${status}, no state)`);
+    continue;
+  }
+  const stateMtime = fs.statSync(statePath).mtimeMs;
+  const stateAgeMin = (Date.now() - stateMtime) / 60000;
+  const { pid, procAlive } = runInfo;
   const status = procAlive === false ? 'DEAD' : (stateAgeMin <= 5 ? 'LIVE' : 'STALE');
   if (status !== 'LIVE') stale.push(arm + ` (${status}, ${stateAgeMin.toFixed(1)}m)`);
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));

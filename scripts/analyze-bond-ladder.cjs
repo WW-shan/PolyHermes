@@ -28,6 +28,8 @@ const trancheNotional = numArg('tranche-notional', 100);
 const queueFactor = numArg('queue-factor', 2);
 const maxTranches = numArg('max-tranches', 8);
 const maxHoldingDays = numArg('max-holding-days', 0);
+const minHoursToClose = numArg('min-hours-to-close', 0);
+const maxHoursToClose = numArg('max-hours-to-close', horizonDays * 24);
 const levelsCents = listArg('levels-cents', '0,0.5,1,2');
 const targetsCents = listArg('sell-target-cents', '1,2,3');
 const bands = listArg('bands', '0.9,0.95,0.97,0.99,1.0000001');
@@ -94,13 +96,15 @@ function simulateMarket(market, ref, targetCents) {
   let maxInventory = 0;
 
   for (const trade of trades) {
+    const hoursToClose = (market.closedTimestamp - trade.timestamp) / 3600;
+    const entryAllowed = hoursToClose >= minHoursToClose && hoursToClose <= maxHoursToClose;
     if (openLots.length >= maxTranches && trade.side?.toUpperCase() === 'SELL') {
       // inventory cap reached; do not fill more buys
     }
     let remaining = trade.size;
     const side = String(trade.side ?? '').toUpperCase();
 
-    if (side === 'SELL') {
+    if (side === 'SELL' && entryAllowed) {
       // Fill buy levels from highest price down.
       const candidates = uniqueLevels.filter(l => !l.filled && l.price >= trade.price - 1e-9).sort((a,b)=>b.price-a.price);
       for (const level of candidates) {
@@ -137,7 +141,10 @@ function simulateMarket(market, ref, targetCents) {
           sells++;
           // Re-arm the same level.
           const level = uniqueLevels.find(l => Math.abs(l.price-lot.entryPrice) < 1e-12);
-          if (level) { level.filled = false; level.queueVol = 0; }
+          if (level) {
+            level.filled = !entryAllowed;
+            level.queueVol = 0;
+          }
         }
       }
     }
@@ -194,7 +201,7 @@ for(let bi=0;bi<BAND_LABELS.length;bi++){
       const lr=allLots.length?losses/allLots.length:0;
       const deployed=allLots.reduce((s,l)=>s+l.entryPrice*l.shares,0);
       results.push({
-        band:BAND_LABELS[bi], tag, targetCents:target, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches,
+        band:BAND_LABELS[bi], tag, targetCents:target, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose,
         eligible:eligibleCount, filledMarkets, fillRate:eligibleCount?filledMarkets/eligibleCount:0,
         lots:allLots.length, buys:totalBuys, sells:totalSells,
         avgBuysPerFilledMarket:filledMarkets?totalBuys/filledMarkets:0,

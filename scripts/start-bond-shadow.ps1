@@ -6,6 +6,7 @@ param(
   [double]$OrderNotional = 100,
   [int]$MaxMarkets = 20,
   [double]$MinVolume = 10000,
+  [int]$MinRemainingMinutes = 120,
   [int]$MaxRemainingMinutes = 43200,
   [int]$WaitForMarketMinutes = 0,
   [string]$Output = "build/research/event-maker-bond-shadow-20261020",
@@ -57,7 +58,7 @@ $appArgs = @(
   "--proxy", $Proxy,
   "--max-markets", "$MaxMarkets",
   "--min-volume", "$MinVolume",
-  "--min-remaining-minutes", "120",
+  "--min-remaining-minutes", "$MinRemainingMinutes",
   "--max-remaining-minutes", "$MaxRemainingMinutes",
   "--wait-for-market-minutes", "$WaitForMarketMinutes",
   "--min-price", "$MinPrice",
@@ -124,6 +125,8 @@ $info = [pscustomobject]@{
   takerEntrySlippageTicks = $TakerEntrySlippageTicks
   requoteSeconds = $RequoteSeconds
   maxOrderAgeSeconds = $MaxOrderAgeSeconds
+  minRemainingMinutes = $MinRemainingMinutes
+  maxRemainingMinutes = $MaxRemainingMinutes
   waitForMarketMinutes = $WaitForMarketMinutes
   flowGuardWindowSeconds = $FlowGuardWindowSeconds
   maxTotalInventoryNotional = $MaxTotalInventoryNotional
