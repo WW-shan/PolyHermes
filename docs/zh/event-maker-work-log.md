@@ -1,5 +1,8 @@
 # Event Maker 工作日志
 
+> **重要：早期按 leg 计数的 Wilson PASS（如 20.22）已被 20.39 的市场聚类审计推翻。当前以 20.39 和交付计划顶部状态为准。**
+
+
 > 本文件记录每个实际动作、命令、结果和下一步。计划与验收状态见 [event-maker-delivery-plan.md](event-maker-delivery-plan.md)。
 
 ## 2026-10-17
@@ -2273,12 +2276,12 @@
 ### 20.35 2026-10-21 13:05 当前代码回测复跑
 
 - 用当前代码重新运行 3–7d、0.97–0.99 Geopolitics、0/0.5/1/2c、+2c、每档 $100、max 4 tranches 的 ladder 回测（q2/q3/q4）。
-- q2：241 lots / 117 filled markets / mean ROI +1.870% / 0 settlement loss / Wilson 上界 1.569% / 余量 +0.266%。
-- q3：221 lots / 110 filled markets / mean ROI +1.876% / 0 settlement loss / 余量 +0.133%。
-- q4：216 lots / 105 filled markets / mean ROI +1.882% / 0 settlement loss。
+- q2：241 lots / 117 filled markets / mean ROI +1.870% / 0 settlement loss / leg-level Wilson 上界 1.569%；**市场聚类后只有 9 个结算市场，上界 29.915% → FAIL（见 20.39）**。
+- q3：221 lots / 110 filled markets / mean ROI +1.876% / 0 settlement loss；**市场聚类后 10 个结算市场，上界 27.754% → FAIL（见 20.39）**。
+- q4：216 lots / 105 filled markets / mean ROI +1.882% / 0 settlement loss；**市场聚类后 12 个结算市场，上界 24.250% → FAIL（见 20.39）**。
 - q2 分年：2024 +1.455%、2025 +1.917%、2026 +1.904%，全部为正。
 - 证据：`backend/build/research/bond-ladder-current-q2-20261021.json`、`-q3-`、`-q4-`、`bond-tail-risk-current-q2-20261021.json`。
-- 结论不变：回测通过统计边界，但仍是 trade-print 近似；真实 Shadow 仍 0 fill，Gate WAIT，不能据此上真钱。
+- 结论修正：点估计仍为正，但 leg-level 统计不能证明尾部风险；按市场聚类后统计证据不足，真实 Shadow 仍 0 fill，Gate WAIT，不能据此上真钱。
 ### 20.36 2026-10-21 13:12 Shadow 多档成交量共享修复
 
 - 审计发现 `EventMakerShadowExecutionPort.onTrade` 对每个可成交挂单都重新使用整笔 `trade.size`，多档时会重复计算同一笔 taker 成交量，虚增 fill。
@@ -2310,3 +2313,15 @@
 - 新增回归：Shadow 结算 tick 生成 settlement，但不会创建 LIVE 状态文件，也不抛异常。
 - 全量回归：**109 suites / 632 tests / 0 failures / 0 errors / 2 skipped**。
 - 8 臂已用新代码重启，全部 WAITING；启动证据 `backend/build/research/bond-shadow-suite-start-20261021-134558.json`。
+### 20.39 2026-10-21 13:55 市场聚类尾部审计
+
+- 发现 pseudo-replication：同一市场的 4 条 ladder leg 共享同一个结算结果，却被当作 241 个独立 settlement 样本。
+- `analyze-bond-ladder.cjs` 增加按 `conditionId` 聚类的 `settleMarkets`、`settleLossMarkets`、`marketLossCi95`、`marketBreakEvenLossRate`。
+- q2/q3/q4 市场级结果：
+  - q2：9 个结算市场，0 亏损，Wilson 上界 29.915%，盈亏平衡 2.075% → **FAIL**。
+  - q3：10 个结算市场，0 亏损，Wilson 上界 27.754%，盈亏平衡 2.254% → **FAIL**。
+  - q4：12 个结算市场，0 亏损，Wilson 上界 24.250%，盈亏平衡 2.310% → **FAIL**。
+- `audit-bond-tail-risk.cjs` 输出 market-cluster verdict；leg-level verdict 只保留作诊断。
+- `evaluate-bond-shadow-gate.cjs` 改为按 marketId 聚类 settlement，50 个门槛现在指 50 个独立结算市场；`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
+- Gate 回归 3/3 PASS；当前 Gate WAIT（0 settlement markets）。
+- 证据：`bond-ladder-cluster-q2/q3/q4-20261021.json`、`bond-tail-risk-cluster-q2/q3/q4-20261021.json`。

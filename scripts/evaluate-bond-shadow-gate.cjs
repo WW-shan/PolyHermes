@@ -78,7 +78,25 @@ function readArm(dir) {
   const settlements = markets.flatMap(m => Array.isArray(m.settlements) ? m.settlements : []);
   const settleCycles = cycles.filter(c => c.exitType === 'SETTLE');
   const cycleRoi = cycles.map(c => { const cost = num(c.entryPrice) * num(c.shares); return cost > 0 ? num(c.pnl) / cost : 0; });
-  const settleRois = settleCycles.map(c => { const cost = num(c.entryPrice) * num(c.shares); return cost > 0 ? num(c.pnl) / cost : 0; });
+  // Legs on the same condition settle from one resolution event. Cluster them
+  // so the gate's sample size is the number of resolved markets, not legs.
+  const settlementPnlByMarket = new Map();
+  const settlementCostByMarket = new Map();
+  for (const cycle of settleCycles) {
+    const marketId = String(cycle.marketId ?? cycle.conditionId ?? 'unknown');
+    settlementPnlByMarket.set(marketId, (settlementPnlByMarket.get(marketId) || 0) + num(cycle.pnl));
+    settlementCostByMarket.set(
+      marketId,
+      (settlementCostByMarket.get(marketId) || 0) + num(cycle.entryPrice) * num(cycle.shares)
+    );
+  }
+  const settlementRoiByMarket = Object.fromEntries(
+    [...settlementPnlByMarket.entries()].map(([marketId, pnl]) => {
+      const cost = settlementCostByMarket.get(marketId) || 0;
+      return [marketId, cost > 0 ? pnl / cost : 0];
+    })
+  );
+  const settleRois = Object.values(settlementRoiByMarket);
   const deaths = settleRois.filter(v => v < 0);
   const wins = settleRois.filter(v => v > 0);
   const avgLoss = mean(deaths);
@@ -111,10 +129,10 @@ function readArm(dir) {
   const reasons = [];
   if (runHours == null || runHours < minRunHours) reasons.push('RUN_TIME_BELOW_MIN');
   if (fills.length < minCandidateFills) reasons.push('FILLS_BELOW_MIN');
-  if (settlements.length === 0) reasons.push('NO_SETTLEMENTS');
-  if (settlements.length > 0 && wins.length === 0) reasons.push('NO_WINNING_SETTLEMENTS');
-  if (settlements.length > 0 && lossCi[1] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_LIMIT');
-  if (settlements.length > 0 && lossCi[0] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_LOWER_ABOVE_LIMIT');
+  if (settleRois.length === 0) reasons.push('NO_SETTLEMENTS');
+  if (settleRois.length > 0 && wins.length === 0) reasons.push('NO_WINNING_SETTLEMENTS');
+  if (settleRois.length > 0 && lossCi[1] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_LIMIT');
+  if (settleRois.length > 0 && lossCi[0] > maxSettlementLossUpper) reasons.push('SETTLEMENT_LOSS_CI_LOWER_ABOVE_LIMIT');
   if (breakEvenLossRate != null && lossCi[1] > breakEvenLossRate) reasons.push('SETTLEMENT_LOSS_CI_ABOVE_BREAK_EVEN');
   if (breakEvenLossRate != null && lossCi[0] > breakEvenLossRate) reasons.push('SETTLEMENT_LOSS_CI_LOWER_ABOVE_BREAK_EVEN');
   const m60 = mean(markoutRois[60]);
@@ -122,14 +140,15 @@ function readArm(dir) {
   return {
     dir, name: path.basename(dir), missing: false, waitingForMarket: false, startedAt, runHours,
     fills: fills.length, cycles: cycles.length, settlements: settlements.length,
-    settleLosses: settleCycles.filter(c => num(c.pnl) < 0).length,
+    settlementMarkets: settleRois.length,
+    settleLosses: deaths.length,
     pendingSettlements: settlements.filter(s => s.redemptionStatus === 'PENDING').length,
     openInventoryShares: markets.reduce((s, m) => s + num(m.inventoryShares), 0),
     deployed, realized, realizedRoi: deployed > 0 ? realized / deployed : null,
     cycleLossRate: cycleRoi.length ? cycleRoi.filter(v => v < 0).length / cycleRoi.length : null,
     settlementLossRate: lossRate, settlementLossCi95: lossCi, breakEvenLossRate,
     markout60Roi: m60, markout300Roi: mean(markoutRois[300]), reasons,
-    _settlementRois: settleRois, _markoutRois: markoutRois,
+    _settlementRois: settleRois, _settlementRoiByMarket: settlementRoiByMarket, _markoutRois: markoutRois,
   };
 }
 
@@ -137,11 +156,18 @@ function readCandidateGroup(name, groupDirs) {
   const members = groupDirs.map(d => byDir.get(path.resolve(d)) ?? {
     dir: d, name: path.basename(d), missing: true, waitingForMarket: false, runHours: null,
     fills: 0, cycles: 0, settlements: 0, settleLosses: 0, pendingSettlements: 0,
-    openInventoryShares: 0, deployed: 0, realized: 0, _settlementRois: [], _markoutRois: emptyMarkouts(),
+    openInventoryShares: 0, deployed: 0, realized: 0, settlementMarkets: 0,
+    _settlementRois: [], _settlementRoiByMarket: {}, _markoutRois: emptyMarkouts(),
     reasons: ['MISSING_STATE'],
   });
   const missingMembers = members.filter(m => m.missing);
-  const settleRois = members.flatMap(m => m._settlementRois || []);
+  const settlementRoiByMarket = new Map();
+  for (const member of members) {
+    for (const [marketId, roi] of Object.entries(member._settlementRoiByMarket || {})) {
+      settlementRoiByMarket.set(marketId, roi);
+    }
+  }
+  const settleRois = [...settlementRoiByMarket.values()];
   const markout60 = members.flatMap(m => (m._markoutRois || emptyMarkouts())[60]);
   const markout300 = members.flatMap(m => (m._markoutRois || emptyMarkouts())[300]);
   const deaths = settleRois.filter(v => v < 0);
@@ -178,7 +204,8 @@ function readCandidateGroup(name, groupDirs) {
   return {
     name, dirs: groupDirs, members: members.map(m => m.name), missingMembers: missingMembers.map(m => m.name),
     waitingForMarket: missingMembers.length > 0 && missingMembers.every(m => m.waitingForMarket),
-    runHours, fills, cycles, settlements, settleLosses: members.reduce((s, m) => s + m.settleLosses, 0),
+    runHours, fills, cycles, settlements, settlementMarkets: settleRois.length,
+    settleLosses: deaths.length,
     pendingSettlements: members.reduce((s, m) => s + m.pendingSettlements, 0),
     openInventoryShares: members.reduce((s, m) => s + m.openInventoryShares, 0),
     deployed, realized, realizedRoi: deployed > 0 ? realized / deployed : null,
@@ -190,14 +217,16 @@ function readCandidateGroup(name, groupDirs) {
 const arms = dirs.map(readArm);
 const byDir = new Map(arms.map(a => [path.resolve(a.dir), a]));
 const candidateGroups = [readCandidateGroup('atomic-4level-2c-maker-ladder', candidates)];
+const settlementMarkets = candidateGroups.reduce((s, g) => s + (g.settlementMarkets || 0), 0);
 const totals = {
   arms: arms.length,
   cycles: arms.reduce((s, a) => s + (a.cycles || 0), 0),
   settlements: arms.reduce((s, a) => s + (a.settlements || 0), 0),
+  settlementMarkets,
   settleLosses: arms.reduce((s, a) => s + (a.settleLosses || 0), 0),
 };
 const blockers = new Set();
-if (totals.settlements < minSettlements) blockers.add(`TOTAL_SETTLEMENTS_BELOW_${minSettlements}`);
+if (settlementMarkets < minSettlements) blockers.add(`TOTAL_SETTLEMENT_MARKETS_BELOW_${minSettlements}`);
 for (const group of candidateGroups) (group.reasons || []).forEach(r => blockers.add(r));
 const unavailable = arms.some(a => a.missing && !a.waitingForMarket) ||
   candidateGroups.some(g => g.missingMembers.length > 0 && !g.waitingForMarket);
@@ -219,12 +248,12 @@ const report = {
 const output = arg('output');
 if (output) fs.writeFileSync(output, JSON.stringify(report, null, 2) + '\n');
 console.log(`BOND Shadow gate: ${status}`);
-console.log(`cycles=${totals.cycles} settlements=${totals.settlements} settleLosses=${totals.settleLosses} blockers=${[...blockers].join(',') || '-'}`);
-console.log('| candidate group | runH | fills | cycles | settlements | settleLosses | pending | openShares | realizedRoi | settleLossRate | lossCI95 | markout60ROI |');
-console.log('|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|');
+console.log(`cycles=${totals.cycles} settlements=${totals.settlements} settlementMarkets=${totals.settlementMarkets} settleLosses=${totals.settleLosses} blockers=${[...blockers].join(',') || '-'}`);
+console.log('| candidate group | runH | fills | cycles | settlements | settlementMarkets | settleLosses | pending | openShares | realizedRoi | settleLossRate | lossCI95 | markout60ROI |');
+console.log('|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|');
 const pct = v => v == null ? '-' : (100 * v).toFixed(2) + '%';
 for (const g of candidateGroups) {
-  console.log(`| ${g.name} | ${g.runHours == null ? '-' : g.runHours.toFixed(1)} | ${g.fills} | ${g.cycles} | ${g.settlements} | ${g.settleLosses} | ${g.pendingSettlements} | ${g.openInventoryShares.toFixed(2)} | ${pct(g.realizedRoi)} | ${pct(g.settlementLossRate)} | ${g.settlementLossCi95 ? `[${pct(g.settlementLossCi95[0])}, ${pct(g.settlementLossCi95[1])}]` : '-'} | ${pct(g.markout60Roi)} |`);
+  console.log(`| ${g.name} | ${g.runHours == null ? '-' : g.runHours.toFixed(1)} | ${g.fills} | ${g.cycles} | ${g.settlements} | ${g.settlementMarkets} | ${g.settleLosses} | ${g.pendingSettlements} | ${g.openInventoryShares.toFixed(2)} | ${pct(g.realizedRoi)} | ${pct(g.settlementLossRate)} | ${g.settlementLossCi95 ? `[${pct(g.settlementLossCi95[0])}, ${pct(g.settlementLossCi95[1])}]` : '-'} | ${pct(g.markout60Roi)} |`);
   if (g.reasons.length) console.log(`  reasons: ${g.reasons.join(', ')}`);
 }
 console.log('');

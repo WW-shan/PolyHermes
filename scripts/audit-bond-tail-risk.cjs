@@ -27,25 +27,39 @@ const rows = (report.results || []).map(r => {
     : num(r.breakEvenLossRate);
   const margin = breakEven == null ? null : breakEven - ci[1];
   const statisticallyPositive = r.meanRoi > 0 && breakEven != null && ci[1] < breakEven;
+  const settleMarkets = r.settleMarkets == null ? null : num(r.settleMarkets);
+  const settleLossMarkets = r.settleLossMarkets == null ? null : num(r.settleLossMarkets);
+  const marketLossRate = settleMarkets ? settleLossMarkets / settleMarkets : null;
+  const marketLossCi95 = settleMarkets ? wilson(marketLossRate, settleMarkets) : [0, 1];
+  const marketBreakEven = r.marketBreakEvenLossRate == null ? breakEven : num(r.marketBreakEvenLossRate);
+  const marketMargin = marketBreakEven == null ? null : marketBreakEven - marketLossCi95[1];
+  const marketStatisticallyPositive = settleMarkets != null && r.meanRoi > 0 &&
+    marketBreakEven != null && marketLossCi95[1] < marketBreakEven;
   return {
     band: r.band, tag: r.tag, targetCents: r.targetCents, queueFactor: r.queueFactor,
     minHoursToClose: r.minHoursToClose, maxHoursToClose: r.maxHoursToClose,
     lots, settleLossCount: losses, lossRate, lossCi95: ci,
+    settleMarkets, settleLossMarkets, marketLossRate, marketLossCi95,
     meanRoi: r.meanRoi, avgWin: r.avgWin, avgLoss: r.avgLoss,
     breakEvenLossRate: breakEven, edgeMarginVsCiUpper: margin,
-    statisticallyPositive,
+    marketBreakEvenLossRate: marketBreakEven, marketEdgeMarginVsCiUpper: marketMargin,
+    statisticallyPositive, marketStatisticallyPositive,
   };
 });
 const payload = { generatedAt: new Date().toISOString(), input, rows };
 if (output) fs.writeFileSync(output, JSON.stringify(payload, null, 2) + '\n');
-console.log('band tag target q lots settleLoss lossRate lossCI95 meanROI breakEven edgeMargin verdict');
+console.log('band tag target q legs mkts settleLossMkts mktLossRate mktLossCI95 meanROI mktBreakEven mktMargin mktVerdict legVerdict');
 for (const r of rows) {
   console.log([
     String(r.band).padEnd(9), String(r.tag).padEnd(12), String(r.targetCents).padStart(3),
-    String(r.queueFactor).padStart(3), String(r.lots).padStart(5), String(r.settleLossCount).padStart(3),
-    pct(r.lossRate).padStart(8), `[${pct(r.lossCi95[0])},${pct(r.lossCi95[1])}]`.padStart(17),
-    pct(r.meanRoi).padStart(8), pct(r.breakEvenLossRate).padStart(9),
-    pct(r.edgeMarginVsCiUpper).padStart(10), r.statisticallyPositive ? 'PASS' : 'FAIL'
+    String(r.queueFactor).padStart(3), String(r.lots).padStart(5), String(r.settleMarkets ?? '-').padStart(5),
+    String(r.settleLossMarkets ?? '-').padStart(3),
+    pct(r.marketLossRate).padStart(10),
+    `[${pct(r.marketLossCi95[0])},${pct(r.marketLossCi95[1])}]`.padStart(17),
+    pct(r.meanRoi).padStart(8), pct(r.marketBreakEvenLossRate).padStart(10),
+    pct(r.marketEdgeMarginVsCiUpper).padStart(10),
+    r.marketStatisticallyPositive ? 'PASS' : 'FAIL',
+    r.statisticallyPositive ? 'PASS' : 'FAIL'
   ].join(' '));
 }
 if (output) console.log('wrote ' + output);

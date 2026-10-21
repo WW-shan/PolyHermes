@@ -3,6 +3,7 @@
 > 目标账户：`0x0260366a9add43c25d4f4d35d2210526c6750d88`（adonpoli / Noted-Shop）
 > 结论：**目标账户的策略家族是真实盈利的，但它的核心 alpha 是“高频 favorite 做市/ scalping + 选择性止损”，不是机械 hold-to-settlement。我们测试过的所有机械止损/时间止损/流止损都会破坏 edge。**
 
+> **重要更正（2026-10-21 13:55）：** 之前 ladder 尾部审计把同一市场 4 条 leg 当作独立 settlement 样本，产生 pseudo-replication。按 `conditionId` 聚类后，q2/q3/q4 只有 9/10/12 个真正结算市场，0 亏损的 Wilson 95% 上界分别为 **29.9% / 27.8% / 24.3%**，都远高于 **2.1% / 2.3% / 2.3%** 的盈亏平衡率。**点估计为正，但市场级统计证据不足，不能判定可实盘。** 详见 14.14。
 ## 1. 官方费率（2026-10-21 再次直连复核）
 
 - 官方页面：`https://docs.polymarket.com/trading/fees`（HTTP 200），Markdown 源：`https://docs.polymarket.com/trading/fees.md`。
@@ -708,6 +709,7 @@ node scripts/analyze-bond-ladder.cjs `
 | q3 | 221 | 110 / 160 | **+1.876%** | 0 | +1.011% |
 | q4 | 216 | 105 / 160 | **+1.882%** | 0 | +1.011% |
 
+> **注意：以下 “Wilson/余量” 是 leg-level 统计；按市场聚类后 q2 只有 9 个结算市场、上界 29.915%，市场级结论为 FAIL。以 14.14 为准。**
 - q2 Wilson 95% 亏损率上界 **1.569%**，盈亏平衡 **1.835%**，统计余量 **+0.266%**。
 - q3 余量 **+0.133%**；q4 余量约 **+0.100%**（详见 `bond-tail-risk-current-q2-20261021.json` 及对应输入 JSON）。
 - q2 分年：2024 +1.455%、2025 +1.917%、2026 +1.904%，均为正且 0 结算亏损。
@@ -721,3 +723,19 @@ node scripts/analyze-bond-ladder.cjs `
 - 修复：一笔 print 的成交量按价格优先/时间优先在多个 leg 间只分配一次；队列消耗、`fillVolumeFactor` 阈值和部分成交共享同一份剩余 volume。
 - 这与 `analyze-bond-ladder.cjs` 的 `remaining` 递减模型一致。
 - 新增 BUY/SELL 两侧分配测试和 `fillVolumeFactor=2` 共享测试；全量 **109 suites / 632 tests** 通过。
+### 14.14 市场级尾部审计（2026-10-21 13:55）
+
+此前 `14.12` 的 PASS 是按 leg 计数：q2 241 lots、q3 221 lots、q4 216 lots。但同一市场的多条 leg 共享同一个 resolution outcome，不能作为独立样本。
+
+按 `conditionId` 聚类后的结果：
+
+| queue | settle markets | 亏损市场 | 市场亏损率 | Wilson 95% 上界 | 盈亏平衡 | 市场级结论 |
+|---|---:|---:|---:|---:|---:|---|
+| q2 | 9 | 0 | 0% | **29.915%** | 2.075% | **FAIL** |
+| q3 | 10 | 0 | 0% | **27.754%** | 2.254% | **FAIL** |
+| q4 | 12 | 0 | 0% | **24.250%** | 2.310% | **FAIL** |
+
+- 0 个亏损市场并不等于尾部风险低；样本只有 9–12 个独立市场时，Wilson 上界仍然很高。
+- 这说明当前历史回测只能提供正的点估计，**不能证明策略已经达到可实盘所需的统计置信度**。
+- 后续 gate 必须以 `settlementMarkets >= 50` 为最低样本，而不是 `settlement records >= 50`。
+- 证据：`bond-ladder-cluster-q2/q3/q4-20261021.json`、`bond-tail-risk-cluster-q2/q3/q4-20261021.json`。

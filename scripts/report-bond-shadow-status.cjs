@@ -35,9 +35,9 @@ const defaultDirs = [
 ];
 const dirs = (arg('dirs') || defaultDirs.join(',')).split(',').map(s => s.trim()).filter(Boolean);
 const lines = [];
-lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | settlements | settleLosses | inventory | realizedPnl | unrealizedPnl | totalPnl | crossTrades | queueConsumed | markout60 | markout300 | neg60 |');
-lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
-let totalFills = 0, totalCycles = 0, totalSettlements = 0, totalSettleLosses = 0, totalRealized = 0, totalUnrealized = 0, totalCrossTrades = 0, totalQueueConsumed = 0;
+lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | settlements | settlementMarkets | settleLosses | inventory | realizedPnl | unrealizedPnl | totalPnl | crossTrades | queueConsumed | markout60 | markout300 | neg60 |');
+lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+let totalFills = 0, totalCycles = 0, totalSettlements = 0, totalSettlementMarkets = 0, totalSettleLosses = 0, totalRealized = 0, totalUnrealized = 0, totalCrossTrades = 0, totalQueueConsumed = 0;
 const stale = [];
 const armMetrics = new Map();
 const makerLadderDirs = [
@@ -62,7 +62,7 @@ for (const dir of dirs) {
   const runInfo = readRunInfo(dir);
   if (!fs.existsSync(statePath)) {
     const status = runInfo.procAlive ? 'WAITING' : (runInfo.pid ? 'DEAD' : 'MISSING');
-    lines.push(`| ${arm} | ${status} | ${runInfo.pid ?? '-'} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
+    lines.push(`| ${arm} | ${status} | ${runInfo.pid ?? '-'} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
     armMetrics.set(path.resolve(dir), null);
     if (status !== 'WAITING') stale.push(arm + ` (${status}, no state)`);
     continue;
@@ -78,7 +78,13 @@ for (const dir of dirs) {
   const cycles = markets.reduce((s, m) => s + (Array.isArray(m.cycles) ? m.cycles.length : 0), 0);
   const settlementCycles = markets.flatMap(m => Array.isArray(m.cycles) ? m.cycles : []).filter(c => c.exitType === 'SETTLE');
   const settlements = settlementCycles.length;
-  const settleLosses = settlementCycles.filter(c => num(c.pnl) < 0).length;
+  const settlementPnlByMarket = new Map();
+  for (const cycle of settlementCycles) {
+    const marketId = String(cycle.marketId ?? 'unknown');
+    settlementPnlByMarket.set(marketId, (settlementPnlByMarket.get(marketId) || 0) + num(cycle.pnl));
+  }
+  const settlementMarkets = settlementPnlByMarket.size;
+  const settleLosses = [...settlementPnlByMarket.values()].filter(pnl => pnl < 0).length;
   const active = markets.filter(m => m.activeOrderId).length;
   const inventory = markets.reduce((s, m) => s + num(m.inventoryShares), 0);
   const realized = markets.reduce((s, m) => s + num(m.realizedPnl), 0);
@@ -115,13 +121,13 @@ for (const dir of dirs) {
     m60 = mean(vals60); m300 = mean(vals300);
     neg60 = vals60.length ? vals60.filter(v => v < 0).length / vals60.length : null;
   }
-  totalFills += fills; totalCycles += cycles; totalSettlements += settlements; totalSettleLosses += settleLosses; totalRealized += realized; totalUnrealized += unrealized; totalCrossTrades += crossTrades; totalQueueConsumed += queueConsumed;
-  armMetrics.set(path.resolve(dir), { fills, cycles, settlements, settleLosses, realized, unrealized, inventory, active });
+  totalFills += fills; totalCycles += cycles; totalSettlements += settlements; totalSettlementMarkets += settlementMarkets; totalSettleLosses += settleLosses; totalRealized += realized; totalUnrealized += unrealized; totalCrossTrades += crossTrades; totalQueueConsumed += queueConsumed;
+  armMetrics.set(path.resolve(dir), { fills, cycles, settlements, settlementMarkets, settleLosses, realized, unrealized, inventory, active });
   const fmt = v => v == null ? '-' : (Math.round(v * 100) / 100).toString();
   const pct = v => v == null ? '-' : (Math.round(v * 1000) / 10).toString() + '%';
-  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${settlements} | ${settleLosses} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(unrealized)} | ${fmt(realized + unrealized)} | ${crossTrades} | ${fmt(queueConsumed)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
+  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${settlements} | ${settlementMarkets} | ${settleLosses} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(unrealized)} | ${fmt(realized + unrealized)} | ${crossTrades} | ${fmt(queueConsumed)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
 }
-lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | **${totalSettlements}** | **${totalSettleLosses}** | | **${Math.round(totalRealized * 100) / 100}** | **${Math.round(totalUnrealized * 100) / 100}** | **${Math.round((totalRealized + totalUnrealized) * 100) / 100}** | **${totalCrossTrades}** | **${Math.round(totalQueueConsumed * 100) / 100}** | | | |`);
+lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | **${totalSettlements}** | **${totalSettlementMarkets}** | **${totalSettleLosses}** | | **${Math.round(totalRealized * 100) / 100}** | **${Math.round(totalUnrealized * 100) / 100}** | **${Math.round((totalRealized + totalUnrealized) * 100) / 100}** | **${totalCrossTrades}** | **${Math.round(totalQueueConsumed * 100) / 100}** | | | |`);
 const ladder = makerLadderDirs.map(d => armMetrics.get(d));
 if (ladder.length && ladder.every(Boolean)) {
   const sum = key => ladder.reduce((s, m) => s + m[key], 0);

@@ -16,14 +16,14 @@ function stateFor(n, pnl) {
   const cycles = [];
   const settlements = [];
   for (let i = 0; i < n; i++) {
-    fills.push({ marketId: 'm', orderId: `b-${i}`, side: 'BUY', price: 0.98, shares: 25, timestamp: startedAt + i });
+    fills.push({ marketId: `m-${i}`, orderId: `b-${i}`, side: 'BUY', price: 0.98, shares: 25, timestamp: startedAt + i });
     cycles.push({
-      marketId: 'm', entryOrderId: `b-${i}`, exitOrderId: `s-${i}`,
+      marketId: `m-${i}`, entryOrderId: `b-${i}`, exitOrderId: `s-${i}`,
       entryAt: startedAt, exitAt: startedAt + 1000, entryPrice: 0.98, exitPrice: 1.0,
       shares: 25, pnl, holdingSeconds: 1000, exitType: 'SETTLE',
     });
     settlements.push({
-      marketId: 'm', favoriteTokenId: 't', entryOrderId: `b-${i}`, cycleExitOrderId: `s-${i}`,
+      marketId: `m-${i}`, favoriteTokenId: 't', entryOrderId: `b-${i}`, cycleExitOrderId: `s-${i}`,
       settledAt: startedAt + 1000, entryAt: startedAt, entryPrice: 0.98, exitPrice: 1.0,
       shares: 25, pnl, outcomeIndex: 0, negativeRisk: false, redemptionStatus: 'ALREADY_ABSENT',
     });

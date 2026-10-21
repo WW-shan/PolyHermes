@@ -223,6 +223,22 @@ for(let bi=0;bi<bands.length-1;bi++){
       const aw=mean(rois.filter(x=>x>0)), al=mean(rois.filter(x=>x<0));
       const lr=allLots.length?losses/allLots.length:0;
       const deployed=allLots.reduce((s,l)=>s+l.entryPrice*l.shares,0);
+      // Legs in the same market share one resolution event, so settlement
+      // statistics must be clustered by conditionId rather than treating each
+      // ladder leg as an independent observation.
+      const settlePnlByMarket = new Map();
+      for (const lot of allLots.filter(l=>l.exitType==='SETTLE')) {
+        settlePnlByMarket.set(lot.conditionId, (settlePnlByMarket.get(lot.conditionId) || 0) + lot.pnl);
+      }
+      const marketSettleRois = [...settlePnlByMarket.values()].map(p => p / trancheNotional);
+      const marketSettleLosses = marketSettleRois.filter(x => x < 0).length;
+      const marketSettleWins = marketSettleRois.filter(x => x > 0);
+      const marketSettleLossRois = marketSettleRois.filter(x => x < 0);
+      const marketAw = mean(marketSettleWins), marketAl = mean(marketSettleLossRois);
+      const marketLossRate = marketSettleRois.length ? marketSettleLosses / marketSettleRois.length : 0;
+      const marketBreakEvenLossRate = marketAw > 0 && marketAl < 0
+        ? marketAw / (marketAw + Math.abs(marketAl))
+        : (marketAw > 0 ? marketAw / (marketAw + 1.0) : null);
       results.push({
         band:bandLabel(low, high), bandLow:low, bandHigh:high, tag, targetCents:target, momentumMinCents, momentumMaxCents, momentumLookbackSeconds, levelsCents:levelsCents.join(','), trancheNotional, queueFactor, maxTranches, minHoursToClose, maxHoursToClose,
         eligible:eligibleCount, filledMarkets, fillRate:eligibleCount?filledMarkets/eligibleCount:0,
@@ -239,6 +255,11 @@ for(let bi=0;bi<bands.length-1;bi++){
         sellCount:allLots.filter(l=>l.exitType==='SELL').length,
         settleCount:allLots.filter(l=>l.exitType==='SETTLE').length,
         settleLossCount:allLots.filter(l=>l.exitType==='SETTLE'&&l.pnl<0).length,
+        settleMarkets:settlePnlByMarket.size,
+        settleLossMarkets:marketSettleLosses,
+        marketLossRate,
+        marketLossCi95:settlePnlByMarket.size ? wilson(marketLossRate, settlePnlByMarket.size) : [0,1],
+        marketBreakEvenLossRate,
         totalPnl:pnls.reduce((a,b)=>a+b,0), deployed,
         maxDrawdownUsd:maxDrawdownUsd(allLots),
         byYear:summarizeByYear(allLots)
@@ -247,8 +268,8 @@ for(let bi=0;bi<bands.length-1;bi++){
   }
 }
 fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,levelsCents,targetsCents,momentumMinCents,momentumMaxCents,momentumLookbackSeconds,results},null,2));
-console.log('band tag tgt levels elig filled fill% lots buys sells win% meanRoi roiCI worst settleLoss maxInv$');
+console.log('band tag tgt levels elig filled fill% lots buys sells win% meanRoi roiCI worst settleLoss settleMkts lossMkts mktLossCI maxInv$');
 for(const r of results){
-  console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.settleLossCount).padStart(3),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
+  console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.settleLossCount).padStart(3),String(r.settleMarkets).padStart(5),String(r.settleLossMarkets).padStart(3),`[${(100*r.marketLossCi95[0]).toFixed(2)},${(100*r.marketLossCi95[1]).toFixed(2)}]`.padStart(15),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
 }
 console.log('wrote '+outputPath);

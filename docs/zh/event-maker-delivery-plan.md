@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量 109 suites / 632 tests 通过。2026-10-21 用当前代码复跑 4,189 市场数据集：0.97–0.99 Geopolitics、3–7 天、+2c、4 档 maker ladder 在 q2/q3/q4 分别为 +1.87% / +1.88% / +1.88%，2024–2026 全为正，0 结算亏损；q2 的 Wilson 95% 亏损率上界 1.569% < 盈亏平衡 1.835%，统计余量 +0.266%。8 个 Shadow 臂已切到 3–7 天窗口并全部 WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 13:49 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量 109 suites / 632 tests 通过。2026-10-21 当前代码复跑 4,189 市场数据集：0.97–0.99 Geopolitics、3–7 天、+2c、4 档 maker ladder 的点估计 ROI 为 q2/q3/q4 +1.87% / +1.88% / +1.88%，2024–2026 全为正；但按 conditionId 聚类后只有 9 / 10 / 12 个真正结算市场，0 亏损的 Wilson 95% 上界为 29.9% / 27.8% / 24.3%，均远高于 2.1% / 2.3% / 2.3% 的盈亏平衡率 → **市场级统计证据不足，不能判定可实盘**。之前按 leg 计数（241/221/216 lots）的 PASS 是 pseudo-replication，已作废。8 个 Shadow 臂全部 WAITING；真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
+> 最后更新：2026-10-21 13:56 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读本文件末尾最新 checkpoint 和工作日志末尾，最后核对运行中的 Shadow PID、`git status` 与 Gate 输出。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -143,7 +143,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 - [x] Live mock 端到端测试通过（引擎级 mock 流程）。
 - [x] 逆势流 Guard 在回测、Shadow、Live 共用引擎中实现并通过边界/撤单测试。
 - [x] 完成 4,189 市场 Guard A/B、三笔历史归零因果审计和 Shadow 冒烟。
-- [ ] 完全消除不可预测的第一笔大额卖单尾部风险。（3–7d q2 的 Wilson 上界 1.569% < 盈亏平衡 1.835%，已给出统计边界；但不能宣称完全消除）
+- [ ] 完全消除不可预测的第一笔大额卖单尾部风险。（市场聚类后 q2 只有 9 个结算市场，Wilson 上界 29.915% > 盈亏平衡 2.075%，未通过；不能宣称完全消除）
 - [ ] 实际小资金 live smoke 通过（需要用户账户和显式授权）。**执行清单：[bond-live-smoke-checklist-2026-10-21.md](bond-live-smoke-checklist-2026-10-21.md)**
 - [x] 更新策略文档、运行手册和故障处理手册。
 - [x] 全量测试通过。
@@ -1394,7 +1394,7 @@ cd D:\Project\PolyHermes\backend
 - 新增候选 ETA 工具 `scripts/report-bond-candidate-eta.ps1`；当前扫描 1,493 个市场，eligibleNow=0，nextFuture=0，唯一高价市场已进入最后 3 天。
 - monitor 现在记录 waiting 状态和 candidate ETA，不再是静默跳过。
 - 下一步不是放宽窗口，而是等待合格市场进入 3–7d；gate 仍保持 WAIT。
-### 20.22 2026-10-21 10:56 尾部统计边界
+### 20.22 2026-10-21 10:56 尾部统计边界（leg-level 旧结论，已被 20.39 市场聚类修正）
 
 - 新增 `scripts/audit-bond-tail-risk.cjs`，按整笔归零保守假设计算 Wilson 上界与盈亏平衡率。
 - +2c q2 主策略：241 lots、0 结算亏损、上界 1.569%、盈亏平衡 1.835%、余量 +0.266% → PASS。
@@ -1490,9 +1490,9 @@ cd D:\Project\PolyHermes\backend
 
 - 官方费率复核：`https://docs.polymarket.com/trading/fees.md` 明确 **“Makers are never charged fees. Only takers pay fees.”**；所有类别 Maker Fee Rate = 0，Geopolitics Taker Fee Rate = 0。
 - 当前代码复跑同一 4,189 市场 7d 数据集，主策略参数为 0.97–0.99 Geopolitics、3–7d、0/0.5/1/2c、+2c、每档 $100、max 4 tranches：
-  - q2：160 eligible / 117 filled / 241 lots / mean ROI +1.870% / 0 settlement loss / Wilson 上界 1.569% / 余量 +0.266% → PASS。
-  - q3：160 eligible / 110 filled / 221 lots / mean ROI +1.876% / 0 settlement loss / 余量 +0.133% → PASS。
-  - q4：160 eligible / 105 filled / 216 lots / mean ROI +1.882% / 0 settlement loss / 余量 +0.100% → PASS。
+  - q2：160 eligible / 117 filled / 241 lots / mean ROI +1.870% / 0 settlement loss / leg-level Wilson 上界 1.569% → 旧结论 PASS；**市场聚类后 9 个结算市场、上界 29.915%、盈亏平衡 2.075% → FAIL（见 20.39）**。
+  - q3：160 eligible / 110 filled / 221 lots / mean ROI +1.876% / 0 settlement loss → leg-level PASS；**市场聚类后 10 个结算市场、上界 27.754%、盈亏平衡 2.254% → FAIL（见 20.39）**。
+  - q4：160 eligible / 105 filled / 216 lots / mean ROI +1.882% / 0 settlement loss → leg-level PASS；**市场聚类后 12 个结算市场、上界 24.250%、盈亏平衡 2.310% → FAIL（见 20.39）**。
 - 2024/2025/2026 分年均正；q2 分别为 +1.455% / +1.917% / +1.904%。
 - 多档引擎收口：
   - requote 使用每条 leg 自己的 offset；
@@ -1519,3 +1519,14 @@ cd D:\Project\PolyHermes\backend
 - 修复 REST SHADOW 结算后误写 LIVE 状态文件（`accountId=0`）的问题。
 - `runEngineTick` 现在显式区分 `persistState`：REST Shadow=false，Live=true。
 - 新增 Shadow 结算不写 LIVE 状态的回归测试；全量 **109 suites / 632 tests**。
+### 20.39 2026-10-21 13:55 市场聚类尾部审计（纠正 pseudo-replication）
+
+- 发现此前把同一市场 4 条 leg 的 settlement 当作独立样本，241 lots 实际只对应 9 个结算市场。
+- 按 `conditionId` 聚类后：
+  - q2：9 个结算市场、0 亏损市场、Wilson 95% 上界 **29.915%**、盈亏平衡 **2.075%** → **FAIL**。
+  - q3：10 个结算市场、0 亏损市场、上界 **27.754%**、盈亏平衡 **2.254%** → **FAIL**。
+  - q4：12 个结算市场、0 亏损市场、上界 **24.250%**、盈亏平衡 **2.310%** → **FAIL**。
+- 结论：点估计仍为正，但**没有足够独立结算市场证明尾部风险可控**；此前基于 leg 数的 PASS 作废，不能据此上真钱。
+- `analyze-bond-ladder.cjs` 新增 `settleMarkets` / `settleLossMarkets` / `marketLossCi95` / `marketBreakEvenLossRate`；`audit-bond-tail-risk.cjs` 增加 market-cluster verdict。
+- `evaluate-bond-shadow-gate.cjs` 改为按 `marketId` 聚类 settlement，`min-settlements=50` 现在表示 **50 个独立结算市场**；`report-bond-shadow-status.cjs` 增加 `settlementMarkets`。
+- Gate 回归仍为 3/3 PASS；当前 gate 仍 `WAIT`（0 settlement markets）。
