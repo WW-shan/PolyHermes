@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**回测与执行链路审计完成；全量 109 suites / 628 tests 通过。2026-10-21 用当前代码复跑 4,189 市场数据集：0.97–0.99 Geopolitics、3–7 天、+2c、4 档 maker ladder 在 q2/q3/q4 分别为 +1.87% / +1.88% / +1.88%，2024–2026 全为正，0 结算亏损；q2 的 Wilson 95% 亏损率上界 1.569% < 盈亏平衡 1.835%，统计余量 +0.266%。8 个 Shadow 臂已切到 3–7 天窗口并全部 WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 13:22 +08:00<br>
+> 最后更新：2026-10-21 13:27 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -165,7 +165,7 @@ CLOB WebSocket ──> EventMakerQuotePlanner ──> RiskPolicy
 | 资金上限 | 启动前和每次报价前双重校验 | 已完成（风险与执行守卫测试） |
 | Shadow 长测稳定性 | 无错误、无未知状态、无重复成交键 | 旧 2h 基线已完成；v5 主臂/一档实验臂已用 69649e5 重启；实验臂已选中真实市场并挂单 |
 | 队列/费用压力 | q1~q50、0~100bps 费用表和报告 | 已完成；候选 q15–q50 零归零，50bps +0.069%、100bps -0.914% |
-| 全量回归 | 109 suites / 628 tests / 0 failures / 0 errors / 2 skipped | 已完成（2026-10-21 13:21） |
+| 全量回归 | 109 suites / 628 tests / 0 failures / 0 errors / 2 skipped | 已完成（2026-10-21 13:26） |
 | 真实小资金 Live smoke | 真实账户、资金、显式授权、订单与对账证据 | 未执行，等待用户授权 |
 
 ## 6. 实盘安全门槛
@@ -1507,4 +1507,4 @@ cd D:\Project\PolyHermes\backend
 - 同一 print 现在按价格/时间优先在多个 leg 间共享成交量；队列消耗和 `fillVolumeFactor` 阈值共用同一份剩余 volume。
 - 这与 ladder 回测的 `remaining` 递减口径一致，避免 Shadow 虚增多档 fill。
 - 新增 4 条回归；全量 **109 suites / 628 tests / 0 failures / 0 errors / 2 skipped**。
-- 8 臂于 13:21:16 +08:00 重启，全部 WAITING，Gate WAIT。
+- 8 臂于 13:26:17 +08:00 重启，全部 WAITING，Gate WAIT。
