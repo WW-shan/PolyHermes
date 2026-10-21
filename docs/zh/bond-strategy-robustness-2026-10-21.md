@@ -660,3 +660,15 @@ queue 模型，stop=0，q2，off0：
   - 超过 10 lots 的市场：**0**
   - 超过 20 lots 的市场：**0**
 - 结论：suite 的 `MaxCyclesPerMarket=10` 足以覆盖历史主策略的单市场最大 7 个回合，不会截断历史成交。
+### 14.10 Live gate 的统计与 FAIL/WAIT 语义（2026-10-21）
+
+- 以前的 gate 在 0 结算亏损时 `breakEvenLossRate=null`，只要结算数达到 50 就可能 PASS；这会高估尾部安全性。
+- 已改为零亏损时使用保守的 `avgWin / (avgWin + 1)`（假设一次尾部亏损为整笔归零）。
+- 同时区分：
+  - `WAIT`：运行时间不足、成交/结算样本不足、等待市场、或亏损率 CI 上界尚未低于盈亏平衡但仍可能通过更多样本收敛；
+  - `FAIL`：亏损率 CI 下界已经高于限制/盈亏平衡、全部结算亏损、候选成员缺失等。
+- 新增 `scripts/test-bond-shadow-gate.cjs`：
+  - 1000 个零亏损结算 → `PASS`
+  - 100 个零亏损结算 → `WAIT`
+  - 100 个全亏损结算 → `FAIL`
+- 回归结果：`bond gate regression: 3/3 PASS`。

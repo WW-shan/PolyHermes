@@ -22,7 +22,7 @@ if (!dir) {
 }
 const statePath = path.join(dir, 'state.json');
 if (!fs.existsSync(statePath)) throw new Error(`state.json not found: ${statePath}`);
-const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+const state = JSON.parse(fs.readFileSync(statePath, 'utf8').replace(/^\uFEFF/, ''));
 const summaryPath = path.join(dir, 'summary.json');
 const summary = fs.existsSync(summaryPath) ? JSON.parse(fs.readFileSync(summaryPath, 'utf8')) : null;
 

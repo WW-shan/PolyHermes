@@ -3,7 +3,7 @@
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
 > 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场。目标账户与历史 maker ladder 共同表明：0.97–0.99 Geopolitics +2c 的最优窗口是 close 前 **3–7 天**（q2/q3/q4 约 +1.88%，2024–2026 全为正，0 结算亏损）；最后 3 天为负，0.95–0.97 不稳定，Politics 为负。11 个 Shadow 臂已切到 3–7 天窗口，当前因最近市场约 170h 而处于 LIVE/WAITING；尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 11:15 +08:00<br>
+> 最后更新：2026-10-21 11:20 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -1425,3 +1425,9 @@ cd D:\Project\PolyHermes\backend
 
 - 0.97–0.99 Geopolitics +2c q2 单市场最大 7 lots，超过 10 lots 的市场为 0。
 - `MaxCyclesPerMarket=10` 足够，不会截断历史主策略。
+### 20.28 2026-10-21 11:20 Gate 统计语义与回归
+
+- 修复零亏损时的盈亏平衡率：按整笔归零使用 `avgWin/(avgWin+1)`，不再因 `avgLoss=null` 跳过尾部 blocker。
+- 新增 fatal blockers：亏损率 CI 下界超限、全部结算亏损、成员缺失。
+- 新增 `scripts/test-bond-shadow-gate.cjs`，覆盖 PASS/WAIT/FAIL 三组确定性状态，结果 3/3 PASS。
+- 当前真实 gate 仍为 `WAIT`，原因是 0 fills / 0 settlements / 等待市场。

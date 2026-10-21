@@ -2154,3 +2154,20 @@
 - ladder 回测新增 `maxLotsPerMarket` / `marketsOver10Lots` / `marketsOver20Lots`。
 - 0.97–0.99 Geopolitics +2c q2：241 lots / 117 markets，单市场最大 7 lots，超过 10 的市场为 0。
 - suite 的 `MaxCyclesPerMarket=10` 足够覆盖历史主策略，不会提前截断。
+### 20.28 2026-10-21 11:20 闸门回归与状态语义
+
+- 修复 `evaluate-bond-shadow-gate.cjs` 的零亏损尾部统计：
+  - 零亏损时用 `avgWin / (avgWin + 1)` 作为整笔归零的盈亏平衡率，避免样本不足被误判 PASS。
+- 增加 fatal blocker：
+  - `SETTLEMENT_LOSS_CI_LOWER_ABOVE_LIMIT`
+  - `SETTLEMENT_LOSS_CI_LOWER_ABOVE_BREAK_EVEN`
+  - `NO_WINNING_SETTLEMENTS`
+  - `MEMBER_MISSING_STATE`
+- 状态语义：
+  - 样本不足 / 等待市场 / 上界尚未收敛 → `WAIT`
+  - 已观察到亏损显著高于盈亏平衡、全部结算亏损或成员缺失 → `FAIL`
+- 新增 `scripts/test-bond-shadow-gate.cjs` 回归测试，构造 3 组状态：
+  - 1000 个零亏损结算 → PASS
+  - 100 个零亏损结算 → WAIT
+  - 100 个全亏损结算 → FAIL
+- 结果：`bond gate regression: 3/3 PASS`。

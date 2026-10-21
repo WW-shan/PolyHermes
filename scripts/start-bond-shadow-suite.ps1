@@ -56,7 +56,7 @@ $arms = @(
 )
 
 if ($DryRun) {
-  $arms | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Output = $_.Args.Output; OrderNotional = $_.Args.OrderNotional; EntryOffsetCents = $_.Args.EntryOffsetCents; ExitSpreadCents = $_.Args.ExitSpreadCents; ImproveTicks = $_.Args.ImproveTicks; ExitImproveTicks = $_.Args.ExitImproveTicks; FillFactor = $_.Args.FillVolumeFactor; MinRemaining = $_.Args.MinRemainingMinutes; MaxRemaining = $_.Args.MaxRemainingMinutes; Taker = [bool]$_.Args.TakerEntry } } | Format-Table -AutoSize
+  $arms | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Output = $_.Args.Output; OrderNotional = $_.Args.OrderNotional; EntryOffsetCents = $_.Args.EntryOffsetCents; ExitSpreadCents = $_.Args.ExitSpreadCents; ImproveTicks = $_.Args.ImproveTicks; ExitImproveTicks = $_.Args.ExitImproveTicks; FillFactor = $_.Args.FillVolumeFactor; MomentumMaxCents = $_.Args.EntryMomentumMaxCents; MaxCycles = $_.Args.MaxCyclesPerMarket; MinRemaining = $_.Args.MinRemainingMinutes; MaxRemaining = $_.Args.MaxRemainingMinutes; Taker = [bool]$_.Args.TakerEntry } } | Format-Table -AutoSize
   return
 }
 

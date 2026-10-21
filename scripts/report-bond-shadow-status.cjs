@@ -78,7 +78,7 @@ for (const dir of dirs) {
   const { pid, procAlive } = runInfo;
   const status = procAlive === false ? 'DEAD' : (stateAgeMin <= 5 ? 'LIVE' : 'STALE');
   if (status !== 'LIVE') stale.push(arm + ` (${status}, ${stateAgeMin.toFixed(1)}m)`);
-  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8').replace(/^\uFEFF/, ''));
   const markets = Array.isArray(state.markets) ? state.markets : [];
   const fills = markets.reduce((s, m) => s + (Array.isArray(m.fills) ? m.fills.length : 0), 0);
   const cycles = markets.reduce((s, m) => s + (Array.isArray(m.cycles) ? m.cycles.length : 0), 0);
