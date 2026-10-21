@@ -1939,5 +1939,20 @@
 - 0.97–0.99 Geopolitics +3c ladder：263 lots，mean ROI +2.34%，95% CI [2.25%, 2.42%]；2024 25 lots +1.77%、2025 89 lots +2.40%、2026 149 lots +2.40%，三年均为正、0 结算亏损。
 - 队列敏感性：queueFactor=2/3/4 分别为 263/246/240 lots，mean ROI 均为 +2.34%。
 - 尾部压力：95% Wilson 亏损率上界 1.44%，盈亏平衡亏损率约 2.29%；假设真实亏损率 1% 时期望 ROI +1.32%，2% 时 +0.29%，3% 时 -0.73%。
-- 结论修正：0.97–0.99 Geopolitics +3c 不是“只靠 7 天顺风窗口”，在 2024–2026 年度外样本中仍是正期望；但 0 次尾部亏损不能外推为 0%，真实 L2/延迟/部分成交仍未验证。
+- 结论修正：0.97–0.99 Geopolitics 在 2024–2026 年度外样本中为正；目标账户同 band 实际 ROI 仅 +0.852%，因此 **+2c 是首选折中（+1.89%）**，+1c 保守（+1.03%），+3c（+2.34%）只作上限。0 次尾部亏损不能外推为 0%，真实 L2/延迟/部分成交仍未验证。
 - 证据：`backend/build/research/bond-ladder-periods-20261021.json`、`bond-ladder-q3b-20261021.json`、`bond-ladder-q4b-20261021.json`。
+
+### 08:15 Shadow 参数对齐首选候选
+
+- 根据年度/尾部复核，把首选从 +3c 下调为 **0.97–0.99 Geopolitics +2c ladder**：+1c 保守、+2c 首选、+3c 上限。
+- 停掉 `off10` 的 +3c 配置，重启为 **+2c**（entryOffset=1c，fillVolumeFactor=2，maxCycles=10，cap=$400）。
+- 停掉 `off00` 的 factor=2，重启为 **fillVolumeFactor=1**，作为更宽松成交对照；其余 off05/off20 仍为 +3c、factor=2。
+- taker00c 仍为 +3c taker at ask，用于对比“主动吃单 vs maker 挂单”的 markout。
+- 当前 6 臂均 LIVE；继续观察 fill、60s/300s markout、cycle 和结算。
+
+### 08:20 增加 +2c taker 对照臂
+
+- 启动 `event-maker-bond-scalp-2c-geo-97099-taker-shadow-7d-20261021`：0.97–0.99 / Geopolitics / +2c / taker at ask / slippage 0 / exitImproveTicks 0 / maxCycles 10 / $100 / cap $400。
+- 首轮 2 笔立即成交（0.985、0.981），SELL 0.999；inventory 203.45；60s markout -0.30（2 笔，负占比 100%）。
+- 当前 7 个 LIVE 臂：4 个 maker offset、1 个 +2c maker（off10）、2 个 taker（+3c taker00c、+2c taker）。
+- 注意：0.97–0.99 的 +2c/+3c 卖价在 entry 接近 0.99 时都会被 0.999 上限截断，所以 +2c 与 +3c 的差异只在较低 entry 上体现。

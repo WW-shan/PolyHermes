@@ -1208,7 +1208,7 @@ cd D:\Project\PolyHermes\backend
 - 目标账户的策略家族真实盈利，但核心是**高频 favorite scalping / 做市 + 选择性止损**，不是机械 hold-to-settlement。
 - 价格止损、时间止损、逆向流止损在 queue 模型中全部破坏 edge；不能用一个固定规则复刻他的“该砍/该扛”判断。
 - 0.95–0.97 Geopolitics 单档 queue 模型全样本 +3.17%，但 ladder 年度拆分不稳定：2024 -31.2%、2025 -2.9%、2026 +3.2%；不能作为主策略。
-- 0.97–0.99 Geopolitics 单档 queue +1c +1.06% / +3c +1.82%；ladder 版本 +1c +1.03% / +3c **+2.34%**，是当前最佳候选。
+- 0.97–0.99 Geopolitics ladder：+1c +1.03% / +2c **+1.89%** / +3c +2.34%；目标账户同 band 实际 ROI 只有 +0.852%，因此 **+2c 是首选折中，+1c 保守，+3c 只作上限**。
 - 0.97–0.99 Politics 单档 queue 为正，但 ladder +3c 为 -0.04%，不做。
 - “7d”数据集是每个市场 7 天窗口，实际覆盖 2024-01-01 至 2026-10-01、4,189 个市场；0.97–0.99 Geopolitics +3c 三年均为正，但仍不能把 0 次尾部亏损当长期 0%。
 
@@ -1256,8 +1256,8 @@ cd D:\Project\PolyHermes\backend
 ### 20.6 下一步
 
 1. 当前 6 个 LIVE 臂继续跑 24–48h，检查 fill / markout / 首轮 cycle。
-2. 重点观察 `3c-geo-97099-off00/05/10/20` 与 `taker00c`；`3c-geo-9597` 只作为对照，不再作为主策略。
-3. 目标候选固定为 **0.97–0.99 Geopolitics +3c ladder**；不要因为 maker 臂 0 fill 就放宽价格带或降低门槛。
+2. 重点观察 `3c-geo-97099-off00/05/10/20`、`taker00c`（+3c）与 `2c taker`；`3c-geo-9597` 只作为对照，不再作为主策略。
+3. 目标候选固定为 **0.97–0.99 Geopolitics +2c ladder**（+1c 保守对照、+3c 上限）；不要因为 maker 臂 0 fill 就放宽价格带或降低门槛。
 4. 真实资金前必须满足：覆盖 50–100 个结算事件、亏损率 CI 上界低于盈亏平衡率、最大回撤可承受。
 
 ### 20.7 2026-10-21 07:53 taker-entry 链路与首个 A/B
@@ -1289,7 +1289,7 @@ cd D:\Project\PolyHermes\backend
 - 尾部压力：
   - 95% Wilson 亏损率上界约 1.44%，盈亏平衡亏损率约 2.29%；
   - 假设亏损率 1% → 期望 ROI +1.32%；2% → +0.29%；2.29% → 0；3% → -0.73%。
-- 结论：**在 trade-print 近似模型下，0.97–0.99 Geopolitics +3c ladder 是统计正期望；但真实 L2 队列、延迟、部分成交和尾部爆冷仍未验证。**
+- 结论：**在 trade-print 近似模型下，0.97–0.99 Geopolitics +2c ladder 是首选（+1.89%，CI [1.85%, 1.92%]）；+1c 保守、+3c 只作上限。真实 L2 队列、延迟、部分成交和尾部爆冷仍未验证。**
 - 输出证据：
   - `backend/build/research/bond-ladder-periods-20261021.json`
   - `backend/build/research/bond-ladder-q3b-20261021.json`
