@@ -95,6 +95,42 @@ class EventMakerStrategyControllerTest {
         assertEquals(1, service.stopCount)
     }
 
+    @Test
+    fun `start maps taker entry settings`() {
+        val service = StubStrategyService()
+        val controller = controller(service)
+
+        val response = controller.start(
+            EventMakerStartRequest(
+                mode = "SHADOW",
+                takerEntry = true,
+                takerEntrySlippageTicks = 2
+            )
+        )
+
+        assertEquals(0, response.body!!.code)
+        assertEquals(1, service.startCount)
+        val config = service.lastConfig!!
+        assertTrue(config.takerEntry)
+        assertEquals(2, config.takerEntrySlippageTicks)
+    }
+
+    @Test
+    fun `invalid ladder and taker combination maps to parameter error`() {
+        val service = StubStrategyService()
+        val controller = controller(service)
+
+        val response = controller.start(
+            EventMakerStartRequest(
+                mode = "SHADOW",
+                ladderOffsetsCents = listOf(0.0),
+                takerEntry = true
+            )
+        )
+
+        assertEquals(ErrorCode.PARAM_ERROR.code, response.body!!.code)
+        assertEquals(0, service.startCount)
+    }
     private fun controller(service: EventMakerStrategyService): EventMakerStrategyController =
         EventMakerStrategyController(service, StaticMessageSource())
 

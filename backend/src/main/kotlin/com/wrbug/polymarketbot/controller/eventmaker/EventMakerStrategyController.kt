@@ -33,6 +33,9 @@ class EventMakerStrategyController(
                     ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
                 }
             )
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Event maker start rejected: ${e.message}")
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
         } catch (e: Exception) {
             logger.error("Event maker start failed", e)
             ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
