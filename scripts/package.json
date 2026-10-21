@@ -24,7 +24,8 @@
     "audit:bond-shadow": "node audit-bond-shadow.cjs",
     "test:bond-tail-audit": "node test-bond-tail-audit.cjs",
     "test:bond-shadow-gate": "node test-bond-shadow-gate.cjs",
-    "analyze:bond-portfolio": "node analyze-bond-portfolio.cjs"
+    "analyze:bond-portfolio": "node analyze-bond-portfolio.cjs",
+    "analyze:leader-selection": "node analyze-leader-selection.cjs"
   },
   "dependencies": {
     "@ethersproject/wallet": "^5.7.0",
