@@ -1362,3 +1362,8 @@ cd D:\Project\PolyHermes\backend
 - q2/q3/q4 +2c 均约 +1.88%，年度 2024/2025/2026 全为正、0 结算亏损；最后 3 天为负且出现结算亏损。
 - 10 个 Shadow 臂已切到 3–7 天窗口，当前等待市场进入窗口。报告会把“有进程但无 state”标为 `WAITING`，不会误报 `DEAD`。
 - 新增分析：`scripts/analyze-leader-time-to-close.cjs`；新增窗口参数：`analyze-bond-ladder.cjs --min-hours-to-close/--max-hours-to-close`。
+
+### 20.17 2026-10-21 10:08 分布式 ladder
+
+- 四个 maker 臂已对齐为分布式 +2c ladder：offset 0/0.5/1/2c，fill factor 2，动量 ≤+1c，3–7 天窗口。
+- 单臂只持有一个 active order；聚合四臂才对应历史 ladder 模型，验收和报告必须按组解释。

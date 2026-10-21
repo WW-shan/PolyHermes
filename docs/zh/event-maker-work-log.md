@@ -2044,3 +2044,9 @@
 - 最后 3 天 q2：0.97–0.99 +2c 为 -0.24%（12 结算亏损）；0.95–0.97 +2c 为 -7.46%（44 结算亏损）。
 - 因此所有 Shadow 臂切换到 `minRemainingMinutes=4320`、`maxRemainingMinutes=10080`、`WaitForMarketMinutes=10080`；当前 Gamma 最近窗口约 170h，10/10 进程 LIVE/WAITING。
 - 证据：`backend/build/research/bond-ladder-3to7d-20261021.json`、`bond-ladder-3to7d-q3-20261021.json`、`bond-ladder-3to7d-q4-20261021.json`、`leader-time-to-close-20261021.json`。
+### 10:08 分布式 ladder 对齐
+
+- 现有引擎每个市场只维护一个 active order；历史 +2c ladder 的多档同时挂单不能由单臂直接复现。
+- 因此把四个 maker 臂对齐成分布式 ladder：off00/off05/off10/off20 分别对应 bid 下方 0/0.5/1/2c，统一用 +2c 目标、fillVolumeFactor=2、24h 动量 ≤+1c、3–7 天窗口。
+- 评估时必须把这四臂聚合看，不能把单臂的 +1.88% 当成单臂收益。
+- 其余 taker 臂只作为执行对照；当前 10/10 进程 LIVE/WAITING，等待市场进入 3–7 天窗口。

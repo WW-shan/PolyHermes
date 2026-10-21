@@ -41,6 +41,13 @@ lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycl
 lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
 let totalFills = 0, totalCycles = 0, totalSettlements = 0, totalSettleLosses = 0, totalRealized = 0, totalUnrealized = 0, totalCrossTrades = 0, totalQueueConsumed = 0;
 const stale = [];
+const armMetrics = new Map();
+const makerLadderDirs = [
+  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off00-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off05-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off10-shadow-7d-20261021',
+  'backend/build/research/event-maker-bond-scalp-3c-geo-97099-off20-shadow-7d-20261021',
+].map(d => path.resolve(d));
 function readRunInfo(dir) {
   let pid = null;
   let procAlive = null;
@@ -61,6 +68,7 @@ for (const dir of dirs) {
   if (!fs.existsSync(statePath)) {
     const status = runInfo.procAlive ? 'WAITING' : (runInfo.pid ? 'DEAD' : 'MISSING');
     lines.push(`| ${arm} | ${status} | ${runInfo.pid ?? '-'} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
+    armMetrics.set(path.resolve(dir), null);
     if (status !== 'WAITING') stale.push(arm + ` (${status}, no state)`);
     continue;
   }
@@ -113,11 +121,20 @@ for (const dir of dirs) {
     neg60 = vals60.length ? vals60.filter(v => v < 0).length / vals60.length : null;
   }
   totalFills += fills; totalCycles += cycles; totalSettlements += settlements; totalSettleLosses += settleLosses; totalRealized += realized; totalUnrealized += unrealized; totalCrossTrades += crossTrades; totalQueueConsumed += queueConsumed;
+  armMetrics.set(path.resolve(dir), { fills, cycles, settlements, settleLosses, realized, unrealized, inventory, active });
   const fmt = v => v == null ? '-' : (Math.round(v * 100) / 100).toString();
   const pct = v => v == null ? '-' : (Math.round(v * 1000) / 10).toString() + '%';
   lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${settlements} | ${settleLosses} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(unrealized)} | ${fmt(realized + unrealized)} | ${crossTrades} | ${fmt(queueConsumed)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
 }
 lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | **${totalSettlements}** | **${totalSettleLosses}** | | **${Math.round(totalRealized * 100) / 100}** | **${Math.round(totalUnrealized * 100) / 100}** | **${Math.round((totalRealized + totalUnrealized) * 100) / 100}** | **${totalCrossTrades}** | **${Math.round(totalQueueConsumed * 100) / 100}** | | | |`);
+const ladder = makerLadderDirs.map(d => armMetrics.get(d));
+if (ladder.length && ladder.every(Boolean)) {
+  const sum = key => ladder.reduce((s, m) => s + m[key], 0);
+  const fmt = v => (Math.round(v * 100) / 100).toString();
+  lines.push('');
+  lines.push('**Distributed +2c maker ladder (off00/05/10/20 aggregate):**');
+  lines.push(`fills=${sum('fills')} cycles=${sum('cycles')} settlements=${sum('settlements')} settleLosses=${sum('settleLosses')} inventory=${fmt(sum('inventory'))} realized=${fmt(sum('realized'))} unrealized=${fmt(sum('unrealized'))} total=${fmt(sum('realized') + sum('unrealized'))}`);
+}
 if (stale.length) { lines.push(''); lines.push(`**NOT LIVE:** ${stale.join(', ')}`); }
 const text = lines.join('\n');
 console.log(text);
