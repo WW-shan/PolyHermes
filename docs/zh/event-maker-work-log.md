@@ -2056,3 +2056,11 @@
 - 年化量级约 $164（$100）、$914（$1,000）、$1,615（$5,000），均按 2.75 年数据集折算；容量有限，不能按高频策略预期。
 - 新增 `event-maker-bond-scalp-2c-geo-97099-off10-size1k-shadow-7d-20261021`，$1,000 单档、3–7d、动量≤+1c，用于验证真实规模 fill。
 - 当前共有 11 个 Shadow 臂，全部 WAITING。
+### 10:12 一键 suite 启动与恢复
+
+- 新增 `scripts/start-bond-shadow-suite.ps1`，统一定义 11 个 Shadow 臂的配置，支持：
+  - `-DryRun`：打印配置不启动；
+  - `-Restart`：按各臂 `run.json` 的 PID 停止旧 JVM 后重启；
+  - 自动重启 monitor（默认 30 分钟审计一次）。
+- `-Restart` 已实跑：11 个 JVM + monitor 全部启动，当前全部 WAITING；启动记录写入 `backend/build/research/bond-shadow-suite-start-*.json`。
+- 这样后续长测恢复不再依赖手工复制一长串参数，避免配置漂移。
