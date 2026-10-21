@@ -2143,3 +2143,9 @@
   - 过滤 24h ≤+1c：131 eligible → 208 lots，mean ROI +1.87%，0 结算亏损，Wilson 上界 1.813%，余量仅 +0.020%。
 - 结论：主 maker ladder **不做 24h 动量过滤**，以匹配历史主回测并保留 241 lots 的统计样本；`mom1` taker 臂继续独立测试过滤版本。
 - 已将 off00/05/10/20 和 $1k 臂的 `EntryMomentumMaxCents` 改为 999；`mom1-taker*` 保持 1。已重启 11 臂并逐臂核对 `run.json`。
+### 20.26 2026-10-21 11:12 并发市场数与 MaxMarkets
+
+- 新增 `scripts/analyze-bond-concurrency.cjs`，验证 3–7d 候选的历史并发度。
+- 0.97–0.99 Geopolitics：160 个候选，最大并发 17，时间加权平均并发 0.805。
+- 因此 suite 的 `MaxMarkets=20` 不会截断历史主策略候选。
+- 证据：`backend/build/research/bond-concurrency-20261021.json`。

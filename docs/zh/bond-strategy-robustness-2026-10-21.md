@@ -642,3 +642,12 @@ queue 模型，stop=0，q2，off0：
 - 因此主 maker ladder 不做 24h momentum 过滤；4 个 maker 臂和 $1k 臂使用 `EntryMomentumMaxCents=999`。
 - `mom1` taker 臂仍保留过滤，作为独立对照，不纳入主候选组。
 - 证据：`bond-ladder-3to7d-mom1-q2-20261021.json`、`bond-tail-risk-audit-mom1-q2-20261021.json`。
+### 14.8 并发市场数与 MaxMarkets 校验（2026-10-21）
+
+- 新增 `scripts/analyze-bond-concurrency.cjs`，按 3–7d 窗口计算历史候选的并发市场数。
+- 0.97–0.99 Geopolitics 主策略：
+  - 历史候选：160
+  - 最大并发：**17**
+  - 时间加权平均并发：**0.805**
+- 结论：suite 的 `MaxMarkets=20` 高于历史最大并发 17，不会因为市场数量上限而漏掉主策略候选。
+- 证据：`backend/build/research/bond-concurrency-20261021.json`。
