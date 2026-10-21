@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.service.eventmaker
 import com.wrbug.polymarketbot.research.livepaper.LivePaperMarket
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -150,6 +151,60 @@ class EventMakerStartupRecoveryTest {
         assertEquals(1_900_000_000L, recovered.endTimestamp)
     }
 
+    @Test
+    fun `startup reconciles a known buy that filled while process was down`() = runTest {
+        val port = RecoveryExecutionPort().apply {
+            positionSizes = mapOf("filled" to BigDecimal("5.00"))
+            orderSide = EventMakerSide.BUY
+            orderPrice = BigDecimal("0.96")
+            orderConditionId = "filled"
+            orderMatchedShares = BigDecimal("5.00")
+            statusAfterCancel = "FILLED"
+        }
+        val service = service(port)
+        val persisted = state(buyPendingMarket())
+
+        val reconciled = service.reconcilePersistedOrdersBeforeDiscovery(
+            persisted = persisted,
+            config = EventMakerConfig(),
+            accountId = 7L,
+            now = 2_000L
+        )
+        service.ensureNoUnmanagedPositions(7L, reconciled)
+
+        val saved = reconciled!!.markets.single()
+        assertEquals("5.00", saved.inventoryShares)
+        assertNull(saved.activeOrderId)
+        assertEquals(1, saved.fills.orEmpty().size)
+        assertEquals(0, port.cancelCount)
+    }
+    @Test
+    fun `startup sell fill updates cumulative realized pnl`() = runTest {
+        val port = RecoveryExecutionPort().apply {
+            orderSide = EventMakerSide.SELL
+            orderPrice = BigDecimal("0.97")
+            orderConditionId = "filled-sell"
+            orderMatchedShares = BigDecimal("5.00")
+            statusAfterCancel = "FILLED"
+        }
+        val service = service(port)
+        val persisted = state(sellPendingMarket())
+
+        val reconciled = service.reconcilePersistedOrdersBeforeDiscovery(
+            persisted = persisted,
+            config = EventMakerConfig(),
+            accountId = 7L,
+            now = 2_000L
+        )
+        service.ensureNoUnmanagedPositions(7L, reconciled)
+
+        val saved = reconciled!!.markets.single()
+        assertEquals(0.05, reconciled.cumulativeRealizedPnl, 1e-9)
+        assertEquals(0.05, saved.realizedPnl, 1e-9)
+        assertEquals("0", saved.inventoryShares)
+        assertEquals(1, saved.completedCycles)
+        assertNull(saved.activeOrderId)
+    }
     @Test
     fun `pending redemption with absent position is marked complete on startup`() = runTest {
         val port = RecoveryExecutionPort().apply {
@@ -309,6 +364,66 @@ class EventMakerStartupRecoveryTest {
         favoriteTokenId = "token"
     )
 
+    private fun buyPendingMarket() = EventMakerPersistedMarket(
+        conditionId = "filled",
+        phase = "BUY_PENDING",
+        inventoryShares = "0",
+        entryPrice = "0",
+        entryAt = 0L,
+        realizedPnl = 0.0,
+        completedCycles = 0,
+        activeOrderId = "buy-1",
+        activeOrderSide = "BUY",
+        activeOrderPrice = "0.96",
+        activeOrderOriginalShares = "5.00",
+        activeOrderMatchedShares = "0",
+        activeOrderStatus = "LIVE",
+        activeOrderCreatedAt = 1_100L,
+        currentEntryOrderId = null,
+        currentEntryShares = "0",
+        fills = emptyList(),
+        cycles = emptyList(),
+        favoriteTokenId = "token",
+        favoriteIndex = 0,
+        negativeRisk = false,
+        endTimestamp = 1_900_000_000L,
+        tickSize = 0.001
+    )
+    private fun sellPendingMarket() = EventMakerPersistedMarket(
+        conditionId = "filled-sell",
+        phase = "SELL_PENDING",
+        inventoryShares = "5.00",
+        entryPrice = "0.96",
+        entryAt = 1_000L,
+        realizedPnl = 0.0,
+        completedCycles = 0,
+        activeOrderId = "sell-1",
+        activeOrderSide = "SELL",
+        activeOrderPrice = "0.97",
+        activeOrderOriginalShares = "5.00",
+        activeOrderMatchedShares = "0",
+        activeOrderStatus = "LIVE",
+        activeOrderCreatedAt = 1_100L,
+        totalBuyNotional = 4.8,
+        currentEntryOrderId = "buy-1",
+        currentEntryShares = "5.00",
+        fills = listOf(
+            EventMakerFillRecord(
+                marketId = "filled-sell",
+                orderId = "buy-1",
+                side = EventMakerSide.BUY,
+                price = BigDecimal("0.96"),
+                shares = BigDecimal("5.00"),
+                timestamp = 1_000L
+            )
+        ),
+        cycles = emptyList(),
+        favoriteTokenId = "token",
+        favoriteIndex = 0,
+        negativeRisk = false,
+        endTimestamp = 1_900_000_000L,
+        tickSize = 0.001
+    )
     private class RecoveryExecutionPort : EventMakerExecutionPort {
         var cancelCount: Int = 0
             private set
@@ -316,6 +431,12 @@ class EventMakerStartupRecoveryTest {
             private set
         var lastStatus: String? = null
         var matchedShares: BigDecimal = BigDecimal.ZERO
+        var orderMatchedShares: BigDecimal? = null
+        var orderSide: EventMakerSide = EventMakerSide.SELL
+        var orderPrice: BigDecimal = BigDecimal("0.97")
+        var orderOriginalShares: BigDecimal = BigDecimal("5.00")
+        var orderConditionId: String? = null
+        var positionSizes: Map<String, BigDecimal> = emptyMap()
         var statusAfterCancel: String = "CANCELLED"
         var cancelFailure: Throwable? = null
         var settlementPosition: EventMakerSettlementPosition? = null
@@ -327,7 +448,7 @@ class EventMakerStartupRecoveryTest {
         override suspend fun listOpenOrderIds(accountId: Long): Result<Set<String>> = Result.success(emptySet())
 
         override suspend fun listOpenPositions(accountId: Long): Result<Map<String, BigDecimal>> =
-            Result.success(emptyMap())
+            Result.success(positionSizes)
 
         override suspend fun getSettlementPosition(
             accountId: Long,
@@ -355,11 +476,14 @@ class EventMakerStartupRecoveryTest {
             return Result.success(
                 EventMakerLiveOrder(
                     orderId = orderId,
-                    side = EventMakerSide.SELL,
-                    price = BigDecimal("0.97"),
-                    originalShares = BigDecimal("5.00"),
-                    matchedShares = matchedShares,
-                    status = statusAfterCancel
+                    side = orderSide,
+                    price = orderPrice,
+                    originalShares = orderOriginalShares,
+                    matchedShares = orderMatchedShares ?: matchedShares,
+                    status = statusAfterCancel,
+                    tokenId = "token",
+                    conditionId = orderConditionId,
+                    makerAddress = "0xproxy"
                 )
             )
         }

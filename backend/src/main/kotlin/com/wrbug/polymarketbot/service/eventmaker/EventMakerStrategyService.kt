@@ -100,7 +100,8 @@ class EventMakerStrategyService(
             try {
                 runBlocking {
                     ensureNoUnmanagedOpenOrders(accountId, persisted)
-                    ensureNoUnmanagedPositions(accountId, persisted)
+                    val reconciled = reconcilePersistedOrdersBeforeDiscovery(persisted, config, accountId)
+                    ensureNoUnmanagedPositions(accountId, reconciled)
                 }
             } catch (e: Exception) {
                 return Result.failure(e)
@@ -353,6 +354,7 @@ class EventMakerStrategyService(
         var persisted = stateStore.load()
         validatePersistedOwner(persisted, accountId)
         ensureNoUnmanagedOpenOrders(accountId, persisted)
+        persisted = reconcilePersistedOrdersBeforeDiscovery(persisted, config, accountId)
         ensureNoUnmanagedPositions(accountId, persisted)
         persisted = recoverPendingRedemptions(persisted, accountId)
         val prepared = try {
@@ -374,7 +376,7 @@ class EventMakerStrategyService(
             .orEmpty()
             .filter { saved ->
                 saved.conditionId !in discoveredIds &&
-                    (saved.inventoryShares.toBigDecimalOrNull() ?: BigDecimal.ZERO) > BigDecimal.ZERO
+                    needsStartupStateReconciliation(saved)
             }
             .map(::recoveryMarket)
         val states = (discovered + recoveryMarkets).map { EventMakerLiveState(it, config) }
@@ -395,6 +397,14 @@ class EventMakerStrategyService(
             executionPort,
             initialRealizedPnl = realizedPnlBaseline
         )
+        engine.registerRestoredOrders(states, accountId)
+        val startupReconcile = engine.reconcile(states, accountId, System.currentTimeMillis())
+        if (startupReconcile.haltedReason != null || engine.haltedReason != null) {
+            throw IllegalStateException(startupReconcile.haltedReason ?: engine.haltedReason)
+        }
+        persisted = projectPersistedState(persisted, states)
+        ensureNoUnmanagedOpenOrders(accountId, persisted)
+        ensureNoUnmanagedPositions(accountId, persisted)
         val restoredDailyAnchor = EventMakerDailyPnlBudget.resolve(
             now = System.currentTimeMillis(),
             persistedDay = persisted?.dailyPnlDay,
@@ -404,7 +414,6 @@ class EventMakerStrategyService(
         engine.dailyPnlBaseline = restoredDailyAnchor.baseline
         primeFlowGuard(engine, client, discovered)
         dailyBaselineDay = restoredDailyAnchor.day
-        engine.registerRestoredOrders(states, accountId)
         currentEngine = engine
 
         val seenTrades = linkedMapOf<String, Boolean>()
@@ -584,6 +593,79 @@ class EventMakerStrategyService(
         }
     }
 
+    /**
+     * A persisted market needs its in-memory state rebuilt before startup checks
+     * when it either still has inventory or has a known order that may have filled
+     * while the process was down. Ignoring the active-order case would turn a
+     * legitimate restart fill into an unrecoverable position mismatch.
+     */
+    internal fun needsStartupStateReconciliation(saved: EventMakerPersistedMarket): Boolean {
+        val inventory = saved.inventoryShares.toBigDecimalOrNull()
+            ?.takeIf { it >= BigDecimal.ZERO }
+            ?: throw IllegalStateException("persisted_inventory_invalid:${saved.conditionId}")
+        return inventory > BigDecimal.ZERO || !saved.activeOrderId.isNullOrBlank()
+    }
+
+    /**
+     * Projects the latest in-memory ledgers back onto the persisted state without
+     * dropping settlement-only markets that are not attached to a live state.
+     */
+    internal fun projectPersistedState(
+        persisted: EventMakerPersistedState?,
+        states: List<EventMakerLiveState>
+    ): EventMakerPersistedState? {
+        if (persisted == null) return null
+        val byCondition = states.associateBy { it.market.conditionId }
+        val previousByCondition = persisted.markets.associateBy { it.conditionId }
+        val persistedIds = persisted.markets.map { it.conditionId }.toSet()
+        val realizedDelta = states.sumOf { state ->
+            state.realizedPnl - (previousByCondition[state.market.conditionId]?.realizedPnl ?: 0.0)
+        }
+        val persistedMarketTotal = persisted.markets.sumOf { it.realizedPnl }
+        val baseCumulative = if (kotlin.math.abs(persisted.cumulativeRealizedPnl) <= 1e-9 &&
+            kotlin.math.abs(persistedMarketTotal) > 1e-9
+        ) {
+            persistedMarketTotal
+        } else {
+            persisted.cumulativeRealizedPnl
+        }
+        val updated = persisted.markets.map { saved ->
+            byCondition[saved.conditionId]?.toPersisted() ?: saved
+        } + states
+            .filter { it.market.conditionId !in persistedIds }
+            .map { it.toPersisted() }
+        return persisted.copy(
+            cumulativeRealizedPnl = baseCumulative + realizedDelta,
+            markets = updated
+        )
+    }
+
+    /**
+     * Reconciles known persisted orders before any startup position check. A
+     * resting order can fill while the JVM is down; applying that authoritative
+     * order snapshot first keeps the local ledger and on-chain position aligned.
+     * Unknown external positions still fail closed in ensureNoUnmanagedPositions.
+     */
+    internal suspend fun reconcilePersistedOrdersBeforeDiscovery(
+        persisted: EventMakerPersistedState?,
+        config: EventMakerConfig,
+        accountId: Long,
+        now: Long = System.currentTimeMillis()
+    ): EventMakerPersistedState? {
+        if (persisted == null) return null
+        val states = persisted.markets
+            .filter { !it.activeOrderId.isNullOrBlank() }
+            .map { saved ->
+                EventMakerLiveState(recoveryMarket(saved), config).apply { restore(saved) }
+            }
+        if (states.isEmpty()) return persisted
+        val engine = EventMakerLiveEngine(config, quotePlanner, riskPolicy, executionPort)
+        engine.registerRestoredOrders(states, accountId)
+        val result = engine.reconcile(states, accountId, now)
+        val halted = result.haltedReason ?: engine.haltedReason
+        if (halted != null) throw IllegalStateException(halted)
+        return projectPersistedState(persisted, states)
+    }
     /**
      * Rebuilds only the metadata needed to settle an inventory position whose
      * market is no longer returned by discovery. It is never subscribed to the

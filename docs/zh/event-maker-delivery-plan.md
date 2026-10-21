@@ -1444,3 +1444,12 @@ cd D:\Project\PolyHermes\backend
 - 恢复 10 股库存和 1 条 fill，丢弃 1 个旧 active order；重启后 activeOrderId=null、inventory=10.00、fills=1。
 - 结果：`resume smoke PASS`；证据在 `backend/build/research/resume-smoke-latest/`。
 - 这补充了单元测试之外的 CLI/JVM 级恢复验证。
+### 20.31 2026-10-21 11:51 启动成交恢复与结算 fail-closed
+
+- 修复已知挂单在 JVM 停机期间成交后的启动恢复：先读订单终态并回放成交，再做账户仓位检查。
+- active-order-only 的未发现市场也会重建恢复状态；BUY 仍不允许 outside-window 新开仓，SELL 允许继续退出。
+- 同步累计已实现 PnL，避免停机期间 SELL 成交被重启基线抵消。
+- 已解析市场但没有可观察仓位时不再直接记 1/0 payout；连续 3 次缺失后以 `settlement_position_missing` fail-closed。
+- Shadow settlement resolver 改为返回虚拟库存仓位，确保 Shadow 到期结算路径可执行。
+- 全量回归：109 suites / 611 tests / 0 failures / 0 errors / 2 skipped。
+- 11 个 Shadow 臂已重启，全部 WAITING；Gate 仍为 WAIT，真实 Live 仍受账户、资金、授权和 Gate PASS 约束。

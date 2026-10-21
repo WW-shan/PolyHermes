@@ -24,6 +24,7 @@ import com.wrbug.polymarketbot.service.eventmaker.EventMakerQuotePlanner
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerRiskPolicy
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerShadowExecutionPort
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerShadowFill
+import com.wrbug.polymarketbot.service.eventmaker.EventMakerSettlementPosition
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerSettlementSnapshot
 import com.wrbug.polymarketbot.service.eventmaker.EventMakerStateStore
 import kotlinx.coroutines.CoroutineScope
@@ -664,9 +665,21 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
         shadowExecution.configureFillModel(options.fillVolumeFactor)
         shadowExecution.configureSettlementResolver { market ->
             dataClient.getMarketResolution(market.conditionId).map { resolution ->
+                val state = states.firstOrNull { it.market.conditionId == market.conditionId }
+                val position = state
+                    ?.takeIf { it.inventoryShares.signum() > 0 }
+                    ?.let {
+                        EventMakerSettlementPosition(
+                            tokenId = market.favoriteTokenId,
+                            shares = it.inventoryShares,
+                            redeemable = true,
+                            outcomeIndex = market.favoriteIndex,
+                            negativeRisk = market.negRisk
+                        )
+                    }
                 EventMakerSettlementSnapshot(
                     resolutionOutcomeIndex = resolution.resolvedOutcomeIndex,
-                    position = null
+                    position = position
                 )
             }
         }

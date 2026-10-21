@@ -2192,3 +2192,22 @@
 - 输出：`resume smoke PASS`。
 - 证据目录：`backend/build/research/resume-smoke-latest/`（state、recovery、summary、logs）。
 - 这验证了实际 JVM 路径，而不只是单元测试里的状态机恢复。
+### 20.31 2026-10-21 11:51 启动成交恢复与幽灵结算 fail-closed
+
+- 审计发现两个实盘边界：
+  1. 已知活动订单在 JVM 停机期间成交时，旧启动检查会因仓位数量不一致直接拒绝，且只有 active order、没有库存的未发现市场不会重建状态。
+  2. 已解析市场若仓位查询返回 `null`，旧逻辑会直接按 1/0 记结算，可能产生幽灵结算和虚增 PnL。
+- 修复：
+  - `start()` / `runLive()` 在任何仓位检查前，先按持久化 `activeOrderId` 查询权威订单快照并对账，允许停机期间正常成交。
+  - 未发现市场只要有 active order 或 inventory 就重建恢复市场；BUY 仍受 outside-window 禁止新开仓，SELL 可继续退出。
+  - `projectPersistedState` 同步更新 `cumulativeRealizedPnl`，避免停机期间 SELL 已实现 PnL 被重启基线抵消。
+  - 已解析市场 `position=null` 时重试 3 次，仍缺失则 `settlement_position_missing` 停机，不记结算。
+  - Shadow CLI 从虚拟库存构造 settlement position，与 Live 的 fail-closed 语义保持一致。
+- 回归测试：
+  - 停机期间 BUY 成交 5 股 -> inventory=5、activeOrder=null、不误撤单。
+  - 停机期间 SELL 成交 5 股 -> realized/cumulative +0.05、cycle 完成。
+  - 结算仓位缺失 -> 0 settlement，连续 3 次后 halt。
+  - Shadow winning/losing SETTLE 路径通过。
+- 全量回归：**109 suites / 611 tests / 0 failures / 0 errors / 2 skipped**。
+- 11 个 Shadow 臂已于 2026-10-21 11:50:05–11:50:16 +08:00 用新代码重启，全部 `WAITING`，`0 fills / 0 settlements`，Gate 仍为 `WAIT`。
+- 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-115019.json`。

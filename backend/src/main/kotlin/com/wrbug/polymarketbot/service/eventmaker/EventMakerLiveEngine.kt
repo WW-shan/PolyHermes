@@ -309,19 +309,35 @@ class EventMakerLiveEngine(
                     return EventMakerEngineResult(errors = listOf("settlement_snapshot_failed:${error.message}"))
                 }
             )
-            settlementFailures.remove(key)
-            if (!snapshot.resolved) continue
+            if (!snapshot.resolved) {
+                settlementFailures.remove(key)
+                continue
+            }
             val position = snapshot.position
-            if (position != null && (position.shares <= BigDecimal.ZERO ||
-                    position.shares.compareTo(state.inventoryShares) != 0)
+            if (position == null) {
+                // A resolved market with a locally booked inventory but no
+                // observable token position is ambiguous. Never fabricate a
+                // payout: retry briefly, then fail closed for manual reconciliation.
+                val count = settlementFailures.merge(key, 1, Int::plus) ?: 1
+                if (count >= MAX_SETTLEMENT_FAILURES) {
+                    val reason = "settlement_position_missing:${state.market.conditionId}"
+                    halt(reason)
+                    return EventMakerEngineResult.halted(reason)
+                }
+                return EventMakerEngineResult(
+                    errors = listOf("settlement_position_missing:${state.market.conditionId}")
+                )
+            }
+            if (position.shares <= BigDecimal.ZERO ||
+                position.shares.compareTo(state.inventoryShares) != 0
             ) {
                 val reason =
                     "settlement_position_size_mismatch:${state.market.conditionId}:${position.shares}!=${state.inventoryShares}"
                 halt(reason)
                 return EventMakerEngineResult.halted(reason)
             }
-            val outcomeIndex = position?.outcomeIndex ?: state.market.favoriteIndex
-            val negativeRisk = position?.negativeRisk ?: state.market.negRisk
+            val outcomeIndex = position.outcomeIndex ?: state.market.favoriteIndex
+            val negativeRisk = position.negativeRisk ?: state.market.negRisk
             if (outcomeIndex != state.market.favoriteIndex) {
                 val reason = "settlement_position_market_mismatch:${state.market.conditionId}"
                 halt(reason)

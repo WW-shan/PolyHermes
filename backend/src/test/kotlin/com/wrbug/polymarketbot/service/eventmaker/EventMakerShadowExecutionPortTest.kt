@@ -165,14 +165,25 @@ class EventMakerShadowExecutionPortTest {
             maxTotalInventoryNotional = 1_000.0,
             maxDailyLoss = 100.0
         )
+        val state = EventMakerLiveState(market, config)
         val port = EventMakerShadowExecutionPort().apply {
             configureFillModel(0.0)
             configureSettlementResolver {
-                Result.success(EventMakerSettlementSnapshot(resolvedOutcomeIndex, null))
+                Result.success(
+                    EventMakerSettlementSnapshot(
+                        resolvedOutcomeIndex,
+                        EventMakerSettlementPosition(
+                            tokenId = market.favoriteTokenId,
+                            shares = state.inventoryShares,
+                            redeemable = true,
+                            outcomeIndex = market.favoriteIndex,
+                            negativeRisk = market.negRisk
+                        )
+                    )
+                )
             }
         }
         val engine = EventMakerLiveEngine(config, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
-        val state = EventMakerLiveState(market, config)
         val start = System.currentTimeMillis()
         state.onBook(book(0.95, 0.97, start))
         val placed = engine.quote(listOf(state), mapOf(market.favoriteTokenId to state.lastBook!!), 0L, start)

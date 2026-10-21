@@ -662,7 +662,7 @@ class EventMakerLiveEngineTest {
     }
 
     @Test
-    fun `resolved market with already absent position books payout without redemption`() = runTest {
+    fun `resolved market with missing position fails closed without booking payout`() = runTest {
         val start = 1_800_000_000_000L
         val state = EventMakerLiveState(market(), config)
         val port = FakeExecutionPort()
@@ -676,19 +676,17 @@ class EventMakerLiveEngineTest {
             resolutionOutcomeIndex = 0,
             position = null
         )
-        val settlement = engine.settleResolved(listOf(state), 7L, start + 2_000L).settlements.single()
-        port.settlementPosition = EventMakerSettlementPosition(
-            tokenId = "token",
-            shares = BigDecimal.ZERO,
-            redeemable = false,
-            outcomeIndex = 0,
-            negativeRisk = false
-        )
-        engine.redeemPendingRedemptions(listOf(state), 7L, start + 2_100L)
+        val first = engine.settleResolved(listOf(state), 7L, start + 2_000L)
+        assertTrue(first.settlements.isEmpty())
+        assertNull(engine.haltedReason)
 
-        assertEquals(BigDecimal.ONE, settlement.exitPrice)
-        assertEquals(EventMakerRedemptionStatus.ALREADY_ABSENT, state.settlements.single().redemptionStatus)
-        assertEquals(0, port.redeemSettlementCount)
+        engine.settleResolved(listOf(state), 7L, start + 32_001L)
+        engine.settleResolved(listOf(state), 7L, start + 62_002L)
+
+        assertEquals("settlement_position_missing:condition", engine.haltedReason)
+        assertEquals(0, state.completedCycles)
+        assertEquals(0, state.settlements.size)
+        assertNull(state.pendingRedemption())
     }
 
     @Test
