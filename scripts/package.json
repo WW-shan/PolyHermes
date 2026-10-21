@@ -23,7 +23,8 @@
     "analyze:leader-ledger": "node analyze-leader-ledger.mjs",
     "audit:bond-shadow": "node audit-bond-shadow.cjs",
     "test:bond-tail-audit": "node test-bond-tail-audit.cjs",
-    "test:bond-shadow-gate": "node test-bond-shadow-gate.cjs"
+    "test:bond-shadow-gate": "node test-bond-shadow-gate.cjs",
+    "analyze:bond-portfolio": "node analyze-bond-portfolio.cjs"
   },
   "dependencies": {
     "@ethersproject/wallet": "^5.7.0",

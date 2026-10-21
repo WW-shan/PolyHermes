@@ -32,6 +32,7 @@ const minHoursToClose = numArg('min-hours-to-close', 0);
 const flattenHoursBeforeClose = numArg('flatten-hours-before-close', 0);
 const flattenSlippageTicks = numArg('flatten-slippage-ticks', 0);
 const stopLossCents = numArg('stop-loss-cents', 0);
+const lotsOutputPath = arg('lots-output');
 if (stopLossCents < 0) throw new Error('invalid --stop-loss-cents');
 const maxHoursToClose = numArg('max-hours-to-close', horizonDays * 24);
 if (flattenHoursBeforeClose < 0 || flattenHoursBeforeClose > horizonDays * 24) throw new Error('invalid --flatten-hours-before-close');
@@ -265,6 +266,7 @@ for(const m of dataset.markets){
   if(r) refs.push({m,r,entryTs});
 }
 const results=[];
+const allLotsGlobal=[];
 for(let bi=0;bi<bands.length-1;bi++){
   const low=bands[bi], high=bands[bi+1]; if(low==null||high==null) continue;
   const priceEligible=refs.filter(({r})=>r.price>=low&&r.price<high);
@@ -280,6 +282,7 @@ for(let bi=0;bi<bands.length-1;bi++){
         if(sim.filled){ filledMarkets++; totalBuys+=sim.buys; totalSells+=sim.sells; maxInvNotionalSum+=sim.maxInventoryNotional; avgInvSum+=sim.avgInventory; const marketLots=sim.lots.length; if(marketLots>maxLotsPerMarket)maxLotsPerMarket=marketLots; if(marketLots>10)marketsOver10Lots++; if(marketLots>20)marketsOver20Lots++; }
         for(const l of sim.lots) allLots.push({...l, roi:l.pnl/trancheNotional, tag:m.tag, conditionId:m.conditionId});
       }
+      if (lotsOutputPath) allLotsGlobal.push(...allLots.map(l=>({...l, band:bandLabel(low, high), tag, targetCents:target, trancheNotional, queueFactor, maxTranches, stopLossCents})));
       const rois=allLots.map(l=>l.roi), pnls=allLots.map(l=>l.pnl);
       const wins=rois.filter(x=>x>0).length, losses=rois.filter(x=>x<0).length;
       const aw=mean(rois.filter(x=>x>0)), al=mean(rois.filter(x=>x<0));
@@ -388,6 +391,7 @@ for(let bi=0;bi<bands.length-1;bi++){
   }
 }
 fs.writeFileSync(outputPath,JSON.stringify({generatedAt:new Date().toISOString(),datasetPath,horizonDays,trancheNotional,queueFactor,maxTranches,flattenHoursBeforeClose,flattenSlippageTicks,stopLossCents,levelsCents,targetsCents,momentumMinCents,momentumMaxCents,momentumLookbackSeconds,results},null,2));
+if (lotsOutputPath) fs.writeFileSync(lotsOutputPath, JSON.stringify({generatedAt:new Date().toISOString(), datasetPath, lots:allLotsGlobal}, null, 2));
 console.log('band tag tgt levels elig filled fill% lots buys sells stops stopLoss win% meanRoi roiCI worst tailMkts tailLossMkts tailLossCI maxInv');
 for(const r of results){
   console.log([r.band.padEnd(9),r.tag.padEnd(12),String(r.targetCents).padStart(3),String(r.levelsCents).padStart(9),String(r.eligible).padStart(4),String(r.filledMarkets).padStart(5),(100*r.fillRate).toFixed(1).padStart(5),String(r.lots).padStart(4),String(r.buys).padStart(4),String(r.sells).padStart(4),String(r.stopCount).padStart(4),String(r.stopLossCount).padStart(3),(100*r.winRate).toFixed(1).padStart(5),(100*r.meanRoi).toFixed(2).padStart(7),`[${(100*r.roiCi95[0]).toFixed(2)},${(100*r.roiCi95[1]).toFixed(2)}]`.padStart(15),(100*r.worstRoi).toFixed(1).padStart(7),String(r.tailExitMarkets).padStart(5),String(r.tailExitLossMarkets).padStart(3),`[${(100*r.tailExitLossCi95[0]).toFixed(2)},${(100*r.tailExitLossCi95[1]).toFixed(2)}]`.padStart(15),r.avgMaxInventoryNotional.toFixed(0).padStart(7)].join(' '));
