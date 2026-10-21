@@ -2171,3 +2171,10 @@
   - 100 个零亏损结算 → WAIT
   - 100 个全亏损结算 → FAIL
 - 结果：`bond gate regression: 3/3 PASS`。
+### 20.29 2026-10-21 11:28 计划状态校正
+
+- 交付计划已把旧的 12h–7d 八窗口结论标记为“已由 3–7d 主窗口 + Wilson 审计替代”，不再作为验收依据。
+- Shadow fill 任务状态更新为“11 臂已启动、全部 WAITING、尚无 state/fill”。
+- 尾部风险项保留未勾选，但记录 q2 的统计边界：上界 1.569% < 盈亏平衡 1.835%。
+- 全量回归更新为 **109 suites / 609 tests / 0 failures / 0 errors / 2 skipped**。
+- Live smoke 仍未执行，清单已链接到交付计划。
