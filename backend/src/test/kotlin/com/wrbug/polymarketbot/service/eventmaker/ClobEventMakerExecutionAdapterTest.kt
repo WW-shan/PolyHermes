@@ -422,10 +422,13 @@ class ClobEventMakerExecutionAdapterTest {
             )
         )
 
+        Mockito.`when`(blockchainService.getCtfBalance("0xproxy", "token"))
+            .thenReturn(Result.success(BigDecimal("10.00")))
+
         val snapshot = adapter.getSettlementSnapshot(1L, market()).getOrThrow()
 
         assertEquals(0, snapshot.resolutionOutcomeIndex)
-        assertEquals(BigDecimal.valueOf(10.0), snapshot.position?.shares)
+        assertEquals(0, BigDecimal.valueOf(10.0).compareTo(snapshot.position!!.shares))
         assertEquals(true, snapshot.position?.redeemable)
     }
 
@@ -458,11 +461,100 @@ class ClobEventMakerExecutionAdapterTest {
             )
         )
 
+        Mockito.`when`(blockchainService.getCtfBalance("0xproxy", "token"))
+            .thenReturn(Result.success(BigDecimal("10.00")))
+
         val result = adapter.getSettlementSnapshot(1L, market())
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull() is EventMakerUnknownOrderStateException)
         assertTrue(result.exceptionOrNull()?.message?.contains("settlement_position_market_mismatch") == true)
+    }
+
+    @Test
+    fun `settlement snapshot rejects chain and index size mismatch`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(marketService.getMarketResolution("condition")).thenReturn(
+            Result.success(
+                com.wrbug.polymarketbot.service.common.MarketResolutionSnapshot(
+                    closed = true,
+                    outcomePrices = listOf(BigDecimal.ONE, BigDecimal.ZERO),
+                    resolvedOutcomeIndex = 0
+                )
+            )
+        )
+        Mockito.`when`(blockchainService.getPositions("0xproxy")).thenReturn(
+            Result.success(
+                listOf(
+                    PositionResponse(
+                        proxyWallet = "0xproxy",
+                        asset = "token",
+                        conditionId = "condition",
+                        size = 10.0,
+                        redeemable = true,
+                        outcomeIndex = 0,
+                        negativeRisk = false,
+                        currentValue = 10.0
+                    )
+                )
+            )
+        )
+        Mockito.`when`(blockchainService.getCtfBalance("0xproxy", "token"))
+            .thenReturn(Result.success(BigDecimal("9.00")))
+
+        val result = adapter.getSettlementSnapshot(1L, market())
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("settlement_position_chain_mismatch") == true)
+    }
+
+    @Test
+    fun `settlement snapshot fails closed when chain position is missing from index`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(marketService.getMarketResolution("condition")).thenReturn(
+            Result.success(
+                com.wrbug.polymarketbot.service.common.MarketResolutionSnapshot(
+                    closed = true,
+                    outcomePrices = listOf(BigDecimal.ONE, BigDecimal.ZERO),
+                    resolvedOutcomeIndex = 0
+                )
+            )
+        )
+        Mockito.`when`(blockchainService.getPositions("0xproxy")).thenReturn(Result.success(emptyList()))
+        Mockito.`when`(blockchainService.getCtfBalance("0xproxy", "token"))
+            .thenReturn(Result.success(BigDecimal("10.00")))
+
+        val result = adapter.getSettlementSnapshot(1L, market())
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("settlement_position_index_missing") == true)
+    }
+
+    @Test
+    fun `redemption recovery trusts chain absence over stale position index`() = runTest {
+        stubAccountAndMarket()
+        Mockito.`when`(blockchainService.getPositions("0xproxy")).thenReturn(
+            Result.success(
+                listOf(
+                    PositionResponse(
+                        proxyWallet = "0xproxy",
+                        asset = "token",
+                        conditionId = "condition",
+                        size = 10.0,
+                        redeemable = true,
+                        outcomeIndex = 0,
+                        negativeRisk = false,
+                        currentValue = 10.0
+                    )
+                )
+            )
+        )
+        Mockito.`when`(blockchainService.getCtfBalance("0xproxy", "token"))
+            .thenReturn(Result.success(BigDecimal.ZERO))
+
+        val position = adapter.getSettlementPosition(1L, settlementRecord()).getOrThrow()
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(position.shares))
     }
     @Test
     fun `unresolved market does not read account positions`() = runTest {

@@ -556,6 +556,8 @@ schema v3 新增日亏损锚点；schema v4 新增 settlement 账本与赎回状
 
 行为：每 30 秒重试一次，连续 3 次仍缺失后以 `settlement_position_missing:<conditionId>` fail-closed；不会直接写入 1/0 结算，也不会虚增 PnL。
 
+结算仓位使用 Data API + 链上 CTF `balanceOf` 双源校验：两边股数不一致时为 `settlement_position_chain_mismatch`；链上有仓但索引缺失时为 `settlement_position_index_missing`；链上查询失败时为 `settlement_chain_balance_unavailable`。赎回恢复阶段允许链上余额为 0，并将其视为已经赎回，即使 Data API 仍在短暂返回旧仓位。
+
 处理：
 
 1. 核对 CLOB、Data API 和链上 CTF `balanceOf`；

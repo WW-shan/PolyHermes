@@ -2211,3 +2211,16 @@
 - 全量回归：**109 suites / 611 tests / 0 failures / 0 errors / 2 skipped**。
 - 11 个 Shadow 臂已于 2026-10-21 11:50:05–11:50:16 +08:00 用新代码重启，全部 `WAITING`，`0 fills / 0 settlements`，Gate 仍为 `WAIT`。
 - 启动证据：`backend/build/research/bond-shadow-suite-start-20261021-115019.json`。
+### 20.32 2026-10-21 11:58 结算仓位链上/索引双源对账
+
+- `ClobEventMakerExecutionAdapter` 的结算路径现在同时读取 Data API position 和链上 CTF `balanceOf`：
+  - 已解析市场记账前，两边股数必须严格相等；否则 `settlement_position_chain_mismatch` fail-closed。
+  - 链上有仓但 Data API 缺失：`settlement_position_index_missing`，不允许盲记。
+  - 赎回恢复阶段如果链上余额为 0，即使 Data API 仍返回旧仓位，也按已赎回成功处理，避免索引延迟导致误停。
+  - 链上余额查询失败：`settlement_chain_balance_unavailable`，同样 fail-closed。
+- 新增适配器回归：
+  - 链上 10 / API 10 -> 正常快照；
+  - 链上 9 / API 10 -> mismatch；
+  - 链上 10 / API 缺失 -> index missing；
+  - 赎回恢复链上 0 / API 仍为 10 -> ALREADY_ABSENT 路径。
+- 全量回归：**109 suites / 614 tests / 0 failures / 0 errors / 2 skipped**。

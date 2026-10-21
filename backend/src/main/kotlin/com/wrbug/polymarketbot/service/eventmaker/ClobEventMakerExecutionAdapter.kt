@@ -153,7 +153,8 @@ class ClobEventMakerExecutionAdapter(
             conditionId = settlement.marketId,
             tokenId = settlement.favoriteTokenId,
             expectedOutcomeIndex = settlement.outcomeIndex,
-            expectedNegRisk = settlement.negativeRisk
+            expectedNegRisk = settlement.negativeRisk,
+            allowOnChainAbsent = true
         )
     }
 
@@ -197,7 +198,8 @@ class ClobEventMakerExecutionAdapter(
         conditionId: String,
         tokenId: String,
         expectedOutcomeIndex: Int,
-        expectedNegRisk: Boolean?
+        expectedNegRisk: Boolean?,
+        allowOnChainAbsent: Boolean = false
     ): Result<EventMakerSettlementPosition> {
         val positions = blockchainService.getPositions(context.account.proxyAddress)
             .getOrElse { return Result.failure(IllegalStateException("positions_unavailable:${it.message}", it)) }
@@ -212,7 +214,38 @@ class ClobEventMakerExecutionAdapter(
             return Result.failure(EventMakerUnknownOrderStateException("position_size_missing"))
         }
         val position = matching.singleOrNull()
-            ?: return Result.success(
+        val onChainShares = blockchainService.getCtfBalance(context.account.proxyAddress, tokenId)
+            .getOrElse {
+                return Result.failure(
+                    IllegalStateException("settlement_chain_balance_unavailable:$conditionId:${it.message}", it)
+                )
+            }
+        if (onChainShares < BigDecimal.ZERO) {
+            return Result.failure(EventMakerUnknownOrderStateException("settlement_position_negative:$conditionId"))
+        }
+        if (onChainShares.compareTo(BigDecimal.ZERO) == 0) {
+            // During redemption recovery, an already-redeemed token is expected to
+            // be absent on-chain even while the Data API lags. Before a payout is
+            // booked, the caller must use the strict path below.
+            if (allowOnChainAbsent) {
+                return Result.success(
+                    EventMakerSettlementPosition(
+                        tokenId = tokenId,
+                        shares = BigDecimal.ZERO,
+                        redeemable = false,
+                        outcomeIndex = expectedOutcomeIndex,
+                        negativeRisk = expectedNegRisk ?: false
+                    )
+                )
+            }
+            if (position != null) {
+                return Result.failure(
+                    EventMakerUnknownOrderStateException(
+                        "settlement_position_chain_mismatch:$conditionId:api=${BigDecimal.valueOf(position.size!!)}:chain=0"
+                    )
+                )
+            }
+            return Result.success(
                 EventMakerSettlementPosition(
                     tokenId = tokenId,
                     shares = BigDecimal.ZERO,
@@ -221,12 +254,28 @@ class ClobEventMakerExecutionAdapter(
                     negativeRisk = expectedNegRisk ?: false
                 )
             )
+        }
+        if (position == null) {
+            return Result.failure(
+                EventMakerUnknownOrderStateException(
+                    "settlement_position_index_missing:$conditionId:chain=$onChainShares"
+                )
+            )
+        }
         if (!position.asset.equals(tokenId, ignoreCase = true)) {
             return Result.failure(EventMakerUnknownOrderStateException("settlement_token_mismatch:$conditionId"))
         }
         val size = position.size
             ?: return Result.failure(EventMakerUnknownOrderStateException("position_size_missing"))
         if (size < 0.0) return Result.failure(EventMakerUnknownOrderStateException("position_size_negative"))
+        val apiShares = BigDecimal.valueOf(size)
+        if (apiShares.compareTo(onChainShares) != 0) {
+            return Result.failure(
+                EventMakerUnknownOrderStateException(
+                    "settlement_position_chain_mismatch:$conditionId:api=$apiShares:chain=$onChainShares"
+                )
+            )
+        }
         val outcomeIndex = position.outcomeIndex
             ?: return Result.failure(EventMakerUnknownOrderStateException("settlement_outcome_missing"))
         val negativeRisk = position.negativeRisk
@@ -239,7 +288,7 @@ class ClobEventMakerExecutionAdapter(
         return Result.success(
             EventMakerSettlementPosition(
                 tokenId = tokenId,
-                shares = BigDecimal.valueOf(size),
+                shares = onChainShares,
                 redeemable = redeemable,
                 outcomeIndex = outcomeIndex,
                 negativeRisk = negativeRisk

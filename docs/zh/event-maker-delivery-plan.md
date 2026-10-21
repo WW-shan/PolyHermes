@@ -1453,3 +1453,9 @@ cd D:\Project\PolyHermes\backend
 - Shadow settlement resolver 改为返回虚拟库存仓位，确保 Shadow 到期结算路径可执行。
 - 全量回归：109 suites / 611 tests / 0 failures / 0 errors / 2 skipped。
 - 11 个 Shadow 臂已重启，全部 WAITING；Gate 仍为 WAIT，真实 Live 仍受账户、资金、授权和 Gate PASS 约束。
+### 20.32 2026-10-21 11:58 结算仓位双源对账
+
+- 解析市场记账前，Data API position 与链上 CTF `balanceOf` 必须股数一致；不一致、索引缺失或链上查询失败均 fail-closed。
+- 赎回恢复阶段以链上余额为准：链上为 0 时接受为已经赎回，即使 Data API 仍短暂返回旧仓位。
+- 新增 mismatch / index missing / stale index absence 三组适配器测试。
+- 全量回归：109 suites / 614 tests / 0 failures / 0 errors / 2 skipped。
