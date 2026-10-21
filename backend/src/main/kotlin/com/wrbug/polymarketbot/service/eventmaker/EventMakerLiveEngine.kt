@@ -128,6 +128,10 @@ class EventMakerLiveEngine(
         var result = EventMakerEngineResult()
         val configuredEntryOffsets = config.effectiveLadderOffsetsCents()
         for (state in states) {
+            if (isInsideFlattenWindow(state, now)) {
+                result = result.merge(flattenState(state, books, accountId, now))
+                continue
+            }
             val marketEligible = eligibleMarketIds == null || state.market.conditionId in eligibleMarketIds
             // A persisted leg whose offset is no longer configured may still exit,
             // but it must never start a new BUY cycle after it becomes flat.
@@ -288,6 +292,82 @@ class EventMakerLiveEngine(
         return result
     }
 
+    /**
+     * Pre-close forced flatten. It cancels any ordinary maker quote, then places
+     * a non-post-only SELL at the bid minus configured slippage. The order is
+     * re-created after [FLATTEN_RETRY_MS] if it rests unfilled.
+     */
+    private suspend fun flattenState(
+        state: EventMakerLiveState,
+        books: Map<String, MarketBook>,
+        accountId: Long,
+        now: Long
+    ): EventMakerEngineResult {
+        var result = EventMakerEngineResult()
+        val active = state.activeOrder
+        if (active != null) {
+            val stillUseful = active.side == EventMakerSide.SELL &&
+                state.forcedFlatten &&
+                now - active.createdAt < FLATTEN_RETRY_MS
+            if (!stillUseful) {
+                result = result.merge(
+                    cancelAndReconcile(state, accountId, now, "flatten_requote", active)
+                )
+            }
+            return result
+        }
+        if (state.inventoryShares <= BigDecimal.ZERO) return result
+        if (now < (placementBackoffUntil[state.market.conditionId] ?: 0L)) return result
+
+        val book = books[state.market.favoriteTokenId] ?: state.lastBook
+            ?: return EventMakerEngineResult(errors = listOf("flatten_book_missing:${state.market.conditionId}"))
+        val tick = BigDecimal.valueOf(state.market.tickSize)
+        val intent = quotePlanner.planTakerExit(state.config, book, tick, state.inventoryShares, now)
+            ?: return EventMakerEngineResult(errors = listOf("flatten_no_bid:${state.market.conditionId}"))
+
+        executionPort.place(accountId, state.market, intent).fold(
+            onSuccess = { order ->
+                placementBackoffUntil.remove(state.market.conditionId)
+                state.onOrderPlaced(order, forcedFlatten = true)
+                activeAccounts[order.orderId] = accountId
+                result = result.merge(
+                    EventMakerEngineResult(
+                        placed = listOf(EventMakerEnginePlacement(state.market.conditionId, order))
+                    )
+                )
+                val shapeMatches = order.side == EventMakerSide.SELL &&
+                    order.price.compareTo(intent.price) == 0 &&
+                    order.originalShares.compareTo(intent.shares) == 0
+                val marketMatches =
+                    (order.conditionId == null || order.conditionId.equals(state.market.conditionId, ignoreCase = true)) &&
+                        (order.tokenId == null || order.tokenId.equals(state.market.favoriteTokenId, ignoreCase = true))
+                if (!shapeMatches || !marketMatches || !EventMakerOrderStatuses.isKnown(order.status)) {
+                    val reason = "flatten_order_rejected:${order.orderId}"
+                    result = result.merge(cancelAndReconcile(state, accountId, now, reason, order))
+                    result = result.merge(EventMakerEngineResult.halted(reason))
+                    halt(reason)
+                }
+            },
+            onFailure = { error ->
+                val message = "flatten_place_failed:${error.message}"
+                if (error is EventMakerAmbiguousOrderException) {
+                    halt("flatten_order_placement_unknown:${error.message}")
+                    result = result.merge(EventMakerEngineResult.halted(haltedReason!!))
+                } else {
+                    placementBackoffUntil[state.market.conditionId] = now + ORDER_RETRY_BACKOFF_MS
+                    result = result.merge(EventMakerEngineResult(errors = listOf(message)))
+                }
+            }
+        )
+        return result
+    }
+
+    private fun isInsideFlattenWindow(state: EventMakerLiveState, now: Long): Boolean {
+        val minutes = config.flattenBeforeCloseMinutes
+        if (minutes <= 0L || state.market.endTimestamp == Long.MAX_VALUE) return false
+        val endMs = state.market.endTimestamp * 1_000L
+        return now >= endMs - minutes * 60_000L && now < endMs
+    }
     /**
      * Converts an expired LONG position into a SETTLE cycle once Gamma exposes a
      * terminal 0/1 outcome. This method never redeems: the service persists the
@@ -796,5 +876,6 @@ class EventMakerLiveEngine(
         private const val REDEMPTION_RETRY_BACKOFF_MS = 30_000L
         private const val SETTLEMENT_CHECK_INTERVAL_MS = 30_000L
         private const val ORDER_RETRY_BACKOFF_MS = 5_000L
+        private const val FLATTEN_RETRY_MS = 15_000L
     }
 }

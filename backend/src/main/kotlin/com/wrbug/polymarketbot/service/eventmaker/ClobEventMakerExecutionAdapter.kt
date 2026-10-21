@@ -368,7 +368,11 @@ class ClobEventMakerExecutionAdapter(
             logger.error("Event maker order signing failed: accountId=$accountId, side=${intent.side}", e)
             return Result.failure(EventMakerPreflightRejectedException("order_signing_failed:${e.message}"))
         }
-        val request = EventMakerOrderRequestFactory.build(signed, context.apiKey)
+        val request = EventMakerOrderRequestFactory.build(
+            signedOrder = signed,
+            apiKey = context.apiKey,
+            postOnly = !normalizedIntent.takerEntry && !normalizedIntent.takerExit
+        )
         val response = try {
             context.api.createOrder(request)
         } catch (e: Exception) {

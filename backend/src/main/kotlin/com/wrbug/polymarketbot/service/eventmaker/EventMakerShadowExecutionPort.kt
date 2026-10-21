@@ -112,23 +112,24 @@ class EventMakerShadowExecutionPort : EventMakerExecutionPort {
         val sequence = nextId.incrementAndGet()
         val orderId = "$orderIdPrefix-$sequence"
         val now = System.currentTimeMillis()
-        val queueAhead = if (intent.takerEntry) BigDecimal.ZERO else BigDecimal.valueOf(intent.queueAheadShares)
+        val immediate = intent.takerEntry || intent.takerExit
+        val queueAhead = if (immediate) BigDecimal.ZERO else BigDecimal.valueOf(intent.queueAheadShares)
         val order = SimulatedOrder(
             id = orderId,
             market = market,
             side = intent.side,
             price = intent.price,
             originalShares = intent.shares,
-            remainingShares = if (intent.takerEntry) BigDecimal.ZERO else intent.shares,
+            remainingShares = if (immediate) BigDecimal.ZERO else intent.shares,
             queueAheadAtPlacement = queueAhead,
             queueAheadRemaining = queueAhead,
             createdAt = now,
             sequence = sequence,
-            status = if (intent.takerEntry) "FILLED" else "LIVE",
+            status = if (immediate) "FILLED" else "LIVE",
             takerEntry = intent.takerEntry
         )
         orders[orderId] = order
-        if (intent.takerEntry) {
+        if (immediate) {
             immediateFills += EventMakerShadowFill(
                 orderId = orderId,
                 marketId = market.conditionId,

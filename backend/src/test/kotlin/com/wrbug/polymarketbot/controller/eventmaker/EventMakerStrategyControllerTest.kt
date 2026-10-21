@@ -32,8 +32,11 @@ class EventMakerStrategyControllerTest {
                 minPrice = 0.97,
                 maxPrice = 0.99,
                 minSpreadTicks = 2,
+                minRemainingMinutes = 2880,
                 entryOffsetCents = 0.5,
                 ladderOffsetsCents = listOf(0.0, 0.5, 1.0),
+                flattenBeforeCloseMinutes = 1440,
+                flattenSlippageTicks = 2,
                 exitSpreadCents = 2.0,
                 orderNotional = 25.0,
                 shadowFillVolumeFactor = 1.0
@@ -51,6 +54,8 @@ class EventMakerStrategyControllerTest {
         assertEquals(2, config.minSpreadTicks)
         assertEquals(0.5, config.entryOffsetCents, 1e-9)
         assertEquals(listOf(0.0, 0.5, 1.0), config.ladderOffsetsCents)
+        assertEquals(1440L, config.flattenBeforeCloseMinutes)
+        assertEquals(2, config.flattenSlippageTicks)
         assertEquals(2.0, config.exitSpreadCents, 1e-9)
         assertEquals(25.0, config.orderNotional, 1e-9)
         assertEquals(1.0, config.shadowFillVolumeFactor, 1e-9)

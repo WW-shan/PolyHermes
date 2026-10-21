@@ -51,6 +51,18 @@ class EventMakerShadowCliOptionsTest {
     }
 
     @Test
+    fun `parses forced flatten window`() {
+        val options = parseOptions(
+            arrayOf(
+                "--flatten-before-close-minutes", "1440",
+                "--flatten-slippage-ticks", "2",
+                "--minutes", "60"
+            )
+        )
+        assertEquals(1440L, options.flattenBeforeCloseMinutes)
+        assertEquals(2, options.flattenSlippageTicks)
+    }
+    @Test
     fun `rejects ladder offsets combined with taker entry`() {
         assertThrows(IllegalArgumentException::class.java) {
             parseOptions(

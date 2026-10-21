@@ -27,6 +27,8 @@ class EventMakerLiveState(
         private set
     var completedCycles: Int = 0
         private set
+    var forcedFlatten: Boolean = false
+        private set
     var totalBuyNotional: Double = 0.0
         private set
     var lastBook: MarketBook? = null
@@ -67,9 +69,10 @@ class EventMakerLiveState(
         )
     }
 
-    fun onOrderPlaced(order: EventMakerLiveOrder) {
+    fun onOrderPlaced(order: EventMakerLiveOrder, forcedFlatten: Boolean = false) {
         activeOrder = order
         reconciledShares = BigDecimal.ZERO
+        this.forcedFlatten = forcedFlatten
         phase = if (order.side == EventMakerSide.BUY) EventMakerPhase.BUY_PENDING else EventMakerPhase.SELL_PENDING
     }
 
@@ -148,7 +151,8 @@ class EventMakerLiveState(
                         exitPrice = active.price,
                         shares = currentEntryShares,
                         pnl = currentCycleRealizedPnl,
-                        holdingSeconds = (now - entryAt).coerceAtLeast(0L)
+                        holdingSeconds = (now - entryAt).coerceAtLeast(0L),
+                        exitType = if (forcedFlatten) "FLATTEN" else "SELL"
                     )
                     phase = EventMakerPhase.FLAT
                     entryPrice = BigDecimal.ZERO
@@ -157,6 +161,7 @@ class EventMakerLiveState(
                     currentEntryShares = BigDecimal.ZERO
                     currentCycleSoldShares = BigDecimal.ZERO
                     currentCycleRealizedPnl = 0.0
+                    forcedFlatten = false
                     events += "cycle_complete"
                 } else {
                     phase = EventMakerPhase.LONG
@@ -176,6 +181,7 @@ class EventMakerLiveState(
         activeOrder = null
         phase = if (inventoryShares > BigDecimal.ZERO) EventMakerPhase.LONG else EventMakerPhase.FLAT
         reconciledShares = BigDecimal.ZERO
+        if (inventoryShares <= BigDecimal.ZERO) forcedFlatten = false
     }
 
     fun isExpired(now: Long): Boolean = now / 1000L >= market.endTimestamp
@@ -252,6 +258,7 @@ class EventMakerLiveState(
         currentEntryShares = BigDecimal.ZERO
         currentCycleSoldShares = BigDecimal.ZERO
         currentCycleRealizedPnl = 0.0
+        forcedFlatten = false
         phase = EventMakerPhase.FLAT
         return settlement
     }
@@ -303,7 +310,8 @@ class EventMakerLiveState(
         negativeRisk = market.negRisk,
         endTimestamp = market.endTimestamp,
         tickSize = market.tickSize,
-        legOffsetCents = legOffsetCents
+        legOffsetCents = legOffsetCents,
+        forcedFlatten = forcedFlatten
     )
 
     fun restore(persisted: EventMakerPersistedMarket) {
@@ -394,6 +402,7 @@ class EventMakerLiveState(
         currentEntryShares = replay.currentEntryShares
         currentCycleSoldShares = replay.currentCycleSoldShares
         currentCycleRealizedPnl = replay.currentCycleRealizedPnl
+        forcedFlatten = persisted.forcedFlatten == true
         fills.clear()
         fills.addAll(persistedFills)
         cycles.clear()

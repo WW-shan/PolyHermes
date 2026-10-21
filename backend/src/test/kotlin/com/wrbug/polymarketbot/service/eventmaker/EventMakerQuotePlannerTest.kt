@@ -5,6 +5,7 @@ import com.wrbug.polymarketbot.research.livepaper.MarketBook
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
@@ -232,6 +233,23 @@ class EventMakerQuotePlannerTest {
     fun `crossed or locked book is rejected`() {
         assertNull(planner.planBuy(config, book(0.96, 100.0, 0.96, 100.0), tick, 2_000))
         assertNull(planner.planSell(config, book(0.97, 100.0, 0.96, 100.0), tick, BigDecimal("0.96"), BigDecimal("10.00"), 2_000))
+    }
+    @Test
+    fun `taker exit crosses the bid with configured slippage`() {
+        val exitConfig = config.copy(flattenSlippageTicks = 2)
+        val intent = planner.planTakerExit(
+            exitConfig,
+            book(0.98, 100.0, 0.99, 100.0),
+            tick,
+            BigDecimal("10.00"),
+            2_000
+        )
+
+        assertNotNull(intent)
+        assertEquals(BigDecimal("0.978"), intent!!.price)
+        assertEquals(BigDecimal("10.00"), intent.shares)
+        assertTrue(intent.takerExit)
+        assertEquals(EventMakerSide.SELL, intent.side)
     }
     private fun book(
         bid: Double,

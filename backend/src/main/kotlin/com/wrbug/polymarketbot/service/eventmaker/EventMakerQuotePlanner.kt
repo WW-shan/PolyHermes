@@ -72,6 +72,35 @@ class EventMakerQuotePlanner {
         )
     }
 
+    /**
+     * Marketable exit used by the pre-close flatten path. It is deliberately
+     * priced at the bid minus a configurable slippage, never at the ask.
+     */
+    fun planTakerExit(
+        config: EventMakerConfig,
+        book: MarketBook,
+        tickSize: BigDecimal,
+        heldShares: BigDecimal,
+        now: Long = System.currentTimeMillis()
+    ): EventMakerQuoteIntent? {
+        if (isStale(config, book, now) || heldShares <= BigDecimal.ZERO) return null
+        val bestBid = book.bestBid ?: return null
+        val tick = tickSize.max(BigDecimal.valueOf(0.0001))
+        val raw = BigDecimal.valueOf(bestBid)
+            .subtract(tick.multiply(BigDecimal.valueOf(config.flattenSlippageTicks.toLong())))
+        val limit = roundDown(raw.max(tick), tick).min(BigDecimal("0.999"))
+        if (limit <= BigDecimal.ZERO) return null
+        val shares = heldShares.setScale(2, RoundingMode.DOWN)
+        if (shares <= BigDecimal.ZERO) return null
+        return EventMakerQuoteIntent(
+            side = EventMakerSide.SELL,
+            price = limit,
+            shares = shares,
+            queueAheadShares = 0.0,
+            reason = "forced_flatten",
+            takerExit = true
+        )
+    }
     fun planSell(
         config: EventMakerConfig,
         book: MarketBook,

@@ -61,6 +61,21 @@ class EventMakerShadowExecutionPortTest {
     }
 
     @Test
+    fun `taker exit fills immediately`() = runTest {
+        val placed = port.place(
+            0L,
+            market,
+            intent(EventMakerSide.SELL, "0.98", "10.00", 0.0).copy(takerExit = true)
+        ).getOrThrow()
+
+        assertEquals("FILLED", placed.status)
+        assertEquals(0, placed.originalShares.compareTo(placed.matchedShares))
+        val fills = port.drainImmediateFills()
+        assertEquals(1, fills.size)
+        assertEquals(EventMakerSide.SELL, fills.single().side)
+        assertEquals(0, BigDecimal("10.00").compareTo(fills.single().shares))
+    }
+    @Test
     fun `public trade first consumes queue then partially fills maker order`() = runTest {
         val placed = port.place(0L, market, intent(EventMakerSide.BUY, "0.96", "10.00", 2.0)).getOrThrow()
         val now = placed.createdAt + 10L

@@ -87,6 +87,8 @@ internal data class ShadowOptions(
     val requoteSeconds: Long,
     val maxOrderAgeSeconds: Long,
     val tailWindowMinutes: Long,
+    val flattenBeforeCloseMinutes: Long,
+    val flattenSlippageTicks: Int,
     val flowGuardWindowSeconds: Long,
     val flowGuardMaxSignedFlow: Double,
     val flowGuardMinPriceDropCents: Double,
@@ -215,6 +217,9 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
     val requoteSeconds = option("requote-seconds")?.toLongOrNull() ?: 120L
     val maxOrderAgeSeconds = option("max-order-age-seconds")?.toLongOrNull() ?: 3600L
     val tailWindowMinutes = option("tail-window-minutes")?.toLongOrNull() ?: 0L
+    val minRemainingMinutes = option("min-remaining-minutes")?.toIntOrNull() ?: 120
+    val flattenBeforeCloseMinutes = option("flatten-before-close-minutes")?.toLongOrNull() ?: 0L
+    val flattenSlippageTicks = option("flatten-slippage-ticks")?.toIntOrNull() ?: 0
     val flowGuardWindowSeconds = option("flow-guard-window-seconds")?.toLongOrNull() ?: 3600L
     val flowGuardMaxSignedFlow = option("flow-guard-max-signed-flow")?.toDoubleOrNull() ?: -0.4
     val flowGuardMinPriceDropCents = option("flow-guard-min-price-drop-cents")?.toDoubleOrNull() ?: 0.5
@@ -253,6 +258,8 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
     require(requoteSeconds > 0)
     require(maxOrderAgeSeconds >= requoteSeconds)
     require(tailWindowMinutes >= 0)
+    require(flattenBeforeCloseMinutes >= 0)
+    require(flattenSlippageTicks >= 0)
     require(flowGuardWindowSeconds >= 0)
     require(flowGuardMaxSignedFlow in -1.0..1.0)
     require(flowGuardMinPriceDropCents >= 0.0)
@@ -297,7 +304,7 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
         minPrice = option("min-price")?.toDoubleOrNull() ?: 0.90,
         maxPrice = option("max-price")?.toDoubleOrNull() ?: 0.99,
         tags = tags,
-        minRemainingMinutes = option("min-remaining-minutes")?.toIntOrNull() ?: 120,
+        minRemainingMinutes = minRemainingMinutes,
         maxRemainingMinutes = option("max-remaining-minutes")?.toIntOrNull(),
         minutes = minutes,
         allowNegRisk = args.contains("--allow-neg-risk"),
@@ -315,6 +322,8 @@ internal fun parseOptions(args: Array<String>): ShadowOptions {
         requoteSeconds = requoteSeconds,
         maxOrderAgeSeconds = maxOrderAgeSeconds,
         tailWindowMinutes = tailWindowMinutes,
+        flattenBeforeCloseMinutes = flattenBeforeCloseMinutes,
+        flattenSlippageTicks = flattenSlippageTicks,
         flowGuardWindowSeconds = flowGuardWindowSeconds,
         flowGuardMaxSignedFlow = flowGuardMaxSignedFlow,
         flowGuardMinPriceDropCents = flowGuardMinPriceDropCents,
@@ -641,6 +650,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             requoteSeconds = options.requoteSeconds,
             maxOrderAgeSeconds = options.maxOrderAgeSeconds,
             tailWindowMinutes = options.tailWindowMinutes,
+            flattenBeforeCloseMinutes = options.flattenBeforeCloseMinutes,
+            flattenSlippageTicks = options.flattenSlippageTicks,
             flowGuardWindowSeconds = options.flowGuardWindowSeconds,
             flowGuardMaxSignedFlow = options.flowGuardMaxSignedFlow,
             flowGuardMinPriceDropCents = options.flowGuardMinPriceDropCents,

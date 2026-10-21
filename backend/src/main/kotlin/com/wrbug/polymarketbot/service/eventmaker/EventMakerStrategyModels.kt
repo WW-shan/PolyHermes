@@ -54,6 +54,9 @@ data class EventMakerConfig(
      * gap-to-zero flows using only the public close timestamp. 0 disables it.
      */
     val tailWindowMinutes: Long = 0,
+    /** Force a taker exit this many minutes before close; 0 disables. */
+    val flattenBeforeCloseMinutes: Long = 0,
+    val flattenSlippageTicks: Int = 0,
     /**
      * Causal adverse-flow guard. It blocks/cancels BUY quotes when the favorite
      * token has net taker SELL flow and a material price drop in this trailing
@@ -103,6 +106,8 @@ data class EventMakerConfig(
         require(requoteSeconds > 0)
         require(maxOrderAgeSeconds >= requoteSeconds)
         require(tailWindowMinutes >= 0)
+        require(flattenBeforeCloseMinutes >= 0)
+        require(flattenSlippageTicks >= 0)
         require(tailWindowMinutes == 0L || tailWindowMinutes < minRemainingMinutes) {
             "tailWindowMinutes must be smaller than minRemainingMinutes"
         }
@@ -132,7 +137,9 @@ data class EventMakerQuoteIntent(
     val shares: BigDecimal,
     val queueAheadShares: Double,
     val reason: String,
-    val takerEntry: Boolean = false
+    val takerEntry: Boolean = false,
+    /** A non-post-only forced exit (used by the pre-close flatten path). */
+    val takerExit: Boolean = false
 )
 
 data class EventMakerRiskSnapshot(
@@ -210,7 +217,9 @@ data class EventMakerPersistedMarket(
     val endTimestamp: Long? = null,
     val tickSize: Double? = null,
     /** Ladder offset for this leg; null means a legacy single-leg state. */
-    val legOffsetCents: Double? = null
+    val legOffsetCents: Double? = null,
+    /** True while the active/last exit was a forced pre-close flatten. */
+    val forcedFlatten: Boolean? = null
 )
 
 data class EventMakerStatus(

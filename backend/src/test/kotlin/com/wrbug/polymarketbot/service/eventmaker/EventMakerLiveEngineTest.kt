@@ -6,6 +6,7 @@ import com.wrbug.polymarketbot.research.livepaper.LiveTradePrint
 import com.wrbug.polymarketbot.research.livepaper.MarketBook
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -722,6 +723,45 @@ class EventMakerLiveEngineTest {
         )
     }
 
+    @Test
+    fun `pre-close flatten places a taker sell and records a FLATTEN cycle`() = runTest {
+        val now = System.currentTimeMillis()
+        val flattenConfig = config.copy(
+            flattenBeforeCloseMinutes = 60,
+            flattenSlippageTicks = 2,
+            maxMarkets = 1,
+            orderNotional = 10.0,
+            maxTotalInventoryNotional = 100.0,
+            improveTicks = 0
+        )
+        val flattenMarket = market(endTimestamp = now / 1_000L + 3 * 3_600L).copy(tickSize = 0.001)
+        val state = EventMakerLiveState(flattenMarket, flattenConfig)
+        val port = FakeExecutionPort()
+        val engine = EventMakerLiveEngine(flattenConfig, EventMakerQuotePlanner(), EventMakerRiskPolicy(), port)
+        state.onBook(book(0.98, 0.985, now))
+
+        val buy = engine.quote(listOf(state), mapOf("token" to state.lastBook!!), 7L, now).placed.single().order
+        port.fill(buy.orderId, buy.originalShares)
+        engine.reconcile(listOf(state), 7L, now + 1)
+        assertTrue(state.inventoryShares > BigDecimal.ZERO)
+
+        val insideWindow = now + 2 * 3_600_000L + 1_000L
+        val laterBook = book(0.98, 0.985, insideWindow)
+        state.onBook(laterBook)
+        val placed = engine.quote(listOf(state), mapOf("token" to laterBook), 7L, insideWindow).placed.single().order
+
+        assertEquals(EventMakerSide.SELL, placed.side)
+        assertEquals(BigDecimal("0.978"), placed.price)
+        assertTrue(state.forcedFlatten)
+        assertNotNull(state.activeOrder)
+
+        port.fill(placed.orderId, placed.originalShares)
+        engine.reconcile(listOf(state), 7L, insideWindow + 1)
+
+        assertEquals(BigDecimal.ZERO, state.inventoryShares)
+        assertFalse(state.forcedFlatten)
+        assertEquals("FLATTEN", state.cycles.single().exitType)
+    }
     @Test
     fun `persisted leg outside configured ladder cannot reopen a position`() = runTest {
         val start = 1_800_000_000_000L
