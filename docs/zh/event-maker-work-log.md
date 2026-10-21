@@ -1991,3 +1991,10 @@
 - 对比：未过滤 taker2c 的 60s markout -0.30；`mom1` 的 -0.20 略好，但只有 1 笔，不能下结论。
 - 当前有 8 个带 state 的 LIVE 臂 + 1 个 0.95–0.97 dip 等待臂。
 - 全量 `gradlew test`：BUILD SUCCESSFUL。
+
+### 09:05 过滤后的 maker 臂
+
+- `off10` 重启为：0.97–0.99 / Geopolitics / +2c maker / entryOffset=1c / **24h 动量 ≤+1c**。
+- 当前选中 1 个市场（Bab el-Mandeb，+0.2c），已挂 BUY @0.97；这样可与未过滤的 off00/off05/off20 以及 taker2c/mom1 对比。
+- 9597 dip24h 等待臂仍在等待 ≤-2c；当前 5 个 0.95–0.97 市场最接近 -1.8c，0 selected。
+- 当前 8 个带 state 的 LIVE 臂 + 1 个等待臂。

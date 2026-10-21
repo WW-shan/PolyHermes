@@ -1319,3 +1319,10 @@ cd D:\Project\PolyHermes\backend
 - 0.97–0.99 新增 `mom1` 臂：过滤 24h >+1c 弱桶；当前选中 Bab el-Mandeb（+0.2c），1 笔 taker @0.981，SELL 0.999，60s markout -0.20。
 - 未过滤 taker2c 的 60s markout -0.30；`mom1` -0.20 略好，但 1 笔样本不足。
 - 当前 8 个带 state 的 LIVE 臂 + 1 个 0.95–0.97 dip 等待臂；全量测试通过。
+
+### 20.11 2026-10-21 09:05 过滤后的 maker 臂
+
+- `off10`：0.97–0.99 / Geopolitics / +2c maker / entryOffset=1c / 24h 动量 ≤+1c。
+- 当前选中 1 个市场（Bab el-Mandeb，+0.2c），已挂 BUY @0.97。
+- 9597 dip24h 等待臂仍 0 selected，最近市场 -1.8c。
+- 当前 8 个带 state 的 LIVE 臂 + 1 个等待臂；继续观察 fill、markout、cycle。
