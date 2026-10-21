@@ -29,6 +29,14 @@ const summary = fs.existsSync(summaryPath) ? JSON.parse(fs.readFileSync(summaryP
 const markets = Array.isArray(state.markets) ? state.markets : [];
 const cycles = markets.flatMap(m => (Array.isArray(m.cycles) ? m.cycles.map(c => ({ ...c, conditionId: m.conditionId })) : []));
 const fills = markets.flatMap(m => (Array.isArray(m.fills) ? m.fills.map(f => ({ ...f, conditionId: m.conditionId })) : []));
+const settlements = markets.flatMap(m => (Array.isArray(m.settlements) ? m.settlements.map(s => ({ ...s, conditionId: m.conditionId })) : []));
+const settlementCycleIds = new Set(cycles.filter(c => c.exitType === 'SETTLE').map(c => c.exitOrderId));
+const settlementIdCounts = new Map();
+for (const s of settlements) settlementIdCounts.set(s.cycleExitOrderId, (settlementIdCounts.get(s.cycleExitOrderId) ?? 0) + 1);
+const duplicateSettlementIds = [...settlementIdCounts.values()].filter(n => n > 1).length;
+const pendingSettlements = settlements.filter(s => s.redemptionStatus === 'PENDING').length;
+const settlementLosses = settlements.filter(s => num(s.pnl) < 0).length;
+const missingSettlementCycles = settlements.filter(s => !settlementCycleIds.has(s.cycleExitOrderId)).length;
 const fillKeyCounts = new Map();
 for (const f of fills) {
   const key = [f.conditionId, f.orderId, f.side, f.price, f.shares, f.timestamp].join('|');
@@ -88,6 +96,12 @@ const audit = {
     inventoryNotional,
     cycles: cycles.length,
     fills: fills.length,
+    settlements: settlements.length,
+    settlementLosses,
+    pendingSettlements,
+    duplicateSettlementIds,
+    missingSettlementCycles,
+    settlementRealizedPnl: settlements.reduce((s, x) => s + num(x.pnl), 0),
     duplicateFillKeys,
     deployedNotional: deployed,
     realizedPnl: realized,
@@ -100,6 +114,10 @@ const audit = {
 };
 if (cycles.length === 0) audit.flags.push('NO_FILLS_OR_CYCLES');
 if (duplicateFillKeys > 0) audit.flags.push('DUPLICATE_FILLS');
+if (duplicateSettlementIds > 0) audit.flags.push('DUPLICATE_SETTLEMENTS');
+if (pendingSettlements > 0) audit.flags.push('PENDING_SETTLEMENTS');
+if (missingSettlementCycles > 0) audit.flags.push('SETTLEMENT_WITHOUT_CYCLE');
+if (settlementLosses > 0) audit.flags.push('SETTLEMENT_LOSS_PRESENT');
 if (summary && Array.isArray(summary.lastErrors) && summary.lastErrors.length > 0) audit.flags.push('LAST_ERRORS_PRESENT');
 if (cycles.length > 0 && realizedRoi > 0.01) audit.flags.push('REALIZED_ROI_ABOVE_1PCT_CHECK_FILL_ASSUMPTIONS');
 if (inventoryShares > 0 && activeOrders === 0) audit.flags.push('OPEN_INVENTORY_WITHOUT_ACTIVE_ORDER');

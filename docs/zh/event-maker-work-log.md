@@ -2019,3 +2019,12 @@
   - 0.95–0.97 dip24h 臂首次成交 1 笔 @0.95，SELL 0.97，说明该过滤条件确实能等到市场；
   - 所有 cycle 仍为 0，结算链路等待市场到期后验证。
 - 当前不进入真实资金；继续积累 fill、markout、cycle 和 SETTLE 样本。
+### 09:36 Shadow 长测运行方式优化与审计补强
+
+- 新增 `writeEventMakerShadowClasspath` Gradle 任务，将运行时 classpath 写入 `backend/build/research/eventmaker-shadow-classpath.txt`。
+- `start-bond-shadow.ps1` 改为直接启动 `java @java.args`，不再为每个 Shadow 臂保留约 450 MB 的 Gradle daemon；单臂实测约 115–120 MB。
+- 10 个 Shadow 臂已全部切换为直接 JVM；Gradle daemon 已停止，节省约 4.5 GB 内存。
+- `execution-diagnostics.json` 改为每 10 秒随快照刷新，状态报告可实时读取 crossing trades / queue consumed。
+- `audit-bond-shadow.cjs` 新增 settlements、settlementLosses、pendingSettlements、duplicateSettlementIds、missingSettlementCycles、settlementRealizedPnl 审计字段与 flags。
+- monitor 的 `bond-shadow-audit-series.jsonl` 新增 settlements / settlementLosses / pendingSettlements。
+- 当前 10/10 Shadow 臂 LIVE；另有 7 fills，SETTLE 仍为 0，等待真实到期样本。

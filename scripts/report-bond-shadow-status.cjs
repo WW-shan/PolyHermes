@@ -37,15 +37,15 @@ const defaultDirs = [
 ];
 const dirs = (arg('dirs') || defaultDirs.join(',')).split(',').map(s => s.trim()).filter(Boolean);
 const lines = [];
-lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | settlements | settleLosses | inventory | realizedPnl | unrealizedPnl | totalPnl | markout60 | markout300 | neg60 |');
-lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
-let totalFills = 0, totalCycles = 0, totalSettlements = 0, totalSettleLosses = 0, totalRealized = 0, totalUnrealized = 0;
+lines.push('| arm | status | pid | stateAgeMin | markets | active | fills | cycles | settlements | settleLosses | inventory | realizedPnl | unrealizedPnl | totalPnl | crossTrades | queueConsumed | markout60 | markout300 | neg60 |');
+lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+let totalFills = 0, totalCycles = 0, totalSettlements = 0, totalSettleLosses = 0, totalRealized = 0, totalUnrealized = 0, totalCrossTrades = 0, totalQueueConsumed = 0;
 const stale = [];
 for (const dir of dirs) {
   const statePath = path.join(dir, 'state.json');
   const arm = path.basename(dir);
   if (!fs.existsSync(statePath)) {
-    lines.push(`| ${arm} | MISSING | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
+    lines.push(`| ${arm} | MISSING | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
     stale.push(arm + ' (missing)');
     continue;
   }
@@ -85,6 +85,15 @@ for (const dir of dirs) {
       for (const r of latest.values()) unrealized += num(r[idx.unrealized_pnl]);
     }
   }
+  let crossTrades = 0, queueConsumed = 0;
+  const diagnosticsPath = path.join(dir, 'execution-diagnostics.json');
+  if (fs.existsSync(diagnosticsPath)) {
+    try {
+      const diagnostics = JSON.parse(fs.readFileSync(diagnosticsPath, 'utf8'));
+      crossTrades = num(diagnostics.totalCrossingTrades);
+      queueConsumed = num(diagnostics.totalQueueConsumedShares);
+    } catch (e) { /* ignore malformed diagnostics */ }
+  }
   let m60 = null, m300 = null, neg60 = null;
   const markoutPath = path.join(dir, 'markouts.csv');
   if (fs.existsSync(markoutPath)) {
@@ -97,12 +106,12 @@ for (const dir of dirs) {
     m60 = mean(vals60); m300 = mean(vals300);
     neg60 = vals60.length ? vals60.filter(v => v < 0).length / vals60.length : null;
   }
-  totalFills += fills; totalCycles += cycles; totalSettlements += settlements; totalSettleLosses += settleLosses; totalRealized += realized; totalUnrealized += unrealized;
+  totalFills += fills; totalCycles += cycles; totalSettlements += settlements; totalSettleLosses += settleLosses; totalRealized += realized; totalUnrealized += unrealized; totalCrossTrades += crossTrades; totalQueueConsumed += queueConsumed;
   const fmt = v => v == null ? '-' : (Math.round(v * 100) / 100).toString();
   const pct = v => v == null ? '-' : (Math.round(v * 1000) / 10).toString() + '%';
-  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${settlements} | ${settleLosses} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(unrealized)} | ${fmt(realized + unrealized)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
+  lines.push(`| ${arm} | ${status} | ${pid ?? '-'} | ${stateAgeMin.toFixed(1)} | ${markets.length} | ${active} | ${fills} | ${cycles} | ${settlements} | ${settleLosses} | ${inventory.toFixed(2)} | ${fmt(realized)} | ${fmt(unrealized)} | ${fmt(realized + unrealized)} | ${crossTrades} | ${fmt(queueConsumed)} | ${fmt(m60)} | ${fmt(m300)} | ${pct(neg60)} |`);
 }
-lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | **${totalSettlements}** | **${totalSettleLosses}** | | **${Math.round(totalRealized * 100) / 100}** | **${Math.round(totalUnrealized * 100) / 100}** | **${Math.round((totalRealized + totalUnrealized) * 100) / 100}** | | | |`);
+lines.push(`| **total** | | | | | | **${totalFills}** | **${totalCycles}** | **${totalSettlements}** | **${totalSettleLosses}** | | **${Math.round(totalRealized * 100) / 100}** | **${Math.round(totalUnrealized * 100) / 100}** | **${Math.round((totalRealized + totalUnrealized) * 100) / 100}** | **${totalCrossTrades}** | **${Math.round(totalQueueConsumed * 100) / 100}** | | | |`);
 if (stale.length) { lines.push(''); lines.push(`**NOT LIVE:** ${stale.join(', ')}`); }
 const text = lines.join('\n');
 console.log(text);

@@ -191,6 +191,21 @@ tasks.register<JavaExec>("livePaperMaker") {
 }
 
 /**
+ * Writes the runtime classpath once so long-running Shadow arms can be started
+ * as direct JVMs. This avoids one Gradle daemon per arm (~450 MB each).
+ */
+tasks.register("writeEventMakerShadowClasspath") {
+    group = "research"
+    description = "Write the event-maker Shadow runtime classpath to build/research"
+    dependsOn(tasks.named("classes"))
+    doLast {
+        val target = layout.buildDirectory.file("research/eventmaker-shadow-classpath.txt").get().asFile
+        target.parentFile.mkdirs()
+        target.writeText(sourceSets["main"].runtimeClasspath.asPath)
+        println("wrote ${target.absolutePath}")
+    }
+}
+/**
  * Unified Shadow runner using the production planner/risk/engine path.
  * It never signs or places an order and does not require MySQL.
  */

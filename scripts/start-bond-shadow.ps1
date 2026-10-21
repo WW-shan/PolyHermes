@@ -40,49 +40,69 @@ $backend = Join-Path (Split-Path -Parent $PSScriptRoot) "backend"
 $env:HTTPS_PROXY = $Proxy
 $env:HTTP_PROXY = $Proxy
 $env:NODE_USE_ENV_PROXY = "1"
-$argsList = @(
-  "eventMakerShadow",
-  "-PshadowProxy=$Proxy",
-  "-PshadowMinutes=$Minutes",
-  "-PshadowMinPrice=$MinPrice",
-  "-PshadowMaxPrice=$MaxPrice",
-  "-PshadowTags=$Tags",
-  "-PshadowExitSpreadCents=$ExitSpreadCents",
-  "-PshadowMaxCyclesPerMarket=$MaxCyclesPerMarket",
-  "-PshadowOrderNotional=$OrderNotional",
-  "-PshadowMaxMarkets=$MaxMarkets",
-  "-PshadowMinVolume=$MinVolume",
-  "-PshadowMinRemainingMinutes=120",
-  "-PshadowMaxRemainingMinutes=$MaxRemainingMinutes",
-  "-PshadowWaitForMarketMinutes=$WaitForMarketMinutes",
-  "-PshadowMinSpreadTicks=$MinSpreadTicks",
-  "-PshadowMaxQueue=$MaxQueue",
-  "-PshadowImproveTicks=$ImproveTicks",
-  "-PshadowExitImproveTicks=$ExitImproveTicks",
-  "-PshadowTakerEntrySlippageTicks=$TakerEntrySlippageTicks",
-  "-PshadowEntryOffsetCents=$EntryOffsetCents",
-  "-PshadowRequoteSeconds=$RequoteSeconds",
-  "-PshadowMaxOrderAgeSeconds=$MaxOrderAgeSeconds",
-  "-PshadowFlowGuardWindowSeconds=$FlowGuardWindowSeconds",
-  "-PshadowFillVolumeFactor=$FillVolumeFactor",
-  "-PshadowMaxTotalInventoryNotional=$MaxTotalInventoryNotional",
-  "-PshadowMaxDailyLoss=$MaxDailyLoss",
-  "-PshadowMinRecentTrades=$MinRecentTrades",
-  "-PshadowMinRecentNotional=$MinRecentNotional",
-  "-PshadowMinRecentTradesPerSide=$MinRecentTradesPerSide",
-  "-PshadowMinRecentTrades2h=$MinRecentTrades2h",
-  "-PshadowMinRecentNotional2h=$MinRecentNotional2h",
-  "-PshadowMinRecentTradesPerSide2h=$MinRecentTradesPerSide2h",
-  "-PshadowEntryMomentumMinCents=$EntryMomentumMinCents",
-  "-PshadowEntryMomentumMaxCents=$EntryMomentumMaxCents",
-  "-PshadowEntryMomentumLookbackSeconds=$EntryMomentumLookbackSeconds",
-  "-PshadowOutput=$Output",
-  "--console=plain"
-)
-if ($TakerEntry) { $argsList += "-PshadowTakerEntry=true" }
 $logDir = Join-Path $backend $Output
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-$proc = Start-Process -FilePath (Join-Path $backend "gradlew.bat") -ArgumentList $argsList -WorkingDirectory $backend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir "stdout.log") -RedirectStandardError (Join-Path $logDir "stderr.log") -PassThru
+
+$classpathFile = Join-Path $backend "build/research/eventmaker-shadow-classpath.txt"
+if (-not (Test-Path -LiteralPath $classpathFile)) {
+  & (Join-Path $backend "gradlew.bat") writeEventMakerShadowClasspath --console=plain
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $classpathFile)) {
+    throw "failed to create event-maker Shadow classpath"
+  }
+}
+$classpath = (Get-Content -LiteralPath $classpathFile -Raw -Encoding UTF8).Trim()
+if (-not $classpath) { throw "empty event-maker Shadow classpath" }
+
+$appArgs = @(
+  "--proxy", $Proxy,
+  "--max-markets", "$MaxMarkets",
+  "--min-volume", "$MinVolume",
+  "--min-remaining-minutes", "120",
+  "--max-remaining-minutes", "$MaxRemainingMinutes",
+  "--wait-for-market-minutes", "$WaitForMarketMinutes",
+  "--min-price", "$MinPrice",
+  "--max-price", "$MaxPrice",
+  "--tags", $Tags,
+  "--minutes", "$Minutes",
+  "--max-queue", "$MaxQueue",
+  "--min-spread-ticks", "$MinSpreadTicks",
+  "--improve-ticks", "$ImproveTicks",
+  "--entry-offset-cents", "$EntryOffsetCents",
+  "--exit-improve-ticks", "$ExitImproveTicks",
+  "--taker-entry-slippage-ticks", "$TakerEntrySlippageTicks",
+  "--exit-spread-cents", "$ExitSpreadCents",
+  "--requote-seconds", "$RequoteSeconds",
+  "--max-order-age-seconds", "$MaxOrderAgeSeconds",
+  "--flow-guard-window-seconds", "$FlowGuardWindowSeconds",
+  "--order-notional", "$OrderNotional",
+  "--fill-volume-factor", "$FillVolumeFactor",
+  "--max-cycles-per-market", "$MaxCyclesPerMarket",
+  "--max-total-inventory-notional", "$MaxTotalInventoryNotional",
+  "--max-daily-loss", "$MaxDailyLoss",
+  "--min-recent-trades", "$MinRecentTrades",
+  "--min-recent-notional", "$MinRecentNotional",
+  "--min-recent-trades-per-side", "$MinRecentTradesPerSide",
+  "--min-recent-trades-2h", "$MinRecentTrades2h",
+  "--min-recent-notional-2h", "$MinRecentNotional2h",
+  "--min-recent-trades-per-side-2h", "$MinRecentTradesPerSide2h",
+  "--entry-momentum-min-cents", "$EntryMomentumMinCents",
+  "--entry-momentum-max-cents", "$EntryMomentumMaxCents",
+  "--entry-momentum-lookback-seconds", "$EntryMomentumLookbackSeconds",
+  "--output", $Output
+)
+if ($TakerEntry) { $appArgs += "--taker-entry" }
+
+function Quote-JavaArg([string]$value) {
+  if ($value -match '\s') { return '"' + $value + '"' }
+  return $value
+}
+$javaArgsFile = Join-Path $logDir "java.args"
+$javaLines = @("-Xms64m", "-Xmx512m", "-cp", $classpath, "com.wrbug.polymarketbot.research.eventmaker.EventMakerShadowCliKt") + $appArgs
+$javaLines = $javaLines | ForEach-Object { Quote-JavaArg $_ }
+[IO.File]::WriteAllText($javaArgsFile, (($javaLines -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+
+$javaExe = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin/java.exe" } else { (Get-Command java.exe).Source }
+$proc = Start-Process -FilePath $javaExe -ArgumentList "@$javaArgsFile" -WorkingDirectory $backend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir "stdout.log") -RedirectStandardError (Join-Path $logDir "stderr.log") -PassThru
 $info = [pscustomobject]@{
   startedAt = (Get-Date).ToUniversalTime().ToString("o")
   pid = $proc.Id
@@ -118,6 +138,8 @@ $info = [pscustomobject]@{
   entryMomentumMaxCents = $EntryMomentumMaxCents
   entryMomentumLookbackSeconds = $EntryMomentumLookbackSeconds
   output = $logDir
+  classpathFile = $classpathFile
+  javaArgsFile = $javaArgsFile
 }
 $info | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $logDir "run.json") -Encoding UTF8
 $info | ConvertTo-Json -Depth 3

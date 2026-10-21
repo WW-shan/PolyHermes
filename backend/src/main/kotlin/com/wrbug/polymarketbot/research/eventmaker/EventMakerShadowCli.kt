@@ -674,15 +674,8 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             markoutsWriter.close()
         }
 
+        writeExecutionDiagnostics()
         val diagnostics = shadowExecution.diagnostics()
-        Files.writeString(
-            options.outputDir.resolve("execution-diagnostics.json"),
-            prettyGson.toJson(diagnostics),
-            StandardCharsets.UTF_8,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE
-        )
         val stoppedAt = System.currentTimeMillis()
         val realized = states.sumOf { it.realizedPnl }
         val unrealized = states.sumOf { it.markToMarket(books[it.market.favoriteTokenId]) }
@@ -959,7 +952,19 @@ private class EventMakerShadowRunner(private val options: ShadowOptions) {
             snapshotsWriter.newLine()
         }
         snapshotsWriter.flush()
+        writeExecutionDiagnostics()
         writeState(states)
+    }
+
+    private fun writeExecutionDiagnostics() {
+        Files.writeString(
+            options.outputDir.resolve("execution-diagnostics.json"),
+            prettyGson.toJson(shadowExecution.diagnostics()),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )
     }
 
     private fun writeMarketList(markets: List<LivePaperMarket>) {

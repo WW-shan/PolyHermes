@@ -2,8 +2,8 @@
 
 > 创建时间：2026-10-18 23:37 +08:00<br>
 > 目标：按计划完整实现事件做市策略，完成回测、影子交易和实盘执行链路的可验证测试，直到没有已知阻断问题。<br>
-> 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场（“7d”是每个市场 7 天窗口，不是 7 个自然日）。0.97–0.99 Geopolitics ladder：+1c 352 lots / +1.03%，+2c 282 lots / **+1.89%**（95% CI [1.85%, 1.92%]，2024/2025/2026 均为正），+3c 263 lots / +2.34%；目标账户同 band 实际 ROI 仅 +0.852%，因此 **+2c 是首选折中，+3c 只作上限**。0.95–0.97 年度不稳定，0.97–0.99 Politics ladder 为负。当前 7 个 Shadow 臂 LIVE，6 fills、0 cycles、未实现约 -$3.09；taker 60s/300s markout 约 -0.30，仍不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
-> 最后更新：2026-10-21 08:25 +08:00<br>
+> 当前状态：**回测与执行链路审计完成；全量测试通过。数据集实际覆盖 2024-01-01 至 2026-10-01、4,189 个 Politics/Geopolitics 市场（“7d”是每个市场 7 天窗口，不是 7 个自然日）。0.97–0.99 Geopolitics ladder：+1c 352 lots / +1.03%，+2c 282 lots / **+1.89%**（95% CI [1.85%, 1.92%]，2024/2025/2026 均为正），+3c 263 lots / +2.34%；目标账户同 band 实际 ROI 仅 +0.852%，因此 **+2c 是首选折中，+3c 只作上限**。0.95–0.97 年度不稳定，0.97–0.99 Politics ladder 为负。Shadow 结算链路已闭环；当前 10 个 Shadow 臂 LIVE（直接 JVM，约 1.2 GB 总内存）、7 fills、0 cycles、taker markout 仍为负，尚无真实 SETTLE 样本，不能上真钱。真实小资金 Live smoke 仍缺账户、资金和明确授权。**<br>
+> 最后更新：2026-10-21 09:36 +08:00<br>
 > 工作日志：[event-maker-work-log.md](event-maker-work-log.md)<br>
 > 恢复顺序：先读[执行台账](event-maker-execution-ledger-2026-10-19.md)，再读第 9.2 节“当前检查点”和第 10 节“当前下一步”，最后核对 `git status` 和工作日志末尾。<br>
 > 前置研究：[事件做市历史回测](event-maker-backtest-2026-10-17.md)、[真实盘口纸交易](event-maker-live-paper-2026-10-17.md)<br>
@@ -1343,3 +1343,11 @@ cd D:\Project\PolyHermes\backend
 - 10 个 Shadow 臂全部用新代码重启，监控同步重启（PID 14956）。
 - 重启后 dip24h 臂首次成交：0.95–0.97 / Geopolitics / +2c taker / 24h 动量 ≤-2c，entry 0.95，SELL 0.97。
 - 所有进程 stderr 无异常；等待 SETTLE 样本以验证结算链路。
+
+### 20.14 2026-10-21 09:36 直接 JVM 长测与结算审计
+
+- `writeEventMakerShadowClasspath` 生成运行时 classpath；`start-bond-shadow.ps1` 通过 `java @java.args` 直接启动。
+- 10 个 Shadow 臂内存从约 4.5 GB 的 Gradle daemon 开销降到约 1.2 GB direct-JVM 总量；单臂约 115–120 MB。
+- `execution-diagnostics.json` 每快照周期刷新；报告新增 crossTrades / queueConsumed。
+- `audit-bond-shadow.cjs` 与 monitor series 增加 settlement / pending redemption / duplicate / missing-cycle 审计。
+- 直接 JVM 冒烟已通过；全量测试通过；当前等待结算样本。

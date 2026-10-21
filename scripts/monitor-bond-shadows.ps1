@@ -60,6 +60,9 @@ while ($true) {
       markets = $a.state.markets
       fills = $a.state.fills
       cycles = $a.state.cycles
+      settlements = $a.state.settlements
+      settlementLosses = $a.state.settlementLosses
+      pendingSettlements = $a.state.pendingSettlements
       activeOrders = $a.state.activeOrders
       inventoryShares = $a.state.inventoryShares
       realizedPnl = $a.state.realizedPnl
