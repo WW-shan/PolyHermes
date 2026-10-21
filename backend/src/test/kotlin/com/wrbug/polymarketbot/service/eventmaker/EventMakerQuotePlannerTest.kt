@@ -32,6 +32,29 @@ class EventMakerQuotePlannerTest {
     }
 
     @Test
+    fun `maker ladder offsets map to exact tenth-cent levels`() {
+        val ladderConfig = config.copy(
+            minSpreadTicks = 1,
+            improveTicks = 0,
+            exitImproveTicks = 0,
+            maxQueueAheadShares = 500.0
+        )
+        val prices = listOf(0.0, 0.5, 1.0, 2.0).map { offset ->
+            planner.planBuy(
+                ladderConfig.copy(entryOffsetCents = offset),
+                book(0.98, 100.0, 0.981, 100.0),
+                tick,
+                2_000
+            )!!.price
+        }
+
+        assertEquals(
+            listOf("0.98", "0.975", "0.97", "0.96"),
+            prices.map { it.stripTrailingZeros().toPlainString() }
+        )
+    }
+
+    @Test
     fun `taker entry crosses the spread at the ask`() {
         val takerConfig = config.copy(takerEntry = true, takerEntrySlippageTicks = 0)
         val intent = planner.planBuy(takerConfig, book(0.96, 5000.0, 0.97, 5000.0), tick, 2_000)

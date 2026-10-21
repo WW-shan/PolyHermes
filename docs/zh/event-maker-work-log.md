@@ -2133,3 +2133,4 @@
   - improveTicks=0，exitImproveTicks=0
   - 3c 臂和 $1k 臂也已对齐。
 - 当前没有 state / 成交，所以这次修正没有污染已有样本。
+- 新增回归测试：0.001 tick 下 0/0.5/1/2c 必须映射为 0.980/0.975/0.970/0.960；`EventMakerQuotePlannerTest` 通过。
